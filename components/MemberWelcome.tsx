@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { X, Upload, Building2 } from 'lucide-react';
+import { ROUTES } from '@/lib/routes';
 
 const DISMISS_KEY = 'arcova-member-welcome-dismissed';
 
@@ -62,7 +63,7 @@ export default function MemberWelcome() {
       <p className="mt-1 max-w-2xl text-sm text-[#7d909a]">
         {info.ownerEmail ? `${info.ownerEmail} set this workspace up, so the` : 'The'} company profile
         and target market are already in place — you work from the same shared base as your team. A
-        good first step: bring in your contacts, or look at the accounts the team is tracking.
+        good first step: bring in your contacts, or look at the companies the team is tracking.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Link
@@ -72,10 +73,10 @@ export default function MemberWelcome() {
           <Upload className="h-3.5 w-3.5" /> Import your contacts
         </Link>
         <Link
-          href="/accounts"
+          href={ROUTES.accounts}
           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
         >
-          <Building2 className="h-3.5 w-3.5" /> See team accounts
+          <Building2 className="h-3.5 w-3.5" /> See team companies
         </Link>
       </div>
     </div>

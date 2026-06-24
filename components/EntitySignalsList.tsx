@@ -464,38 +464,8 @@ export function EntitySignalsList({
     );
   }
 
-  // When both are present, prefer readiness from the primary entity (contact or company)
-  const primaryItems = (contactId && companyId)
-    ? (primaryScope === 'contact' ? items.filter((i) => i.contactId === contactId) : items.filter((i) => i.companyId === companyId))
-    : items;
-  const readiness = (primaryItems.find((i) => i.readiness?.overallLabel) ?? items.find((i) => i.readiness?.overallLabel))?.readiness ?? null;
-  const reason = (primaryItems.find((i) => i.reason?.whyNow || i.reason?.summaryShort) ?? items.find((i) => i.reason?.whyNow || i.reason?.summaryShort))?.reason ?? null;
-  // Entity label: prefer the primary scope's name (contact name for contacts panel)
-  const entityLabel = contactId
-    ? (items.find((i) => i.contactName)?.contactName ?? items.find((i) => i.companyName)?.companyName ?? 'This contact')
-    : (items.find((i) => i.companyName)?.companyName ?? 'This account');
-  const summary = buildReadinessSummary({
-    entityLabel,
-    items,
-    readiness,
-    effectiveScore: effectiveReadinessScore,
-    cappedReason: crmCappedReason,
-    generatedReason: reason?.whyNow ?? reason?.summaryShort ?? null,
-  });
-
   return (
     <div className="space-y-3">
-      {summary && (
-        <p className={cn(
-          'rounded-lg border px-3 py-2 text-[12px] leading-snug',
-          crmCappedReason
-            ? 'border-amber-200 bg-amber-50 text-amber-900'
-            : 'border-indigo-100 bg-indigo-50 text-indigo-800',
-        )}>
-          {summary}
-        </p>
-      )}
-
       {/* Signal count */}
       <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
         {items.length} signal{items.length !== 1 ? 's' : ''}

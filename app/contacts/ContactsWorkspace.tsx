@@ -7,7 +7,6 @@ import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentLeadsFilter, type AgentPendingMessage } from '@/components/AgentPanel';
 import { AgentChatBar } from '@/components/AgentChatBar';
 import { useScrollMask } from '@/hooks/use-scroll-mask';
-import { ArcovaLoader } from '@/components/ArcovaLoader';
 import type { QueryLead } from '@/lib/leads-data';
 import {
   type LeadAction,
@@ -2756,6 +2755,10 @@ export function ContactsWorkspace() {
   const showEnrichmentDoneCopy =
     !!selectedLead &&
     !!enrichmentFinishedDisplayIso &&
+    // Don't claim "done" while any per-stage queue entry is still running — the
+    // contact is effectively still enriching even if the rolled-up status reads
+    // succeeded/idle. Mirrors `effectiveRefreshStatus` so the panel never lies.
+    !isSelectedLeadRefreshRunning &&
     selectedLeadRefreshStatus !== 'running' &&
     selectedLeadRefreshStatus !== 'failed' &&
     selectedLeadRefreshStatus !== 'cancelled' &&
@@ -3384,7 +3387,7 @@ export function ContactsWorkspace() {
   if (!user) return null;
 
   const contactsPageTitleBlock = (
-    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between lg:[.arcova-agent-collapsed_&]:pr-[376px]">
+    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14">
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
           <Users className="h-3.5 w-3.5" />
@@ -3398,17 +3401,14 @@ export function ContactsWorkspace() {
             ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
             : 'Your imported contacts will appear here once they are ready to review.'}
         </p>
-      </div>
 
-      {total > 0 && (
-        // When the agent is collapsed it floats over the top-right (right-aligned
-        // with the table). Drop the Actions cluster in line, directly to the left
-        // of the bar — matched to the chat input's height + corner radius.
-        <div className="flex items-center gap-2 lg:[.arcova-agent-collapsed_&]:mt-[3px] lg:[.arcova-agent-collapsed_&]:self-start">
+        {total > 0 && (
+          // Sits directly under the intro sentence.
+          <div className="mt-4 flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg [.arcova-agent-collapsed_&]:h-[44px] [.arcova-agent-collapsed_&]:rounded-[14px] text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm focus-visible:outline-none"
+                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm focus-visible:outline-none"
                 title="Actions"
               >
                 {pullingHubspotCrm || pushingToHubspot || runningEmailVerification ? (
@@ -3469,8 +3469,9 @@ export function ContactsWorkspace() {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 
@@ -4040,7 +4041,7 @@ export function ContactsWorkspace() {
                             </div>
 
                             <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex [.arcova-agent-collapsed_&]:lg:flex">
-                              <ArcovaLoader size={28} />
+                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
                           </div>
                         );
@@ -4293,7 +4294,7 @@ export function ContactsWorkspace() {
                           // Glass card wrapper — same surface treatment as the contact
                           // card below it (rounded, white-translucent, soft border,
                           // backdrop blur) so the two read as one stacked column.
-                          'fixed z-[51] flex items-center rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                          'fixed z-[51] flex items-center rounded-[1.3125rem] border border-arcova-teal/60 bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] ring-1 ring-arcova-teal/10 backdrop-blur-2xl backdrop-saturate-150',
                         )}
                         style={{
                           top: agentRect.top,
@@ -5922,6 +5923,13 @@ export function ContactsWorkspace() {
             // layout so agentRect continues to track its footprint.
             selectedLeadId && 'invisible',
           )}
+          // Reserve the full expanded column width while a contact is selected even
+          // though the leads page opens with the agent collapsed. Without this the
+          // collapsed column is 0-wide, agentRect nulls out, and the drawer falls
+          // back to a skinny fixed overlay in front of the table. Forcing the
+          // expanded layout makes the table reflow (push) and the drawer mirror the
+          // real, wider column — matching the "open agent, then click a row" path.
+          forceExpandedLayout={!!selectedLeadId}
           page="leads"
           pageContext={{
             leadsView: 'contacts',

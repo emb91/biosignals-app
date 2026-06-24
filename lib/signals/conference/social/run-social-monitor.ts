@@ -20,8 +20,8 @@
  *      conference-date phase in metadata driving the outreach angle.
  *   6. Recompute the contact's readiness (+ account readiness for its company).
  *
- * Cadence is plan-tiered by the caller via monitorDueForUser(runner:
- * 'conference-social'). Expired conferences are skipped (hard expiry).
+ * Cadence is plan-tiered by the caller via the contact sweep-target dispatcher.
+ * Expired conferences are skipped (hard expiry).
  */
 import { createAdminClient } from '@/lib/supabase-admin';
 import { listActiveCompanyStateForUser } from '@/lib/org-company-state';

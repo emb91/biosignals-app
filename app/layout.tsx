@@ -127,6 +127,11 @@ export default function RootLayout({
                 <ClientLayout>{children}</ClientLayout>
               </EnrichmentGuardProvider>
             </SetupStateProvider>
+            {process.env.NODE_ENV !== "production" && (
+              // clickfix dev toolbar — loaded from the local `npx clickfix` sidecar (:7331).
+              // eslint-disable-next-line @next/next/no-sync-scripts
+              <script src="http://localhost:7331/toolbar.js" async />
+            )}
           </AuthProvider>
         </PostHogProvider>
         {/* <Analytics /> */}

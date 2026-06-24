@@ -89,6 +89,14 @@ export interface AgentPanelProps {
   headerSubtitle?: React.ReactNode;
   className?: string;
   /**
+   * Force the side-rail column into its expanded (width-reserving) layout even when
+   * the panel is collapsed-by-default. Used when a parent overlays its own card over
+   * this slot (e.g. the contacts drawer): the expanded column reserves width so the
+   * page table reflows/pushes instead of being overlaid, and the parent's mirrored
+   * card gets the full column width rather than the skinny collapsed fallback.
+   */
+  forceExpandedLayout?: boolean;
+  /**
    * 'side-rail' (default) — glass panel fixed to the right edge of the layout.
    * 'central'             — full-width briefing-style chat (used by AgentCentral wrapper).
    */
@@ -255,7 +263,7 @@ function stripMarkdown(text: string): string {
 // surfaces where the user wants the full-width table first.
 const DEFAULT_COLLAPSED_PAGES = new Set<AgentPage>(['accounts', 'leads', 'outreach']);
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, forceExpandedLayout, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -540,18 +548,23 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   // outreach/log/import). Excludes the central briefing + data-sourcing surfaces,
   // which are intentionally distinct and have no collapse affordance.
   const collapsible = !lightSetupChat && !todayChat && !wide;
+  // `forceExpandedLayout` (parent overlays its own card here) wins over the panel's
+  // own collapsed state for everything layout-related: the column reserves width,
+  // the table reflows instead of being overlaid, and the body broadcast reports
+  // "not collapsed" so tables don't claim the freed width.
+  const effectiveCollapsed = collapsed && !forceExpandedLayout;
   // Broadcast the collapsed state on <body> so a page can keep its top-right
   // toolbar clear of the floating bar (e.g. the /contacts "Actions" button).
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    document.body.classList.toggle('arcova-agent-collapsed', collapsible && collapsed);
+    document.body.classList.toggle('arcova-agent-collapsed', collapsible && effectiveCollapsed);
     // Let tables react (claim the freed width → show more columns).
     window.dispatchEvent(new Event(AGENT_COLLAPSED_EVENT));
     return () => {
       document.body.classList.remove('arcova-agent-collapsed');
       window.dispatchEvent(new Event(AGENT_COLLAPSED_EVENT));
     };
-  }, [collapsible, collapsed]);
+  }, [collapsible, effectiveCollapsed]);
   const showBriefingOrb = embedGlass && briefingWelcome && !briefingSurfaceEngaged && !isLoading;
   const showBriefingIdleWelcome = embedGlass && briefingWelcome && messages.length === 0;
   const briefingChips = briefingIdleChips ?? (briefingWelcome ? DEFAULT_BRIEFING_IDLE_CHIPS : []);
@@ -729,7 +742,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               embedGlass && 'h-full min-h-0 overflow-hidden',
               embedGlass || lightSetupChat ? 'px-0 py-0' : 'px-4 py-4',
             )
-          : collapsible && collapsed
+          : collapsible && effectiveCollapsed
             // Collapsed: the column reserves no width so the page content (flex-1
             // sibling) reflows to fill the freed space. Stays `relative` + full
             // height so the compact bar can anchor to the top-right where the panel
@@ -740,7 +753,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         className,
       )}
     >
-      {collapsible && collapsed ? (
+      {collapsible && effectiveCollapsed ? (
         /* ── Collapsed: compact chat bar pinned to the top-right where the panel
            was, floating over the now-full-width page content. Same glass treatment
            as the full panel. Expand control restores the panel; sending a message

@@ -165,23 +165,10 @@ function useEnrichmentProgress(startedAt: string | null): { percent: number; lab
 }
 
 /** Side-panel banner variant (stacked: heading + label + full-width bar). */
-function CompanyEnrichmentProgress({ startedAt }: { startedAt: string | null }) {
-  const { percent, label } = useEnrichmentProgress(startedAt);
+function CompanyEnrichmentProgress(_props: { startedAt: string | null }) {
   return (
     <div className="min-w-0 flex-1">
       <p className="text-[12.5px] font-semibold text-arcova-teal">Enriching this company…</p>
-      <p className="mt-0.5 text-[12px] leading-relaxed text-[#1f475a]">{label}…</p>
-      <div className="mt-2.5 flex items-center gap-3">
-        <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-arcova-teal/12">
-          <div
-            className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
-            style={{ width: `${percent}%` }}
-          >
-            <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-14 rounded-full" />
-          </div>
-        </div>
-        <span className="text-[11px] font-medium tabular-nums text-arcova-teal">{percent}%</span>
-      </div>
     </div>
   );
 }
@@ -2941,7 +2928,7 @@ export default function CompaniesPage() {
                 {selectedAccountId && agentRect && (
                   <div
                     className={cn(
-                      'fixed z-[51] flex items-center rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                      'fixed z-[51] flex items-center rounded-[1.3125rem] border border-arcova-teal/60 bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] ring-1 ring-arcova-teal/10 backdrop-blur-2xl backdrop-saturate-150',
                     )}
                     style={{
                       top: agentRect.top,
@@ -2979,6 +2966,13 @@ export default function CompaniesPage() {
             'accounts-agent-col min-[1280px]:pl-1.5',
             selectedAccountId && 'invisible',
           )}
+          // Reserve the full expanded column width while a company card is open even
+          // though the accounts page opens with the agent collapsed. Without this the
+          // collapsed column is 0-wide, agentRect nulls out, and the card falls back
+          // to a skinny fixed overlay in front of the table. Forcing the expanded
+          // layout makes the table reflow (push) and the card mirror the real, wider
+          // column — matching the "open agent, then click a row" path.
+          forceExpandedLayout={!!selectedAccountId}
           page="accounts"
           pendingMessage={agentTrigger}
           pageContext={
