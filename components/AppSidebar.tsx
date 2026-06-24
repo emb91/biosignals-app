@@ -62,7 +62,6 @@ const topNavigation: NavItem[] = [
   { name: 'Today', href: ROUTES.today, icon: NavIconToday },
   { name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase },
   { name: 'Import', href: ROUTES.import, icon: NavIconImport },
-  { name: 'Triage', href: ROUTES.triage, icon: NavIconContact },
   { name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth },
   { name: 'Data', href: ROUTES.data, icon: NavIconData },
   { name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach },
@@ -560,6 +559,12 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             title: item.name,
           }),
         )}
+        {railIconButton('triage', NavIconContact, {
+          onClick: () => guardedNavigate(ROUTES.triage),
+          active: isActive(ROUTES.triage),
+          title: 'Triage',
+          dot: showContactsDot,
+        })}
         {railIconButton('contacts', NavIconContact, {
           onClick: () => guardedNavigate(ROUTES.contacts),
           active: contactsActive,
@@ -906,6 +911,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
 
                   {renderSectionLabel('Go-to-market')}
                   <div className="space-y-0.5">
+                    {renderNavItem({ name: 'Triage', href: ROUTES.triage, icon: NavIconContact })}
                     {renderNavItem({ name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact })}
                     {renderNavItem({ name: 'Companies', href: ROUTES.accounts, icon: NavIconAccount })}
                     {renderNavItem({ name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth })}
