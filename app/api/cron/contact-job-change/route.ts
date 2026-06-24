@@ -4,6 +4,7 @@ import { runJobChangeMonitor } from '@/lib/signals/run-job-change-monitor';
 import {
   contactSweepSubscribersForTargets,
   listDueContactSweepTargets,
+  markContactSubscriberSourceSweep,
   markContactSourceSweep,
   markContactSweep,
   refreshMonitoringUniverse,
@@ -75,6 +76,14 @@ async function runCron(request: Request) {
             markSharedTarget: false,
           });
         }
+        await markContactSubscriberSourceSweep({
+          orgId: item.orgId,
+          personId: item.personId,
+          source: item.source,
+          cadenceDays: item.cadenceDays,
+          status: didFail ? 'failed' : 'succeeded',
+          providerCostUsd: 0.004,
+        });
         if (didFail) failed += 1;
         else processed += 1;
       }));

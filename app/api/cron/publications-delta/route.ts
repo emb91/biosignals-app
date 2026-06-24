@@ -25,7 +25,9 @@ import {
   contactSweepSubscribersForTargets,
   listDueAccountSweepTargets,
   listDueContactSweepTargets,
+  markAccountSubscriberSourceSweep,
   markAccountSourceSweep,
+  markContactSubscriberSourceSweep,
   markContactSourceSweep,
 } from '@/lib/billing/monitoring';
 
@@ -128,6 +130,8 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
+        for (const item of work.accounts) failedCompanies.add(item.companyId);
+        for (const item of work.contacts) failedPersons.add(item.personId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/publications-delta] monitor failed for user ${userId}:`, error);
         await persistRunHistory(admin, {
@@ -144,6 +148,22 @@ async function runCron(request: Request) {
     if (byUser.size === 0) monitorSkipped = accountTargets.length + contactTargets.length;
 
     await Promise.all([
+      ...accountSubscribers.map((item) => markAccountSubscriberSourceSweep({
+        orgId: item.orgId,
+        companyId: item.companyId,
+        source: item.source,
+        cadenceDays: item.cadenceDays,
+        status: failedCompanies.has(item.companyId) ? 'failed' : 'succeeded',
+        providerCostUsd: 0,
+      })),
+      ...contactSubscribers.map((item) => markContactSubscriberSourceSweep({
+        orgId: item.orgId,
+        personId: item.personId,
+        source: item.source,
+        cadenceDays: item.cadenceDays,
+        status: failedPersons.has(item.personId) ? 'failed' : 'succeeded',
+        providerCostUsd: 0,
+      })),
       ...accountTargets.filter((target) => subscriberCompanyIds.has(target.companyId)).map((target) => markAccountSourceSweep({
         companyId: target.companyId,
         source: 'publications',

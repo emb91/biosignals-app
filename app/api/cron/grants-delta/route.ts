@@ -19,6 +19,7 @@ import { syncNihGrantsDelta } from '@/lib/signals/sync-nih-grants-delta';
 import {
   accountSweepSubscribersForTargets,
   listDueAccountSweepTargets,
+  markAccountSubscriberSourceSweep,
   markAccountSourceSweep,
   refreshAllMonitoringUniverses,
 } from '@/lib/billing/monitoring';
@@ -97,6 +98,7 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
+        for (const item of items) failedCompanies.add(item.companyId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/grants-delta] monitor failed for user ${userId}:`, error);
         await persistRunHistory(admin, {
@@ -111,6 +113,15 @@ async function runCron(request: Request) {
       }
     }
     if (byUser.size === 0) monitorSkipped = targets.length;
+    await Promise.all(subscribers.map((item) => markAccountSubscriberSourceSweep({
+      orgId: item.orgId,
+      companyId: item.companyId,
+      source: item.source,
+      cadenceDays: item.cadenceDays,
+      status: failedCompanies.has(item.companyId) ? 'failed' : 'succeeded',
+      resultCount: resultCountsByCompany.get(item.companyId) ?? 0,
+      providerCostUsd: 0,
+    })));
     const subscriberCompanyIds = new Set(subscribers.map((item) => item.companyId));
     await Promise.all(targets.filter((target) => subscriberCompanyIds.has(target.companyId)).map((target) => markAccountSourceSweep({
       companyId: target.companyId,
