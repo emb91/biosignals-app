@@ -28,6 +28,7 @@ import {
   verifiedMentionCompanyIds,
 } from '@/lib/companies/mention-provenance';
 import { eventScribeAdapter } from './eventscribe-adapter';
+import { informaAgendaAdapter } from './informa-agenda-adapter';
 import {
   normalizedSpeakerToken,
   resolvePresenterPeople,
@@ -44,9 +45,10 @@ type Admin = ReturnType<typeof createAdminClient>;
 
 export const PRESENTER_SOURCE = 'conference_presenter';
 
-/** Adapter registry — keyed by agenda platform. Only eventScribe is cracked. */
+/** Adapter registry — keyed by agenda platform (eventScribe + Informa cracked). */
 const PRESENTER_ADAPTERS: Partial<Record<PresenterPlatform, PresenterSourceAdapter>> = {
   eventscribe: eventScribeAdapter,
+  informa: informaAgendaAdapter,
 };
 
 export function getPresenterAdapter(

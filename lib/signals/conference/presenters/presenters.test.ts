@@ -247,3 +247,31 @@ test('presenterContactAdmission: rejects a verified match on a non-accepted sour
   const a = presenterContactAdmission({ personId: 'p-1', matches, acceptedSourceFields: ['speaker_name'] });
   assert.equal(a.admitted, false);
 });
+
+// ── Informa /speakers/ adapter ──────────────────────────────────────────────
+import { parseInformaSpeakers } from './informa-agenda-adapter';
+
+const INFORMA_SPEAKERS_FIXTURE =
+  '{"selectedField":"NAME","speakers":[' +
+  '{"@class":"informa.event.view.speaker.EsSpeakerView","forename":"Todd","surname":"McDevitt","jobTitle":"Vice President, Cell Therapy","company":"Genentech","path":"todd-mcdevitt","logo":{"url":"x.jpg"}},' +
+  '{"@class":"informa.event.view.speaker.EsSpeakerView","forename":"Arvind","surname":"Natarajan","jobTitle":"SVP, Technical Development","company":"Iovance Biotherapeutics","path":"arvind-natarajan"},' +
+  // duplicate of the first — must dedupe on name+company
+  '{"@class":"informa.event.view.speaker.EsSpeakerView","forename":"Todd","surname":"McDevitt","jobTitle":"Vice President, Cell Therapy","company":"Genentech","path":"todd-mcdevitt-2"},' +
+  // unicode-escaped affiliation must decode
+  '{"@class":"informa.event.view.speaker.EsSpeakerView","forename":"Jos\\u00e9","surname":"Garc\\u00eda","jobTitle":"CSO","company":"BioNova S\\u00e0rl","path":"jose"}' +
+  ']}';
+
+test('parseInformaSpeakers: extracts name + affiliation + title, dedupes, decodes unicode', () => {
+  const rows = parseInformaSpeakers(INFORMA_SPEAKERS_FIXTURE, 'https://informaconnect.com/x/speakers/');
+  assert.equal(rows.length, 3); // 4 objects, 1 is a dup
+  const todd = rows.find((r) => r.speakerName === 'Todd McDevitt');
+  assert.ok(todd);
+  assert.equal(todd.affiliationRaw, 'Genentech');
+  assert.equal(todd.speakerTitle, 'Vice President, Cell Therapy');
+  assert.equal(todd.appearanceType, 'speaker');
+  assert.equal(rows.find((r) => r.affiliationRaw === 'BioNova Sàrl')?.speakerName, 'José García');
+});
+
+test('parseInformaSpeakers: empty / non-speaker html yields no rows', () => {
+  assert.equal(parseInformaSpeakers('<html>no speakers here</html>', 'u').length, 0);
+});
