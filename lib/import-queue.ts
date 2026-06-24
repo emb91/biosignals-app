@@ -380,6 +380,15 @@ export async function processQueuedRowsInBackground(params: {
           linkedin_url: resolvedLinkedinForStorage,
           profile_photo_url: enrichmentResult.profile_photo_url,
           headline: enrichmentResult.headline,
+          // Persist title + employer onto the contact/company. Prefer the
+          // enriched (Apollo) value, fall back to what the CSV provided. Without
+          // these the ingested record dropped job_title and company_name/domain
+          // to null, so the contact list showed blank role/company and contact
+          // fit scored 0 even though Apollo returned the data.
+          job_title: enrichmentResult.job_title || (rawData.job_title as string) || undefined,
+          company_name: enrichmentResult.company_name || (rawData.company_name as string) || undefined,
+          company_domain:
+            enrichmentResult.company_domain || (rawData.company_domain as string) || undefined,
           location: finalLocation,
           city: parsedLocation.city || undefined,
           country: parsedLocation.country || undefined,
