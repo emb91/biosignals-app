@@ -815,6 +815,13 @@ export default function OutreachPage() {
             'outreach-agent-col min-[1280px]:pl-1.5',
             sidePanelOpen && 'invisible',
           )}
+          // Reserve the full expanded column width while the editor/details panel
+          // is open even though the outreach page opens with the agent collapsed.
+          // Without this the collapsed column is 0-wide, agentRect nulls out, and
+          // the side panel falls back to a skinny fixed overlay in front of the
+          // table. Forcing the expanded layout makes the table reflow and the
+          // panel mirror the real, wider column. (Same fix as /contacts.)
+          forceExpandedLayout={sidePanelOpen}
           page="outreach"
           pendingMessage={agentTrigger}
           pageContext={{

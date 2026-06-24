@@ -31,6 +31,7 @@ import {
   NavIconSetup,
   NavIconSignals,
   NavIconToday,
+  NavIconTriage,
 } from '@/components/NavRailIcons';
 import { cn } from '@/lib/utils';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
@@ -559,7 +560,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             title: item.name,
           }),
         )}
-        {railIconButton('triage', NavIconContact, {
+        {railIconButton('triage', NavIconTriage, {
           onClick: () => guardedNavigate(ROUTES.triage),
           active: isActive(ROUTES.triage),
           title: 'Triage',
@@ -911,7 +912,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
 
                   {renderSectionLabel('Go-to-market')}
                   <div className="space-y-0.5">
-                    {renderNavItem({ name: 'Triage', href: ROUTES.triage, icon: NavIconContact })}
+                    {renderNavItem({ name: 'Triage', href: ROUTES.triage, icon: NavIconTriage })}
                     {renderNavItem({ name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact })}
                     {renderNavItem({ name: 'Companies', href: ROUTES.accounts, icon: NavIconAccount })}
                     {renderNavItem({ name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth })}

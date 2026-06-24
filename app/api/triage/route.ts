@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgContext } from '@/lib/org-context';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
 
 type TriageGroup = 'high' | 'medium' | 'low';
 
@@ -42,6 +43,8 @@ const TRIAGE_ORDER: Record<TriageGroup | 'untriaged', number> = {
   untriaged: 3,
 };
 
+// Fallback only — actual monthly enrichment throughput comes from the org's
+// plan (importedEnrichmentsIncludedMonthly), not a fixed guess.
 const MONTHLY_HIGH_FIT_THROUGHPUT = 300;
 
 function isTriageGroup(value: unknown): value is TriageGroup {
@@ -86,9 +89,10 @@ function addMonths(date: Date, months: number): Date {
   return copy;
 }
 
-function expectedEnrichmentDate(highFitIndex: number | null): string | null {
+function expectedEnrichmentDate(highFitIndex: number | null, monthlyThroughput: number): string | null {
   if (highFitIndex == null) return null;
-  const monthOffset = Math.floor(highFitIndex / MONTHLY_HIGH_FIT_THROUGHPUT) + 1;
+  const perMonth = monthlyThroughput > 0 ? monthlyThroughput : MONTHLY_HIGH_FIT_THROUGHPUT;
+  const monthOffset = Math.floor(highFitIndex / perMonth) + 1;
   return addMonths(new Date(), monthOffset).toISOString();
 }
 
@@ -110,11 +114,14 @@ export async function GET() {
 
   try {
     const admin = createAdminClient();
+    const entitlements = await getOrgEntitlements(context.orgId).catch(() => null);
+    const monthlyThroughput =
+      entitlements?.caps.importedEnrichmentsIncludedMonthly ?? MONTHLY_HIGH_FIT_THROUGHPUT;
     const userIds = await getOrgUserIds(admin, context.orgId);
     if (userIds.length === 0) {
       return NextResponse.json({
         data: [],
-        summary: { total: 0, high: 0, medium: 0, low: 0, untriaged: 0, scheduledHighFit: 0, monthlyThroughput: MONTHLY_HIGH_FIT_THROUGHPUT },
+        summary: { total: 0, high: 0, medium: 0, low: 0, untriaged: 0, scheduledHighFit: 0, monthlyThroughput },
       });
     }
 
@@ -175,7 +182,7 @@ export async function GET() {
         triage_overridden_by: row.triage_overridden_by ?? null,
         triage_overridden_at: row.triage_overridden_at ?? null,
         pinned_at: row.pinned_at ?? null,
-        expected_enrichment_date: expectedEnrichmentDate(queueIndex),
+        expected_enrichment_date: expectedEnrichmentDate(queueIndex, monthlyThroughput),
         queue_position: queueIndex == null ? null : queueIndex + 1,
         apparent_fit_score: row.apparent_fit_score,
         raw_data: raw,
@@ -190,7 +197,7 @@ export async function GET() {
         if (row.expected_enrichment_date) acc.scheduledHighFit += 1;
         return acc;
       },
-      { total: 0, high: 0, medium: 0, low: 0, untriaged: 0, scheduledHighFit: 0, monthlyThroughput: MONTHLY_HIGH_FIT_THROUGHPUT },
+      { total: 0, high: 0, medium: 0, low: 0, untriaged: 0, scheduledHighFit: 0, monthlyThroughput },
     );
 
     return NextResponse.json({ data: rows, summary });

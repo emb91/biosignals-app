@@ -110,6 +110,23 @@ export function NavIconContact({ className }: IconProps) {
   );
 }
 
+export function NavIconTriage({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={stroke.width}
+      strokeLinecap={stroke.cap}
+      strokeLinejoin={stroke.join}
+      className={cn('shrink-0', className)}
+      aria-hidden
+    >
+      <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" />
+    </svg>
+  );
+}
+
 export function NavIconAccount({ className }: IconProps) {
   return (
     <svg

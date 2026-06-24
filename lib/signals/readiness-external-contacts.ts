@@ -177,9 +177,9 @@ function buildDecision(
     return {
       sourceEventType: 'recently_changed_company',
       signalKeys: ['recently_changed_company'],
-      title: 'Apify / LinkedIn company change detected',
+      title: 'LinkedIn company change detected',
       summary:
-        'Arcova detected through Apify / LinkedIn monitoring that this contact appears to have moved to a different company.',
+        'Arcova detected through LinkedIn activity monitoring that this contact appears to have moved to a different company.',
       buyerFunctionsOverride,
       metadata: {
         previous_company_name: previous.companyName,
@@ -204,9 +204,9 @@ function buildDecision(
       return {
         sourceEventType: 'recently_promoted',
         signalKeys: ['recently_promoted'],
-        title: 'Apify / LinkedIn promotion detected',
+        title: 'LinkedIn promotion detected',
         summary:
-          'Arcova detected through Apify / LinkedIn monitoring that this contact appears to have been promoted.',
+          'Arcova detected through LinkedIn activity monitoring that this contact appears to have been promoted.',
         buyerFunctionsOverride,
         metadata: {
           previous_job_title: previous.jobTitle,
@@ -223,9 +223,9 @@ function buildDecision(
       return {
         sourceEventType: 'new_internal_role',
         signalKeys: ['new_internal_role'],
-        title: 'Apify / LinkedIn internal role change detected',
+        title: 'LinkedIn internal role change detected',
         summary:
-          'Arcova detected through Apify / LinkedIn monitoring that this contact appears to have moved into a different internal function.',
+          'Arcova detected through LinkedIn activity monitoring that this contact appears to have moved into a different internal function.',
         buyerFunctionsOverride,
       metadata: {
         previous_job_title: previous.jobTitle,
@@ -241,9 +241,9 @@ function buildDecision(
     return {
       sourceEventType: 'title_change',
       signalKeys: ['title_change'],
-      title: 'Apify / LinkedIn title change detected',
+      title: 'LinkedIn title change detected',
       summary:
-        'Arcova detected a materially different title for this contact through Apify / LinkedIn monitoring.',
+        'Arcova detected a materially different title for this contact through LinkedIn activity monitoring.',
       buyerFunctionsOverride,
       metadata: {
         previous_job_title: previous.jobTitle,
@@ -264,8 +264,8 @@ function buildDecision(
     return {
       sourceEventType: 'new_to_role',
       signalKeys: ['new_to_role'],
-      title: 'New Apify / LinkedIn stakeholder detected',
-      summary: 'Arcova surfaced a newly relevant contact from Apify / LinkedIn monitoring.',
+      title: 'New LinkedIn stakeholder detected',
+      summary: 'Arcova surfaced a newly relevant contact from LinkedIn activity monitoring.',
       buyerFunctionsOverride,
       metadata: {
         current_company_name: current.companyName,

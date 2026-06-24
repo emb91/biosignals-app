@@ -16,7 +16,8 @@
  *   title_change              — same employer, different title
  *   new_to_role               — first-time check; relevant stakeholder detected
  *
- * Cron cadence: daily (see /api/cron/contact-job-change).
+ * Cron cadence: weekly heartbeat, with per-contact eligibility controlled by
+ * the shared sweep-target dispatcher (see /api/cron/contact-job-change).
  */
 
 import { createAdminClient } from '@/lib/supabase-admin';
@@ -31,7 +32,6 @@ import {
   recomputeAccountReadiness,
   recomputeContactReadiness,
 } from '@/lib/signals/readiness-service';
-import { persistRunHistory } from '@/lib/signals/run-history';
 import { SWEEP_FIT_THRESHOLD } from '@/lib/signals/sweep-fit-gate';
 import { resolveCadenceDaysForUser } from '@/lib/signals/job-change-cadence';
 import { runApifyActor } from '@/lib/apify';
@@ -42,12 +42,10 @@ import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-// Per-run scrape ceiling. NOT the cadence — see runJobChangeMonitor: the rolling
-// sweep sizes its batch from the user's plan cadence (weekly/monthly) and clamps
-// to this ceiling so one invocation stays inside the route's 300s function budget.
-// Profile scrapes run sequentially (~5–15s each), so a single run realistically
-// fits a few dozen. To cover a large list faster than the ceiling allows, raise
-// the cron frequency (throughput lever) rather than this number.
+// Per-run scrape ceiling. NOT the cadence. Scheduled runs receive due contact IDs
+// from the shared sweep-target dispatcher; manual/fallback runs size their batch
+// from the user's plan cadence and clamp to this ceiling so one invocation stays
+// inside the route's 300s function budget.
 const DEFAULT_BATCH = 40;
 const MAX_BATCH = 100;
 
@@ -882,10 +880,9 @@ export async function runJobChangeMonitor(
 
     query.gte('contact_fit_score', SWEEP_FIT_THRESHOLD).in('company_id', goodFitCompanyIds);
 
-    // Size today's batch to the user's plan cadence: re-check the whole good-fit
-    // list once per cadence window, so per-day work = ceil(goodFit / cycleDays).
-    // Small lists scrape far fewer than the ceiling (cost saving); large lists
-    // saturate the ceiling and lean on cron frequency to keep up.
+    // Fallback/manual routine run: use the user's plan cadence to avoid scraping
+    // the full good-fit list at once. The scheduled cron passes explicit due
+    // contact IDs from the shared sweep-target dispatcher.
     const { count: goodFitContacts } = await admin
       .from('contacts')
       .select('id', { count: 'exact', head: true })
@@ -896,8 +893,8 @@ export async function runJobChangeMonitor(
       .in('company_id', goodFitCompanyIds);
 
     const { cycleDays } = await resolveCadenceDaysForUser(input.userId);
-    const desiredDaily = Math.ceil((goodFitContacts ?? 0) / Math.max(cycleDays, 1));
-    limit = Math.min(perRunCeiling, Math.max(desiredDaily, 1));
+    const desiredForCadence = Math.ceil((goodFitContacts ?? 0) / Math.max(cycleDays, 1));
+    limit = Math.min(perRunCeiling, Math.max(desiredForCadence, 1));
   }
 
   query.limit(limit);

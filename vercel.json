@@ -34,7 +34,7 @@
     },
     {
       "path": "/api/cron/contact-job-change",
-      "schedule": "0 7 * * *"
+      "schedule": "0 7 * * 2"
     },
     {
       "path": "/api/cron/contact-enrichment-queue",

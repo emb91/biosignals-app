@@ -1,11 +1,9 @@
 /**
  * Job-change re-check cadence, by plan tier.
  *
- * Each good-fit contact should get its LinkedIn profile re-scraped at least
- * once per this interval. Higher tiers get fresher detection. The job-change
- * monitor sizes its daily sweep batch as ceil(goodFitContacts / cycleDays), so
- * the coverage cadence stays fixed as a customer's list grows instead of being
- * pinned to a flat per-day number.
+ * Each good-fit contact should get its LinkedIn profile re-scraped no more
+ * often than this interval. Higher tiers get fresher detection; lower tiers
+ * reveal job-change data on the same plan cadence as the other signal monitors.
  *
  * Agreed starting points (Emma owns the final numbers, tunable via env without
  * a deploy):
@@ -50,8 +48,8 @@ export function cadenceDaysForPlan(plan: CadencePlan): number {
 
 /**
  * Resolve a user's plan tier and its re-check cadence. Lightweight on purpose
- * (reads org membership + subscription status only) so it's cheap to call once
- * per user inside the daily cron loop.
+ * (reads org membership + subscription status only) so admin/manual runs can
+ * reuse the same tier rules as the scheduled sweep dispatcher.
  *
  * Mirrors getOrgEntitlements' tier logic: billing-exempt orgs (internal/owner)
  * get top-tier freshness; a live subscription maps to its plan; everything else

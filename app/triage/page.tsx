@@ -1,9 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import AppSidebar from '@/components/AppSidebar';
+import { AgentPanel } from '@/components/AgentPanel';
 import { cn } from '@/lib/utils';
-import { CalendarClock, ChevronRight, ListChecks, Pin, RefreshCw, Search, Sparkles, X } from 'lucide-react';
+import { ROUTES } from '@/lib/routes';
+import { CalendarClock, ChevronRight, ListChecks, Pin, Sparkles, X } from 'lucide-react';
+
+const HubSpotLogo = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+    <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z" />
+  </svg>
+);
 
 type TriageGroup = 'high' | 'medium' | 'low';
 
@@ -59,6 +68,21 @@ function formatDate(value: string | null): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function friendlyError(message: string | null): string | null {
+  if (!message) return null;
+  const trimmed = message.trim();
+  // Hide raw backend/database errors (SQL column/table/relation messages, stack-trace
+  // shaped text) behind a plain-language message customers can act on.
+  const looksTechnical =
+    /(column|relation|table|constraint|syntax error|does not exist|null value|violates|undefined|cannot read|\bat\s+\/|\.[tj]sx?:\d)/i.test(
+      trimmed,
+    );
+  if (looksTechnical) {
+    return 'Something went wrong loading your triage list. Please refresh and try again.';
+  }
+  return trimmed;
+}
+
 function triageLabel(value: TriageGroup | null): string {
   if (value === 'high') return 'High';
   if (value === 'medium') return 'Medium';
@@ -95,22 +119,11 @@ export default function TriagePage() {
   const [rows, setRows] = useState<TriageRow[]>([]);
   const [summary, setSummary] = useState<TriageSummary | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const selected = selectedId ? rows.find((row) => row.id === selectedId) ?? null : null;
-
-  const filteredRows = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((row) =>
-      [row.name, row.company, row.title, row.email, row.company_domain]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(needle)),
-    );
-  }, [rows, search]);
 
   const loadTriage = async () => {
     setLoading(true);
@@ -210,30 +223,20 @@ export default function TriagePage() {
                 </p>
 
                 <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <label className="flex h-10 min-w-[18rem] max-w-md flex-1 items-center gap-2 rounded-lg border border-[rgba(13,53,71,0.12)] bg-white/70 px-3 shadow-sm">
-                    <Search className="h-4 w-4 text-arcova-navy/35" />
-                    <input
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search triage"
-                      className="min-w-0 flex-1 bg-transparent text-sm text-arcova-navy outline-none placeholder:text-arcova-navy/35"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void loadTriage()}
-                    className="inline-flex h-10 items-center gap-2 rounded-lg border border-[rgba(13,53,71,0.12)] bg-white/70 px-3 text-sm font-semibold text-arcova-navy shadow-sm transition-colors hover:bg-white"
+                  <Link
+                    href={ROUTES.import}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#ff7a59] px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#e8693f]"
                   >
-                    <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-                    Refresh
-                  </button>
+                    <HubSpotLogo className="h-4 w-4" />
+                    Import from HubSpot
+                  </Link>
                 </div>
               </div>
             </div>
 
             {error && (
               <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-                {error}
+                {friendlyError(error)}
               </div>
             )}
 
@@ -264,12 +267,12 @@ export default function TriagePage() {
                     <div className="flex items-center justify-center py-24">
                       <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-arcova-teal" />
                     </div>
-                  ) : filteredRows.length === 0 ? (
+                  ) : rows.length === 0 ? (
                     <div className="px-4 py-12 text-center text-sm text-arcova-navy/45">
                       No pending triage rows.
                     </div>
                   ) : (
-                    filteredRows.map((row, index) => {
+                    rows.map((row, index) => {
                       const isSelected = selected?.id === row.id;
                       return (
                         <button
@@ -319,6 +322,14 @@ export default function TriagePage() {
             </div>
           </div>
         </main>
+
+        {!selected && (
+          <AgentPanel
+            className="min-[1280px]:pl-1.5"
+            page="leads"
+            pageContext={{ leadsView: 'contacts' }}
+          />
+        )}
 
         {selected && (
           <aside className="hidden min-h-0 w-[24rem] shrink-0 flex-col overflow-hidden rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.72)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2),0_2px_6px_-2px_rgba(13,53,71,0.08)] backdrop-blur-2xl backdrop-saturate-150 md:flex">

@@ -1,7 +1,7 @@
 /**
  * Pure cadence rules for the signal delta crons — no DB / module dependencies,
- * so they're trivially unit-testable. The DB-bound resolvers that consume these
- * live in ./monitor-cadence (which re-exports everything here).
+ * so they're trivially unit-testable. DB-bound sweep-target dispatch lives in
+ * lib/billing/monitoring.ts.
  *
  * Each delta cron fires once a week on its own weekday (see vercel.json). Two
  * gates ride that weekly heartbeat:
