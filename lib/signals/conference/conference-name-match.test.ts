@@ -17,8 +17,14 @@ import assert from 'node:assert/strict';
 import { normalizeCompanyForMatching } from '../company-name-variants';
 import { verifyNormalizedCompanyEvidence } from '../../companies/match-helpers';
 import { parseSpargoExhibitors } from './adapters/spargo';
+import { parseA2zExhibitors, a2zEventMapUrl } from './adapters/a2z';
 import { parseSmallWorldLabsExhibitors } from './adapters/smallworldlabs';
-import { decodeMysGlyphs, splitMysRow } from './adapters/mapyourshow';
+import {
+  calibrateMysOffset,
+  decodeMysGlyphs,
+  rowsFromPositionedText,
+  splitMysRow,
+} from './adapters/mapyourshow';
 
 /** Verify an exhibitor name against a canonical company name + aliases. */
 function matches(exhibitorName: string, canonicalName: string, aliases: string[] = []): boolean {
@@ -82,6 +88,51 @@ test('smallworldlabs parser extracts company anchors + absolute profile url', ()
   assert.equal(rows[0].sourceUrl, 'https://asgct2026.smallworldlabs.com/co/agc-biologics');
 });
 
+test('a2z EventMap parser pairs exhibitorName with the row booth + decodes entities', () => {
+  // Mirrors the real EventMap.aspx markup: a companyName cell with an
+  // exhibitorName anchor, followed by a boothLabel anchor in the same row.
+  const html = `
+    <tr data-boothid="111140">
+      <td class="companyName"><a class="exhibitorName" href="eBooth.aspx?BoothID=111140">Bruker Nano Inc.</a></td>
+      <td class="boothLabel aa-mapIt"><a class="boothLabel" href="#" data-boothlabels="1917">1917</a></td>
+    </tr>
+    <tr data-boothid="110001">
+      <td class="companyName"><a class="exhibitorName" href="eBooth.aspx?BoothID=110001">Bristol &amp; Myers</a></td>
+      <td class="boothLabel aa-mapIt"><a class="boothLabel" href="#" data-boothlabels="BS 44">BS 44</a></td>
+    </tr>
+  `;
+  const src = 'https://s19.a2zinc.net/clients/sfn/sfn26/Public/EventMap.aspx?shMode=E';
+  const rows = parseA2zExhibitors(html, src);
+  assert.deepEqual(rows, [
+    { name: 'Bruker Nano Inc.', booth: '1917', sourceUrl: src },
+    { name: 'Bristol & Myers', booth: 'BS 44', sourceUrl: src },
+  ]);
+});
+
+test('a2z parser dedupes on name+booth (multi-booth exhibitors kept distinct)', () => {
+  const html = `
+    <td class="companyName"><a class="exhibitorName" href="#">Abbott Diabetes Care</a></td>
+    <td class="boothLabel"><a class="boothLabel" href="#">1418</a></td>
+    <td class="companyName"><a class="exhibitorName" href="#">Abbott Diabetes Care</a></td>
+    <td class="boothLabel"><a class="boothLabel" href="#">BS 19</a></td>
+    <td class="companyName"><a class="exhibitorName" href="#">Abbott Diabetes Care</a></td>
+    <td class="boothLabel"><a class="boothLabel" href="#">1418</a></td>
+  `;
+  const rows = parseA2zExhibitors(html, 'x');
+  // Two distinct booths survive; the exact-duplicate (1418) is collapsed.
+  assert.deepEqual(rows.map((r) => r.booth), ['1418', 'BS 19']);
+});
+
+test('a2z url normaliser rewrites Exhibitors.aspx to the EventMap data view', () => {
+  assert.equal(
+    a2zEventMapUrl('https://s19.a2zinc.net/clients/sfn/sfn26/Public/Exhibitors.aspx'),
+    'https://s19.a2zinc.net/clients/sfn/sfn26/Public/EventMap.aspx?shMode=E',
+  );
+  // An existing EventMap URL is passed through untouched (query preserved).
+  const em = 'https://www.expo.acc.org/ACC26/Public/EventMap.aspx?shMode=E';
+  assert.equal(a2zEventMapUrl(em), em);
+});
+
 // ── Map Your Show font offset + row split ────────────────────────────────────
 test('mapyourshow +29 glyph offset decodes stored codes back to readable text', () => {
   // "BIO" stored as codes minus 29: B(66)->37, I(73)->44, O(79)->50
@@ -91,4 +142,52 @@ test('mapyourshow +29 glyph offset decodes stored codes back to readable text', 
 test('mapyourshow row split separates name from trailing booth', () => {
   assert.deepEqual(splitMysRow('Acme Therapeutics    1430'), { name: 'Acme Therapeutics', booth: '1430' });
   assert.deepEqual(splitMysRow('Lonely Company'), { name: 'Lonely Company' });
+});
+
+// ── Map Your Show offset calibration (ToUnicode-less fallback path) ───────────
+test('mapyourshow offset calibration learns the shift from a header anchor', () => {
+  // ToUnicode worked: codes already spell "Booth", so the learned offset is 0.
+  assert.equal(calibrateMysOffset([66, 111, 111, 116, 104], 'Booth'), 0);
+  // Shifted subset font: "Name" stored as codes-29 -> calibrate back to +29.
+  const shifted = 'Name'.split('').map((c) => c.charCodeAt(0) - 29);
+  assert.equal(calibrateMysOffset(shifted, 'Name'), 29);
+  // Once learned, decodeMysGlyphs applies it to recover the text.
+  assert.equal(decodeMysGlyphs(shifted, 29), 'Name');
+  // No single constant maps the codes onto the expected text -> null (bail).
+  assert.equal(calibrateMysOffset([66, 99, 111, 116, 104], 'Booth'), null);
+  // Length mismatch / empty -> null.
+  assert.equal(calibrateMysOffset([66, 111], 'Booth'), null);
+  assert.equal(calibrateMysOffset([], ''), null);
+});
+
+// ── Map Your Show two-column row reconstruction ──────────────────────────────
+test('mapyourshow rebuilds name/booth rows from positioned text', () => {
+  // One page laid out like the real export: names at x≈47, booths at x≈451,
+  // rows ~22pt apart (y descending). Includes the header row, a normal row,
+  // a wrapped multi-line name, and a genuinely booth-less exhibitor.
+  const src = 'https://bio2026.mapyourshow.com/8_0/exhibitor/exhibitor-list.cfm?export=pdf';
+  const page = [
+    { str: '2026 BIO International Convention', x: 42, y: 730 },
+    { str: 'Name', x: 47, y: 654 },
+    { str: 'Booth', x: 451, y: 654 },
+    // normal row
+    { str: 'AbbVie', x: 47, y: 631 },
+    { str: '2103', x: 451, y: 631 },
+    // wrapped name: two name fragments straddling the booth's vertical center
+    { str: 'Investment and Finance Office of the Presidency of the Republic of', x: 47, y: 479 },
+    { str: 'Türkiye', x: 47, y: 464 },
+    { str: '4951', x: 451, y: 472 },
+    // booth-less exhibitor (no booth fragment near its y)
+    { str: 'Amgen', x: 47, y: 420 },
+  ];
+  const rows = rowsFromPositionedText([page], src);
+  assert.deepEqual(rows, [
+    { name: 'AbbVie', booth: '2103', sourceUrl: src },
+    {
+      name: 'Investment and Finance Office of the Presidency of the Republic of Türkiye',
+      booth: '4951',
+      sourceUrl: src,
+    },
+    { name: 'Amgen', sourceUrl: src },
+  ]);
 });

@@ -353,6 +353,26 @@ export default function SettingsPage() {
             )}
           </section>
 
+          {/* ── Developer access (MCP) ───────────────────────────────────── */}
+          <section id="developer-access" className="mt-8 scroll-mt-6">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Developer access</h2>
+            <p className="mt-1 text-sm text-[#7d909a]">
+              Connect Arcova to AI assistants and tools that speak MCP. Create a token and add it to your client.
+            </p>
+            <Link
+              href="/settings/api-tokens"
+              className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-white/80 bg-white/70 p-5 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl hover:bg-white/90"
+            >
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold text-[#0d3547]">Access tokens</h3>
+                <p className="mt-1 text-sm text-[#7d909a]">
+                  Generate, view, and revoke the tokens that let external tools query your workspace.
+                </p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-[#7d909a]" />
+            </Link>
+          </section>
+
           {/* ── Outreach voice ───────────────────────────────────────────── */}
           <section id="outreach-voice" className="mt-8 scroll-mt-6">
             <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Outreach voice</h2>

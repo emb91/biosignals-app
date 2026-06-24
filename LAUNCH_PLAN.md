@@ -109,9 +109,13 @@ the critical path; B and D can run in parallel with A.
 **🟦 Codex:** before enforcement — verify real provider success/failure/refund paths, monitoring
 coverage at the promised cadence, and a live-mode Stripe test-clock pass. Then verify the full
 subscribe → credit grant → limit → pack → renew → payment failure/grace → recovery → cancel lifecycle.
+Also verify each self-serve subscription transition recomputes the monitoring universe:
+Starter ↔ Growth updates cadence, cancellation/grace expiry removes active acquisition pressure,
+and recovery restores it.
 
 **Gate:** real cards charged; credits granted exactly once; over-limit actions correctly gated;
-failed actions refund correctly; provider names remain internal.
+failed actions refund correctly; provider names remain internal; shared source sweep targets
+match the fastest active subscriber for overlapping monitored entities.
 
 ---
 
@@ -159,11 +163,14 @@ Use one internal Starter workspace and one internal Growth workspace.
 5. Activate monitored contacts and accounts close to each tier cap.
 6. Run contact and company dispatchers repeatedly until a complete monthly/weekly cycle
    is represented. Confirm due, processed, failed, overdue, and provider-cost telemetry.
-7. Reconcile customer actions against `org_credit_transactions`, `org_usage_events`,
+7. Confirm shared cadence with overlapping entities: one internal Starter workspace and
+   one internal Growth workspace monitor the same account/contact; acquisition targets
+   go weekly once, while Starter signal attribution remains monthly.
+8. Reconcile customer actions against `org_credit_transactions`, `org_usage_events`,
    `apify_run_usage`, and monitoring records daily for seven days.
-8. In Stripe test mode, exercise monthly and annual signup, webhook replay, renewal,
+9. In Stripe test mode, exercise monthly and annual signup, webhook replay, renewal,
    credit-pack purchase, failed payment/grace, recovery, cancellation, and annual expiry.
-9. Enable enforcement for one internal workspace/action at a time before enabling it globally.
+10. Enable enforcement for one internal workspace/action at a time before enabling it globally.
 
 Paid launch gate: no double charges, no lost refunds, monitoring meets cadence, actual COGS
 matches telemetry, and every Stripe lifecycle event is idempotent.

@@ -2,20 +2,24 @@
  * Small World Labs adapter — PARTIAL.
  *
  * Powers ASGCT (asgct2026.smallworldlabs.com). The /exhibitors page
- * server-renders an alphabetic filter list of company anchors:
+ * server-renders the first page of the exhibitor directory table — each row is
+ * a `<td>` with a favorite-star control and the company anchor:
  *   <a class="generic-option-link" href="/co/agc-biologics" ...>AGC Biologics</a>
  * The anchor text is the display name; /co/<slug> is the profile URL.
  *
  * Verified live (2026-06-24, no auth): 40 companies server-rendered this way
- *   (AGC Biologics, ACROBiosystems, Andelyn Biosciences Inc., Altasciences, ATCC …).
+ *   (3PBIOVIAN, AAVnerGene, ABEC, Abnova Corporation, ACGT, ACROBiosystems,
+ *    AGC Biologics, Akadeum Life Sciences …) — the first directory page, NOT an
+ *    A–Z filter nav (each anchor sits in a real exhibitor row).
  *
  * ⚠️ PARTIAL: ASGCT has ~320 exhibitors. The remaining ~280 load via the
  * member-directory widget AJAX (page references /swl/js/ajax.js +
- * js_ajax_refresh.js and a paginated "widget" listing) which needs the rendered
- * page's widget id + session — NOT reproducible with a bare fetch. To finish:
- * capture the widget directory XHR from a real browser session, or use a
- * headless render (Apify/Playwright) for the full list. See
- * docs/conference-ingestion-deep.md §3.
+ * js_ajax_refresh.js). Re-checked live 2026-06-24: the static HTML exposes NO
+ * pagination params, widget id, or total count — the directory is a stateful
+ * widget that pages via XHR tied to the rendered session, so it is NOT
+ * reproducible with a bare fetch. To finish: capture the widget directory XHR
+ * from a real browser session, or use a headless render (Apify/Playwright) for
+ * the full list. See docs/conference-ingestion-deep.md §3.
  */
 import type { ConferenceAdapter, ConferenceForFetch, ExhibitorRecord } from './types';
 

@@ -3384,7 +3384,7 @@ export function ContactsWorkspace() {
   if (!user) return null;
 
   const contactsPageTitleBlock = (
-    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between lg:[.arcova-agent-collapsed_&]:pr-[376px]">
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
           <Users className="h-3.5 w-3.5" />
@@ -3401,14 +3401,14 @@ export function ContactsWorkspace() {
       </div>
 
       {total > 0 && (
-        // When the agent is collapsed it floats over the top-right; drop the
-        // Actions cluster below it (right-aligned with the table) so they stack
-        // cleanly instead of overlapping.
-        <div className="flex items-center gap-2 lg:[.arcova-agent-collapsed_&]:mt-[5rem] lg:[.arcova-agent-collapsed_&]:self-start">
+        // When the agent is collapsed it floats over the top-right (right-aligned
+        // with the table). Drop the Actions cluster in line, directly to the left
+        // of the bar — matched to the chat input's height + corner radius.
+        <div className="flex items-center gap-2 lg:[.arcova-agent-collapsed_&]:mt-[3px] lg:[.arcova-agent-collapsed_&]:self-start">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm focus-visible:outline-none"
+                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg [.arcova-agent-collapsed_&]:h-[44px] [.arcova-agent-collapsed_&]:rounded-[14px] text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm focus-visible:outline-none"
                 title="Actions"
               >
                 {pullingHubspotCrm || pushingToHubspot || runningEmailVerification ? (

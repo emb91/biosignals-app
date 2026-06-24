@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:data-acquisition && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:funding-monitor && npm run test:signal-guards && npm run test:signal-ownership && npm run test:clinical-trial-admission && npm run test:resolver-provenance-admission && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:effective-priority && npm run test:outreach-sequence && npm run test:data-screen && npm run test:billing-stripe-invoice && npm run test:company-enrichment-credits && npm run test:company-enrich-cancel && npm run test:monitor-cadence",
+    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:data-acquisition && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:funding-monitor && npm run test:signal-guards && npm run test:signal-ownership && npm run test:clinical-trial-admission && npm run test:resolver-provenance-admission && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:effective-priority && npm run test:outreach-sequence && npm run test:data-screen && npm run test:billing-stripe-invoice && npm run test:company-enrichment-credits && npm run test:company-enrich-cancel && npm run test:monitor-cadence && npm run test:conference",
+    "test:conference": "rm -rf /tmp/arcova-conference-name-match-tests && tsc -p tsconfig.test.conference-name-match.json && node --test /tmp/arcova-conference-name-match-tests/signals/conference/conference-name-match.test.js /tmp/arcova-conference-name-match-tests/signals/conference/conference-phase.test.js",
     "preflight:prod": "node scripts/production-preflight.mjs",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "test:smoke": "playwright test",
@@ -116,6 +117,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tailwindcss-react-aria-components": "^2.1.0",
     "three": "^0.167.1",
+    "unpdf": "^1.6.2",
     "vaul": "^0.9.6",
     "zod": "^3.25.76"
   },
