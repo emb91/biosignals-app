@@ -43,6 +43,7 @@ import {
   resolveCompanyIdentity,
   type CompanyIdentityContext,
 } from '@/lib/company-identity-resolver';
+import { extractHeadcountGrowth, type HeadcountGrowth } from '@/lib/signals/run-headcount-monitor';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
@@ -90,6 +91,9 @@ export type CompanyEnrichmentResult = {
   status: 'succeeded' | 'failed';
   error: string | null;
   fields_updated: string[];
+  /** Apollo headcount growth (free on org enrich) — consumed by the headcount
+   *  readiness signal. Present only on a successful run that resolved Apollo. */
+  headcount_growth?: HeadcountGrowth;
 };
 
 function normalizeDomain(value?: string | null): string | null {
@@ -423,6 +427,7 @@ export async function runCompanyEnrichmentById(
       status: 'succeeded',
       error: null,
       fields_updated: fieldsUpdated,
+      headcount_growth: extractHeadcountGrowth(apollo.raw_company),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

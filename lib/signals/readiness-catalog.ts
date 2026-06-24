@@ -66,6 +66,7 @@ const SIGNAL_IMPACT_OVERRIDES: Partial<Record<SignalKey, number>> = {
   // Hiring — org building.
   executive_hiring: 55,
   hiring_expansion: 50,
+  headcount_expansion: 42,
   cmc_hiring: 50,
   clinical_ops_hiring: 48,
   bd_hiring: 45,
@@ -508,6 +509,15 @@ const RAW_READINESS_SIGNAL_CATALOG: readonly RawSignalCatalogEntry[] = [
     buyerFunctions: ['manufacturing_and_cmc', 'clinical_operations', 'regulatory_affairs', 'business_development', 'commercial'],
     intentMechanisms: ['team_buildout', 'complexity_increased'],
     notes: 'Broad hiring velocity signal (≥10 postings). Buyer functions derived from classified role mix at emit time.',
+  },
+  {
+    signalKey: 'headcount_expansion',
+    scope: 'company',
+    dimensions: ['new_people'],
+    decayDays: 180,
+    buyerFunctions: ['manufacturing_and_cmc', 'clinical_operations', 'business_development'],
+    intentMechanisms: ['team_buildout'],
+    notes: 'Apollo headcount growth (≥20% over 12 months). A scaling-team proxy — softer than active job postings, free on every org enrich. Impact/threshold are tunable.',
   },
   {
     signalKey: 'new_to_role',

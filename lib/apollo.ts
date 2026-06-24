@@ -183,6 +183,10 @@ export type ApolloOrganizationEnrichmentResult = {
   company_funding_stage?: string;
   company_total_funding_usd?: number;
   company_latest_funding_date?: string;
+  /** Headcount growth ratios from Apollo (e.g. 0.25 = +25%). Free on every org enrich. */
+  company_headcount_growth_6mo?: number;
+  company_headcount_growth_12mo?: number;
+  company_headcount_growth_24mo?: number;
   raw_company?: unknown;
 };
 
@@ -518,6 +522,9 @@ function mapApolloOrganization(
     company_funding_stage: organization.latest_funding_stage || undefined,
     company_total_funding_usd: organization.total_funding ?? undefined,
     company_latest_funding_date: organization.latest_funding_round_date || undefined,
+    company_headcount_growth_6mo: organization.organization_headcount_six_month_growth ?? undefined,
+    company_headcount_growth_12mo: organization.organization_headcount_twelve_month_growth ?? undefined,
+    company_headcount_growth_24mo: organization.organization_headcount_twenty_four_month_growth ?? undefined,
     raw_company: organization,
   };
 }
@@ -772,8 +779,25 @@ export async function tryApolloPersonalEmailRevealForLookup(input: ApolloLookupI
 }
 
 export async function enrichContactWithApollo(input: ApolloLookupInput): Promise<ApolloEnrichmentResult> {
-  const { person, finalPayload, firstMatch, personalEmailRevealFollowup, personalEmailObtainedViaReveal } =
-    await runApolloPeopleMatchTwoStep(input);
+  const parts = await runApolloPeopleMatchTwoStep(input);
+  return mapApolloEnrichment(input, parts);
+}
+
+type ApolloTwoStepParts = {
+  person: ApolloPerson | null;
+  finalPayload: ApolloMatchResponse | null;
+  firstMatch: MatchPersonResult;
+  personalEmailRevealFollowup: boolean;
+  personalEmailObtainedViaReveal: boolean;
+};
+
+/**
+ * Pure mapping from a people-match result (single OR bulk) to our canonical
+ * enrichment shape. Shared by `enrichContactWithApollo` (single) and
+ * `bulkEnrichContactsWithApollo` (people/bulk_match) so they never drift.
+ */
+function mapApolloEnrichment(input: ApolloLookupInput, parts: ApolloTwoStepParts): ApolloEnrichmentResult {
+  const { person, finalPayload, firstMatch, personalEmailRevealFollowup, personalEmailObtainedViaReveal } = parts;
 
   const organization = person?.organization || null;
   const employmentHistory = person?.employment_history || [];
@@ -827,4 +851,120 @@ export async function enrichContactWithApollo(input: ApolloLookupInput): Promise
       personal_email_obtained_via_reveal: personalEmailObtainedViaReveal,
     },
   };
+}
+
+/** Build one people/bulk_match `details[]` entry (mirrors buildMatchParams keys). */
+function buildMatchDetail(input: ApolloLookupInput): { detail: Record<string, string>; submittedFields: string[] } {
+  const detail: Record<string, string> = {};
+  const submittedFields: string[] = [];
+  const fullName = fullNameFromInput(input);
+  const domain = normalizeDomain(input.company_domain);
+  const add = (key: string, value?: string | null) => {
+    if (!value?.trim()) return;
+    detail[key] = value.trim();
+    submittedFields.push(key);
+  };
+  add('id', input.apollo_person_id);
+  add('email', input.email);
+  add('linkedin_url', input.linkedin_url);
+  add('name', fullName);
+  add('domain', domain);
+  add('organization_name', input.company_name);
+  return { detail, submittedFields };
+}
+
+/**
+ * Bulk people match — Apollo `people/bulk_match` accepts up to 10 records/call.
+ * Returns an array index-aligned to `inputs`; each entry is the same shape
+ * `matchPerson` returns (so it slots straight into `mapApolloEnrichment`), or
+ * null for an input with no usable identifier. This is the STEP-1 match only
+ * (no personal-email reveal — that stays a per-row follow-up, mirroring the
+ * single-match two-step, because bulk reveal is delivered async via webhook).
+ */
+export async function bulkMatchPeopleWithApollo(
+  inputs: ApolloLookupInput[],
+): Promise<Array<MatchPersonResult | null>> {
+  const results: Array<MatchPersonResult | null> = inputs.map(() => null);
+  const indexed = inputs
+    .map((input, i) => ({ i, ...buildMatchDetail(input) }))
+    .filter((entry) => entry.submittedFields.length > 0);
+
+  for (let start = 0; start < indexed.length; start += 10) {
+    const chunk = indexed.slice(start, start + 10);
+    const response = await fetch('https://api.apollo.io/api/v1/people/bulk_match', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'x-api-key': getApolloApiKey(),
+        'cache-control': 'no-cache',
+      },
+      body: JSON.stringify({ details: chunk.map((c) => c.detail), reveal_personal_emails: false }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`Apollo people/bulk_match failed (${response.status}): ${errorText.slice(0, 300)}`);
+    }
+
+    const payload = (await response.json()) as { matches?: Array<ApolloPerson | null>; request_id?: string };
+    const matches = Array.isArray(payload.matches) ? payload.matches : [];
+    chunk.forEach((entry, j) => {
+      const person = matches[j] ?? null;
+      results[entry.i] = {
+        payload: ({ person: person ?? undefined, request_id: payload.request_id } as ApolloMatchResponse),
+        person,
+        submittedFields: entry.submittedFields,
+      };
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Bulk variant of `enrichContactWithApollo`. Batches the step-1 match via
+ * `people/bulk_match` (10/call), then mirrors the single two-step exactly: for
+ * any matched person with no email, a per-row `reveal_personal_emails` follow-up
+ * (the minority case). Reuses `mapApolloEnrichment`, so each result is identical
+ * to what the single path would have produced. Index-aligned to `inputs`.
+ */
+export async function bulkEnrichContactsWithApollo(
+  inputs: ApolloLookupInput[],
+): Promise<ApolloEnrichmentResult[]> {
+  const step1 = await bulkMatchPeopleWithApollo(inputs);
+  const out: ApolloEnrichmentResult[] = [];
+
+  for (let i = 0; i < inputs.length; i += 1) {
+    const input = inputs[i];
+    const first = step1[i];
+    let person = first?.person ?? null;
+    let finalPayload = first?.payload ?? null;
+    let personalEmailRevealFollowup = false;
+    let personalEmailObtainedViaReveal = false;
+
+    if (revealPersonalEmailsWhenMissing() && person && !person.email?.trim()) {
+      personalEmailRevealFollowup = true;
+      const revealMatch = await matchPerson(input, { revealPersonalEmails: true });
+      finalPayload = revealMatch.payload ?? finalPayload;
+      if (revealMatch.person) {
+        const merged: ApolloPerson = { ...person, ...revealMatch.person };
+        if (merged.email?.trim() && !person.email?.trim()) personalEmailObtainedViaReveal = true;
+        person = merged;
+      }
+    }
+
+    const firstMatch: MatchPersonResult = first ?? { payload: null, person: null, submittedFields: [] };
+    out.push(
+      mapApolloEnrichment(input, {
+        person,
+        finalPayload,
+        firstMatch,
+        personalEmailRevealFollowup,
+        personalEmailObtainedViaReveal,
+      }),
+    );
+  }
+
+  return out;
 }

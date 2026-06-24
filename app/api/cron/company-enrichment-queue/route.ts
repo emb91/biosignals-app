@@ -30,6 +30,8 @@ import {
   runCompanyEnrichmentById,
 } from '@/lib/company-enrichment';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
+import { runHeadcountSignalForCompany } from '@/lib/signals/run-headcount-monitor';
+import { recomputeAccountReadiness } from '@/lib/signals/readiness-service';
 import { companyEnrichmentCreditDisposition } from '@/lib/company-enrichment-credits';
 import { reserveCredits, refundCredits, settleCredits } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
@@ -147,6 +149,33 @@ async function runCron(request: Request) {
       // Upgrade each linked user's fit now that taxonomy is populated.
       for (const uid of userIds) {
         await syncCompanyFitForCompany(admin, uid, companyId).catch(() => {});
+      }
+
+      // Headcount-expansion readiness signal — free off the Apollo growth fields
+      // captured during enrichment. Best-effort; never blocks the run.
+      const growth = result.headcount_growth;
+      if (result.status === 'succeeded' && growth && userIds.length > 0) {
+        const { data: companyRow } = await admin
+          .from('companies')
+          .select('company_name')
+          .eq('id', companyId)
+          .maybeSingle<{ company_name: string | null }>();
+        const companyName = companyRow?.company_name ?? null;
+        for (const uid of userIds) {
+          try {
+            const outcome = await runHeadcountSignalForCompany(admin, {
+              userId: uid,
+              companyId,
+              companyName,
+              growth,
+            });
+            if (outcome === 'emitted') {
+              await recomputeAccountReadiness(admin, { userId: uid, companyId }).catch(() => {});
+            }
+          } catch (signalErr) {
+            console.warn(`[cron/company-enrichment-queue] headcount signal failed for ${companyId}:`, signalErr);
+          }
+        }
       }
       if (orgId) orgsToRefresh.add(orgId);
 

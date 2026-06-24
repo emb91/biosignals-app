@@ -2,7 +2,7 @@
  * Shared enrichment queue logic — used by both the import-contacts route and
  * the daily HubSpot cron so they both trigger the same background pipeline.
  */
-import { enrichContact } from '@/lib/enrichment-provider';
+import { enrichContact, enrichContacts, type EnrichmentResult } from '@/lib/enrichment-provider';
 import { recordProviderUsage } from '@/lib/provider-usage';
 import { ingestEnrichedRecords, type EnrichedImportRecord, type ImportProgressCallback } from '@/lib/import-ingestion';
 import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
@@ -241,6 +241,24 @@ export async function processQueuedRowsInBackground(params: {
     failureReasons.set(id, reason);
   };
 
+  const buildFallbackRow = (row: QueuedRow): NormalisedRow => {
+    const rawData = row.raw_data;
+    return {
+      full_name: (rawData.full_name as string) || row.full_name || '',
+      first_name: (rawData.first_name as string) || '',
+      last_name: (rawData.last_name as string) || '',
+      company_name: row.company_name || '',
+      company_domain: (rawData.company_domain as string) || '',
+      job_title: (rawData.job_title as string) || '',
+      email: row.email || '',
+      linkedin_url: row.linkedin_url || '',
+      location: (rawData.location as string) || '',
+      company_linkedin_url: (rawData.company_linkedin_url as string) || '',
+    };
+  };
+  const extractApolloPersonId = (row: QueuedRow): string | undefined =>
+    ((row.raw_data.apollo_person_raw as { id?: unknown } | null | undefined)?.id as string | undefined) || undefined;
+
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', userId).maybeSingle<{ org_id: string }>();
   let triageRows = queuedRows;
@@ -306,6 +324,26 @@ export async function processQueuedRowsInBackground(params: {
     return;
   }
 
+  // Bulk-prefetch Apollo matches for the whole batch via people/bulk_match
+  // (10 records/call), cutting per-contact round-trips ~10×. Self-healing: only
+  // rows that bulk-matched a real person are taken from here; everything else —
+  // and any bulk failure — falls through to the per-row people/match below, so
+  // behaviour is identical to the single path (at most one wasted bulk call).
+  const bulkEnrichedByRowId = new Map<string, EnrichmentResult>();
+  try {
+    const bulkInputs = triageRows.map((row) => ({
+      ...buildFallbackRow(row),
+      apollo_person_id: extractApolloPersonId(row),
+    }));
+    const bulkResults = await enrichContacts(bulkInputs);
+    triageRows.forEach((row, index) => {
+      const result = bulkResults[index];
+      if (result?.apollo_person_raw) bulkEnrichedByRowId.set(row.id, result);
+    });
+  } catch (bulkErr) {
+    console.error('[import-queue] bulk match prefetch failed — falling back to per-row:', bulkErr);
+  }
+
   try {
     for (const row of triageRows) {
       if (await isBatchCancelled(admin, batchId)) break;
@@ -313,19 +351,8 @@ export async function processQueuedRowsInBackground(params: {
       const triageResult = triageMap.get(row.id) ?? { group: 'medium' as TriageGroup, version: TRIAGE_VERSION };
 
       const rawData = row.raw_data;
-      const location = (rawData.location as string) || '';
-      const fallbackRow: NormalisedRow = {
-        full_name: (rawData.full_name as string) || row.full_name || '',
-        first_name: (rawData.first_name as string) || '',
-        last_name: (rawData.last_name as string) || '',
-        company_name: row.company_name || '',
-        company_domain: (rawData.company_domain as string) || '',
-        job_title: (rawData.job_title as string) || '',
-        email: row.email || '',
-        linkedin_url: row.linkedin_url || '',
-        location,
-        company_linkedin_url: (rawData.company_linkedin_url as string) || '',
-      };
+      const fallbackRow = buildFallbackRow(row);
+      const location = fallbackRow.location;
 
       // Apollo couldn't surface this person — but we can still find them from
       // LinkedIn. As long as we have the LinkedIn URL (the canonical key), keep
@@ -374,11 +401,14 @@ export async function processQueuedRowsInBackground(params: {
       // plaintext last name/email/linkedin — so name/linkedin matching can't
       // identify them. The Apollo person id (captured at discovery) is the only
       // reliable people/match key, so thread it through when present.
-      const apolloPersonId =
-        ((rawData.apollo_person_raw as { id?: unknown } | null | undefined)?.id as string | undefined) || undefined;
+      const apolloPersonId = extractApolloPersonId(row);
 
       try {
-        const enrichmentResult = await enrichContact({ ...fallbackRow, apollo_person_id: apolloPersonId });
+        // Use the bulk-prefetched match when we got one; otherwise fall back to a
+        // per-row people/match (keeps behaviour identical for any row bulk missed).
+        const enrichmentResult =
+          bulkEnrichedByRowId.get(row.id) ??
+          (await enrichContact({ ...fallbackRow, apollo_person_id: apolloPersonId }));
 
         if (await isBatchCancelled(admin, batchId)) break;
 

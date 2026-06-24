@@ -1,4 +1,8 @@
-import { enrichContactWithApollo, type ApolloEnrichmentResult } from '@/lib/apollo';
+import {
+  enrichContactWithApollo,
+  bulkEnrichContactsWithApollo,
+  type ApolloEnrichmentResult,
+} from '@/lib/apollo';
 
 export type EnrichmentLookupInput = {
   full_name?: string;
@@ -24,4 +28,15 @@ export async function enrichContact(input: EnrichmentLookupInput): Promise<Enric
     ...(await enrichContactWithApollo(input)),
     provider: 'apollo',
   };
+}
+
+/**
+ * Bulk variant of `enrichContact` — enriches up to 10 contacts per Apollo
+ * people/bulk_match call instead of one match per contact. Index-aligned to
+ * `inputs`. Used by the enrichment queue to cut Apollo round-trips ~10× when
+ * the user enriches a batch of triaged contacts.
+ */
+export async function enrichContacts(inputs: EnrichmentLookupInput[]): Promise<EnrichmentResult[]> {
+  const results = await bulkEnrichContactsWithApollo(inputs);
+  return results.map((result) => ({ ...result, provider: 'apollo' as const }));
 }
