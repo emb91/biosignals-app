@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { authoritativeAccountReadiness } from '@/lib/effective-priority';
+import { authoritativeAccountReadiness } from './effective-priority';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
