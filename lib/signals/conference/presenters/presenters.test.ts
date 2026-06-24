@@ -276,20 +276,21 @@ test('parseInformaSpeakers: empty / non-speaker html yields no rows', () => {
   assert.equal(parseInformaSpeakers('<html>no speakers here</html>', 'u').length, 0);
 });
 
-// ── abstractsonline (OASIS) adapter — recipe verified, live build deferred ───
+// ── abstractsonline (OASIS) adapter — LIVE, company-first ────────────────────
 import {
   abstractsOnlineAdapter,
   abstractsOnlineApiRoutes,
   parseAuthorBlock,
+  presentationDetailToAppearances,
   ABSTRACTSONLINE_RECIPE_VERIFIED,
   ABSTRACTSONLINE_LIVE,
   OASIS_PUBLIC_BACKPACK_LOGIN,
 } from './abstractsonline-adapter';
 
-test('abstractsOnline: registered, recipe verified, live build deferred', () => {
+test('abstractsOnline: registered + live (company-first)', () => {
   assert.equal(abstractsOnlineAdapter.platform, 'abstractsonline');
   assert.equal(ABSTRACTSONLINE_RECIPE_VERIFIED, true);
-  assert.equal(ABSTRACTSONLINE_LIVE, false);
+  assert.equal(ABSTRACTSONLINE_LIVE, true);
   // The public service login the SPA ships (not our secret).
   assert.equal(OASIS_PUBLIC_BACKPACK_LOGIN.Username, 'backpack');
 });
@@ -344,13 +345,47 @@ test('abstractsOnline: parseAuthorBlock handles empty + multi-affiliation', () =
   assert.equal(r[0].affiliationRaw, 'Acme Bio, MA; State University, CA');
 });
 
-test('abstractsOnline: fetchAppearances is a clean skip (no fakes, no throw)', async () => {
-  // Live orchestration deferred until OASIS shows are next in-window: return no
-  // appearances so the platform stays wired/dormant without spamming failures.
+test('abstractsOnline: presentationDetailToAppearances keeps only authors at the searched company', () => {
+  // Real shape from GET Program/20273/Presentation/1830 (abbreviated AuthorBlock).
+  const detail = {
+    PresenterDisplayName: 'Jason Willis, MD;PhD',
+    Body: '6427. Nous-209 off-the-shelf neoantigen immunotherapy',
+    AuthorBlock:
+      '<b>Jason Willis</b><sup>1</sup>, Anna Morena D\'Alise<sup>2</sup>, Guido Leoni<sup>2</sup>, Michael J. Hall<sup>3</sup>' +
+      '<br><br/>' +
+      '<sup>1</sup>The University of Texas MD Anderson Cancer Center, Houston, TX,' +
+      '<sup>2</sup>Nouscom S.R.L., Roma, Italy,' +
+      '<sup>3</sup>Fox Chase Cancer Center, Philadelphia, PA',
+  };
+  const recs = presentationDetailToAppearances(detail, 'Nouscom', 'https://www.abstractsonline.com/pp8/#!/20273');
+  // Only the two Nouscom authors survive the affiliation⊇company filter.
+  assert.deepEqual(recs.map((r) => r.speakerName), ["Anna Morena D'Alise", 'Guido Leoni']);
+  assert.equal(recs[0].affiliationRaw, 'Nouscom S.R.L., Roma, Italy');
+  assert.equal(recs[0].appearanceType, 'speaker');
+  assert.equal(recs[0].sessionTitle, '6427. Nous-209 off-the-shelf neoantigen immunotherapy');
+  // Searching the presenter's own company marks them as the presenter.
+  const mda = presentationDetailToAppearances(detail, 'MD Anderson', 'u');
+  assert.equal(mda[0].speakerName, 'Jason Willis');
+  assert.equal(mda[0].appearanceType, 'presenter');
+});
+
+test('abstractsOnline: fetchAppearances returns nothing without target companies (company-first)', async () => {
+  // Company-first: with no tracked companies to search, there is nothing to fetch
+  // (no network call). Missing eventId throws.
   const out = await abstractsOnlineAdapter.fetchAppearances({
     agendaPlatform: 'abstractsonline',
     agendaSourceUrl: 'https://www.abstractsonline.com/pp8/#!/20273',
     platformParams: { eventId: 20273 },
+    targetCompanies: [],
   });
   assert.deepEqual(out, []);
+  await assert.rejects(
+    () =>
+      abstractsOnlineAdapter.fetchAppearances({
+        agendaPlatform: 'abstractsonline',
+        agendaSourceUrl: 'https://www.abstractsonline.com/pp8/#!/20273',
+        targetCompanies: ['Genentech'],
+      }),
+    /eventId is required/,
+  );
 });

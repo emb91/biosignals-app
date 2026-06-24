@@ -120,9 +120,13 @@ the many societies that run an OpenConf/WordPress abstract archive.
   `fetchAppearances` is intentionally deferred (no OASIS show is in-window until the 2027 planners
   publish), so the pure pieces (credential, routes, AuthorBlock parser) are built + tested and the
   adapter is a clean skip. Full recipe: see §"abstractsonline (OASIS) — CRACKED" below.
-- **SPARGO session planner** is the same host family as the cracked exhibitor path and very likely
-  server-renders sessions too, but I did not curl-verify a presenter list this pass — flagged 🟡,
-  not claimed.
+- **SPARGO session planner — 🔴 not viable / deprioritized** (verified live 2026-06-24). `asco25
+  /Public/Sessions.aspx` returns 200 but is an ASP.NET **postback shell**: the session/speaker list
+  is not in the server-rendered HTML (only a "Speaker" filter label, no presenter rows) and loads via
+  `__doPostBack` (no XHR fires on load/scroll — confirmed with a headless capture). Cracking it means
+  driving viewstate postbacks, and the payoff is low: the big SPARGO oncology shows (ASCO/ASH) publish
+  their scientific programs on **OASIS/abstractsonline** (now cracked) and confex, not the jspargo
+  session planner. Not building a fragile postback scraper for it.
 
 ---
 

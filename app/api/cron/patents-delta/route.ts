@@ -27,6 +27,16 @@ function messageFromUnknown(error: unknown): string {
   return String(error);
 }
 
+function positiveNumberFromEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function nonNegativeNumberFromEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
 async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
@@ -36,6 +46,8 @@ async function runCron(request: Request) {
   try {
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.PATENTS_MONITOR_DISPATCH_LIMIT ?? '2500'));
+    const syncReuseSeconds = nonNegativeNumberFromEnv('PATENTS_SYNC_REUSE_SECONDS', 7 * 24 * 60 * 60);
+    const maxScanGb = positiveNumberFromEnv('PATENTS_BIGQUERY_MAX_SCAN_GB', 250);
     const targets = await listDueAccountSweepTargets({ source: 'patents', limit: dispatcherLimit });
     const subscribers = await accountSweepSubscribersForTargets({
       companyIds: targets.map((target) => target.companyId),
@@ -46,7 +58,11 @@ async function runCron(request: Request) {
     // source target table is already reconciled to the fastest subscriber
     // cadence for each canonical company.
     const syncResult = subscribers.length > 0
-      ? await syncPatentsDelta({ admin })
+      ? await syncPatentsDelta({
+        admin,
+        reuseRecentSuccessSeconds: syncReuseSeconds,
+        maxScanBytes: maxScanGb * 1e9,
+      })
       : { skipped: true as const, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };
 
     let monitorOk = 0;

@@ -1,25 +1,28 @@
 /**
- * Small World Labs adapter — PARTIAL.
+ * Small World Labs adapter — handles BOTH server-rendered directory templates.
  *
- * Powers ASGCT (asgct2026.smallworldlabs.com). The /exhibitors page
- * server-renders the first page of the exhibitor directory table — each row is
- * a `<td>` with a favorite-star control and the company anchor:
- *   <a class="generic-option-link" href="/co/agc-biologics" ...>AGC Biologics</a>
- * The anchor text is the display name; /co/<slug> is the profile URL.
+ * Powers ASGCT, SOT/ToxExpo, … on `{event}.smallworldlabs.com/exhibitors`. The
+ * directory has two layouts in the wild (verified live 2026-06-24, no auth):
  *
- * Verified live (2026-06-24, no auth): 40 companies server-rendered this way
- *   (3PBIOVIAN, AAVnerGene, ABEC, Abnova Corporation, ACGT, ACROBiosystems,
- *    AGC Biologics, Akadeum Life Sciences …) — the first directory page, NOT an
- *    A–Z filter nav (each anchor sits in a real exhibitor row).
+ *   • LIST template (e.g. ASGCT) — the company anchor links to the /co/ profile:
+ *       <a class="generic-option-link" href="/co/agc-biologics">AGC Biologics</a>
  *
- * ⚠️ PARTIAL: ASGCT has ~320 exhibitors. The remaining ~280 load via the
- * member-directory widget AJAX (page references /swl/js/ajax.js +
- * js_ajax_refresh.js). Re-checked live 2026-06-24: the static HTML exposes NO
- * pagination params, widget id, or total count — the directory is a stateful
- * widget that pages via XHR tied to the rendered session, so it is NOT
- * reproducible with a bare fetch. To finish: capture the widget directory XHR
- * from a real browser session, or use a headless render (Apify/Playwright) for
- * the full list. See docs/conference-ingestion-deep.md §3.
+ *   • CARD template (e.g. SOT/ToxExpo) — the name is the card heading's `title`
+ *     attribute; the card's own `generic-option-link` points to an a2z booth-map
+ *     URL, NOT a /co/ profile, so the old list-only regex returned ZERO here:
+ *       <h5 class="generic-option font-weight-bold …" title="28bio">28bio</h5>
+ *
+ * We parse both and dedupe by name. (ToxExpo 2026 → 45 companies via the card
+ * path, which the previous list-only parser missed entirely.)
+ *
+ * ⚠️ Large events paginate. When the directory exceeds one page it adds a "More"
+ * button wired to jQuery `jsPaginator` against the member-directory AJAX —
+ * `ajaxParams = { module:'organizations_organization_list', method:'paginationHandler',
+ * site_page_id:'<id>', template:'generic…' }`. The exact AJAX endpoint hasn't
+ * been pinned down (it needs a live multi-page event to capture — ASGCT 2026 is
+ * now archived/empty). Single-page events (the common case) are fully covered by
+ * the server-rendered parse below; for a big multi-page show this returns page 1
+ * until the paginationHandler endpoint is captured and wired.
  */
 import type { ConferenceAdapter, ConferenceForFetch, ExhibitorRecord } from './types';
 
@@ -36,22 +39,36 @@ function decodeEntities(s: string): string {
 }
 
 /**
- * Parse the server-rendered company anchors. Returns the subset of exhibitors
- * present in the static HTML (see PARTIAL note above). Exported for the test
- * stub. `origin` is used to absolutize the /co/<slug> profile URL.
+ * Parse the server-rendered exhibitor directory (both templates). Exported for
+ * the test. `origin` absolutizes the /co/<slug> profile URL (list template) and
+ * the directory URL (card template, which has no per-company /co/ link).
  */
 export function parseSmallWorldLabsExhibitors(html: string, origin: string): ExhibitorRecord[] {
   const out: ExhibitorRecord[] = [];
   const seen = new Set<string>();
-  const re = /<a[^>]*class="generic-option-link"[^>]*href="\/co\/([a-z0-9-]+)"[^>]*>([^<]+)<\/a>/gi;
+  const push = (rawName: string, sourceUrl: string) => {
+    const name = decodeEntities(rawName);
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name, sourceUrl });
+  };
+
+  // LIST template: anchor → /co/<slug> profile.
+  const reList = /<a[^>]*class="[^"]*generic-option-link[^"]*"[^>]*href="\/co\/([a-z0-9-]+)"[^>]*>([^<]+)<\/a>/gi;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    const slug = m[1];
-    const name = decodeEntities(m[2]);
-    if (!name || seen.has(slug)) continue;
-    seen.add(slug);
-    out.push({ name, sourceUrl: `${origin}/co/${slug}` });
+  while ((m = reList.exec(html)) !== null) {
+    push(m[2], `${origin}/co/${m[1]}`);
   }
+
+  // CARD template: name in the heading's title attr; attribute to the directory.
+  const directoryUrl = `${origin}/exhibitors`;
+  const reCard = /<h5\b[^>]*\bclass="[^"]*\bgeneric-option\b[^"]*"[^>]*\btitle="([^"]+)"/gi;
+  while ((m = reCard.exec(html)) !== null) {
+    push(m[1], directoryUrl);
+  }
+
   return out;
 }
 

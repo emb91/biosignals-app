@@ -8,8 +8,8 @@
  *
  * Streams rows from BigQuery and upserts in batches as they arrive, so partial
  * progress survives a mid-run failure or kill. Dry-runs first for cost
- * visibility + hard cap enforcement; max scan size is bounded by
- * HARD_SCAN_CAP_BYTES.
+ * visibility + hard cap enforcement; max scan size is bounded by the caller's
+ * maxScanBytes or DEFAULT_SCAN_CAP_BYTES.
  */
 import { BigQuery } from '@google-cloud/bigquery';
 import type { createAdminClient } from '@/lib/supabase-admin';
@@ -24,7 +24,7 @@ const BIGQUERY_PUBLICATIONS_TABLE = 'patents-public-data.patents.publications';
 const DEFAULT_OVERLAP_DAYS = 45;
 const UPSERT_CHUNK = 500;
 // 250 GB cap, ~6% headroom over the ~235 GB realistic scan.
-const HARD_SCAN_CAP_BYTES = 250 * 1e9;
+const DEFAULT_SCAN_CAP_BYTES = 250 * 1e9;
 
 let cachedBigQueryClient: BigQuery | null = null;
 
@@ -83,19 +83,55 @@ export type SyncPatentsDeltaResult = {
   bytes_billed: number | null;
   estimated_scan_gb: number | null;
   duration_ms: number;
+  skipped?: boolean;
+  reason?: 'recent_success';
+  previous_run_id?: string;
+  previous_finished_at?: string;
 };
 
 export async function syncPatentsDelta(opts: {
   admin: ReturnType<typeof createAdminClient>;
   overlapDays?: number;
+  maxScanBytes?: number;
+  reuseRecentSuccessSeconds?: number;
 }): Promise<SyncPatentsDeltaResult> {
   const admin = opts.admin;
   const overlapDays = opts.overlapDays ?? DEFAULT_OVERLAP_DAYS;
+  const maxScanBytes = Math.max(1, Math.floor(opts.maxScanBytes ?? DEFAULT_SCAN_CAP_BYTES));
+  const reuseRecentSuccessSeconds = Math.max(0, opts.reuseRecentSuccessSeconds ?? 0);
   const startedAt = new Date();
   const startedAtIso = startedAt.toISOString();
   const cutoffDate = new Date(Date.now() - overlapDays * 24 * 60 * 60 * 1000);
   const cutoffIsoDate = cutoffDate.toISOString().slice(0, 10);
   const cutoffYyyymmdd = parseInt(cutoffIsoDate.replace(/-/g, ''), 10);
+
+  if (reuseRecentSuccessSeconds > 0) {
+    const freshSince = new Date(startedAt.getTime() - reuseRecentSuccessSeconds * 1000).toISOString();
+    const { data: recentSuccess, error: recentErr } = await admin
+      .from('patent_delta_sync_runs')
+      .select('id, finished_at')
+      .eq('status', 'success')
+      .eq('cutoff_date', cutoffIsoDate)
+      .gte('finished_at', freshSince)
+      .order('finished_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (recentErr) throw new Error(`patent_delta_sync_runs recent success lookup failed: ${recentErr.message}`);
+    if (recentSuccess?.id && recentSuccess.finished_at) {
+      return {
+        cutoff_date: cutoffIsoDate,
+        publications_upserted: 0,
+        assignees_upserted: 0,
+        bytes_billed: 0,
+        estimated_scan_gb: 0,
+        duration_ms: Date.now() - startedAt.getTime(),
+        skipped: true,
+        reason: 'recent_success',
+        previous_run_id: recentSuccess.id as string,
+        previous_finished_at: recentSuccess.finished_at as string,
+      };
+    }
+  }
 
   const { data: runRow, error: runInsertErr } = await admin
     .from('patent_delta_sync_runs')
@@ -139,10 +175,10 @@ export async function syncPatentsDelta(opts: {
       | undefined;
     const dryBytes = Number(dryMeta?.statistics?.totalBytesProcessed ?? 0);
     const dryGb = dryBytes / 1e9;
-    if (dryBytes > HARD_SCAN_CAP_BYTES) {
+    if (dryBytes > maxScanBytes) {
       throw new Error(
         `delta sync aborted: dry-run estimate ${dryGb.toFixed(2)} GB exceeds hard cap ${(
-          HARD_SCAN_CAP_BYTES / 1e9
+          maxScanBytes / 1e9
         ).toFixed(0)} GB`,
       );
     }
@@ -152,7 +188,7 @@ export async function syncPatentsDelta(opts: {
       params: { cutoff: cutoffYyyymmdd },
       types: { cutoff: 'INT64' },
       location: BIGQUERY_LOCATION,
-      maximumBytesBilled: String(HARD_SCAN_CAP_BYTES),
+      maximumBytesBilled: String(maxScanBytes),
     });
 
     let pubBatch: Record<string, unknown>[] = [];

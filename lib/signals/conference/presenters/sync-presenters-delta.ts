@@ -172,6 +172,26 @@ async function buildPersonTokenIndex(
   return index;
 }
 
+/**
+ * Distinct company names + aliases for every company that has a tracked person —
+ * the search targets for company-first adapters (OASIS). Derived from the same
+ * index the person resolver uses, so it's "companies we'd actually resolve a
+ * contact at." NOTE: the OASIS adapter caps how many it searches per run; if the
+ * tracked-company set grows large, add per-run rotation here (future).
+ */
+function collectTargetCompanies(index: Map<string, PersonTokenCandidate[]>): string[] {
+  const set = new Set<string>();
+  for (const candidates of index.values()) {
+    for (const c of candidates) {
+      if (c.companyName) set.add(c.companyName);
+      for (const alias of c.companyAliases ?? []) {
+        if (alias) set.add(alias);
+      }
+    }
+  }
+  return [...set];
+}
+
 /** Max conferences polled per cron run (bounds runtime; the schedule rotates). */
 const PRESENTER_SYNC_BATCH = 5;
 
@@ -223,6 +243,11 @@ export async function syncPresentersDelta(params: {
   // Build the person index once for the whole run (it is global).
   const personIndex = await buildPersonTokenIndex(admin);
 
+  // Company-first targets for adapters that must query per-entity (OASIS): every
+  // company that has a tracked person, by name + aliases. Server-rendered agenda
+  // adapters (eventScribe/Informa) ignore this and return the whole program.
+  const targetCompanies = collectTargetCompanies(personIndex);
+
   for (const conf of (confs ?? []) as ConferenceRow[]) {
     try {
       if (!conf.agenda_platform || !conf.agenda_source_url) {
@@ -247,6 +272,7 @@ export async function syncPresentersDelta(params: {
         platformParams: (conf.platform_params ?? undefined) as
           | Record<string, string | number>
           | undefined,
+        targetCompanies,
       };
       const appearances = await adapter.fetchAppearances(fetchInput);
 
