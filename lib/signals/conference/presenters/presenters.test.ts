@@ -275,3 +275,39 @@ test('parseInformaSpeakers: extracts name + affiliation + title, dedupes, decode
 test('parseInformaSpeakers: empty / non-speaker html yields no rows', () => {
   assert.equal(parseInformaSpeakers('<html>no speakers here</html>', 'u').length, 0);
 });
+
+// ── abstractsonline (OASIS) adapter — NOT cracked ────────────────────────────
+import {
+  abstractsOnlineAdapter,
+  abstractsOnlineApiRoutes,
+  parseAbstractsOnlineProgram,
+  ABSTRACTSONLINE_NOT_CRACKED,
+} from './abstractsonline-adapter';
+
+test('abstractsOnline: registered as a not-yet-cracked stub', () => {
+  assert.equal(abstractsOnlineAdapter.platform, 'abstractsonline');
+  assert.equal(ABSTRACTSONLINE_NOT_CRACKED, true);
+  // Pure parse helper is a placeholder until the backpack-gated JSON is obtainable.
+  assert.deepEqual(parseAbstractsOnlineProgram({}, 'https://www.abstractsonline.com/pp8/'), []);
+});
+
+test('abstractsOnline: api-route builder mirrors the SPA (eventId 20273)', () => {
+  const r = abstractsOnlineApiRoutes(20273);
+  assert.equal(r.domain, 'https://www.abstractsonline.com/oe3');
+  assert.equal(r.backpackCreate, 'https://www.abstractsonline.com/oe3/Backpack/new/planner8/secret');
+  assert.equal(
+    r.search('all'),
+    'https://www.abstractsonline.com/oe3/Program/20273/Search/New/all',
+  );
+});
+
+test('abstractsOnline: fetchAppearances is a clean skip (no fakes, no throw)', async () => {
+  // Browser-only until cracked: return no appearances rather than throwing, so
+  // the platform stays wired/dormant without spamming the sync-run failure log.
+  const out = await abstractsOnlineAdapter.fetchAppearances({
+    agendaPlatform: 'abstractsonline',
+    agendaSourceUrl: 'https://www.abstractsonline.com/pp8/#!/20273',
+    platformParams: { eventId: 20273 },
+  });
+  assert.deepEqual(out, []);
+});

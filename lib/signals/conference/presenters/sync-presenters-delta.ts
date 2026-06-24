@@ -27,6 +27,7 @@ import {
   buildCompanyMentionMatches,
   verifiedMentionCompanyIds,
 } from '@/lib/companies/mention-provenance';
+import { abstractsOnlineAdapter } from './abstractsonline-adapter';
 import { eventScribeAdapter } from './eventscribe-adapter';
 import { informaAgendaAdapter } from './informa-agenda-adapter';
 import {
@@ -45,10 +46,22 @@ type Admin = ReturnType<typeof createAdminClient>;
 
 export const PRESENTER_SOURCE = 'conference_presenter';
 
-/** Adapter registry — keyed by agenda platform (eventScribe + Informa cracked). */
+/**
+ * Adapter registry — keyed by agenda platform (eventScribe + Informa cracked).
+ *
+ * `abstractsonline` (AACR/ASCO OASIS planner) is registered but NOT cracked: its
+ * data API is browser-only (every /Program/{eventId}/* endpoint is gated on a
+ * per-session Backpack token the SPA mints over a route that 404s to plain HTTP
+ * — see abstractsonline-adapter.ts). Its adapter is a CLEAN SKIP — it returns no
+ * appearances rather than throwing, so the platform stays wired end-to-end and
+ * dormant without spamming the sync-run failure log, until a headless cracker
+ * lands. No abstractsonline conferences are seeded yet (AACR/ASCO 2026 are past,
+ * 2027 unpublished), so it stays dormant in practice.
+ */
 const PRESENTER_ADAPTERS: Partial<Record<PresenterPlatform, PresenterSourceAdapter>> = {
   eventscribe: eventScribeAdapter,
   informa: informaAgendaAdapter,
+  abstractsonline: abstractsOnlineAdapter,
 };
 
 export function getPresenterAdapter(
