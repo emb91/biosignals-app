@@ -276,34 +276,77 @@ test('parseInformaSpeakers: empty / non-speaker html yields no rows', () => {
   assert.equal(parseInformaSpeakers('<html>no speakers here</html>', 'u').length, 0);
 });
 
-// ── abstractsonline (OASIS) adapter — NOT cracked ────────────────────────────
+// ── abstractsonline (OASIS) adapter — recipe verified, live build deferred ───
 import {
   abstractsOnlineAdapter,
   abstractsOnlineApiRoutes,
-  parseAbstractsOnlineProgram,
-  ABSTRACTSONLINE_NOT_CRACKED,
+  parseAuthorBlock,
+  ABSTRACTSONLINE_RECIPE_VERIFIED,
+  ABSTRACTSONLINE_LIVE,
+  OASIS_PUBLIC_BACKPACK_LOGIN,
 } from './abstractsonline-adapter';
 
-test('abstractsOnline: registered as a not-yet-cracked stub', () => {
+test('abstractsOnline: registered, recipe verified, live build deferred', () => {
   assert.equal(abstractsOnlineAdapter.platform, 'abstractsonline');
-  assert.equal(ABSTRACTSONLINE_NOT_CRACKED, true);
-  // Pure parse helper is a placeholder until the backpack-gated JSON is obtainable.
-  assert.deepEqual(parseAbstractsOnlineProgram({}, 'https://www.abstractsonline.com/pp8/'), []);
+  assert.equal(ABSTRACTSONLINE_RECIPE_VERIFIED, true);
+  assert.equal(ABSTRACTSONLINE_LIVE, false);
+  // The public service login the SPA ships (not our secret).
+  assert.equal(OASIS_PUBLIC_BACKPACK_LOGIN.Username, 'backpack');
 });
 
 test('abstractsOnline: api-route builder mirrors the SPA (eventId 20273)', () => {
   const r = abstractsOnlineApiRoutes(20273);
   assert.equal(r.domain, 'https://www.abstractsonline.com/oe3');
-  assert.equal(r.backpackCreate, 'https://www.abstractsonline.com/oe3/Backpack/new/planner8/secret');
+  assert.equal(r.backpackCreate, 'https://www.abstractsonline.com/oe3/Backpack/create');
   assert.equal(
-    r.search('all'),
-    'https://www.abstractsonline.com/oe3/Program/20273/Search/New/all',
+    r.searchNew('Presentation'),
+    'https://www.abstractsonline.com/oe3/Program/20273/Search/New/Presentation',
+  );
+  assert.equal(
+    r.searchResults('2221', 1, 50),
+    'https://www.abstractsonline.com/oe3/Program/20273/Search/2221/Results?page=1&pagesize=50',
+  );
+  assert.equal(
+    r.presentation(1830),
+    'https://www.abstractsonline.com/oe3/Program/20273/Presentation/1830',
   );
 });
 
+test('abstractsOnline: parseAuthorBlock maps authors to affiliations (real AACR 2025 data)', () => {
+  // Verbatim AuthorBlock from GET /oe3/Program/20273/Presentation/1830 (2026-06-24).
+  const block =
+    '<b>Jason Willis</b><sup>1</sup>, Anna Morena D\'Alise<sup>2</sup>, ' +
+    'Michael J. Hall<sup>3</sup>, Eduardo Vilar<sup>9</sup>' +
+    '<br><br/>' +
+    '<sup>1</sup>Department of Gastrointestinal Medical Oncology, The University of Texas MD Anderson Cancer Center, Houston, TX,' +
+    '<sup>2</sup>Nouscom S.R.L., Roma, Italy,' +
+    '<sup>3</sup>Fox Chase Cancer Center, Philadelphia, PA,' +
+    '<sup>9</sup>UT MD Anderson, Houston, TX';
+  const authors = parseAuthorBlock(block);
+  assert.equal(authors.length, 4);
+  // First author is bolded (the presenter) and maps to institution 1.
+  assert.equal(authors[0].name, 'Jason Willis');
+  assert.equal(authors[0].isBold, true);
+  assert.match(authors[0].affiliationRaw, /MD Anderson Cancer Center/);
+  // Company affiliation is carried through (the company-matching key).
+  assert.equal(authors[1].name, "Anna Morena D'Alise");
+  assert.equal(authors[1].isBold, false);
+  assert.equal(authors[1].affiliationRaw, 'Nouscom S.R.L., Roma, Italy');
+  assert.deepEqual(authors[1].affiliationNums, [2]);
+});
+
+test('abstractsOnline: parseAuthorBlock handles empty + multi-affiliation', () => {
+  assert.deepEqual(parseAuthorBlock(''), []);
+  const multi = 'Jane Doe<sup>1,2</sup><br><br/><sup>1</sup>Acme Bio, MA,<sup>2</sup>State University, CA';
+  const r = parseAuthorBlock(multi);
+  assert.equal(r.length, 1);
+  assert.deepEqual(r[0].affiliationNums, [1, 2]);
+  assert.equal(r[0].affiliationRaw, 'Acme Bio, MA; State University, CA');
+});
+
 test('abstractsOnline: fetchAppearances is a clean skip (no fakes, no throw)', async () => {
-  // Browser-only until cracked: return no appearances rather than throwing, so
-  // the platform stays wired/dormant without spamming the sync-run failure log.
+  // Live orchestration deferred until OASIS shows are next in-window: return no
+  // appearances so the platform stays wired/dormant without spamming failures.
   const out = await abstractsOnlineAdapter.fetchAppearances({
     agendaPlatform: 'abstractsonline',
     agendaSourceUrl: 'https://www.abstractsonline.com/pp8/#!/20273',

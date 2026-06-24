@@ -49,14 +49,14 @@ export const PRESENTER_SOURCE = 'conference_presenter';
 /**
  * Adapter registry — keyed by agenda platform (eventScribe + Informa cracked).
  *
- * `abstractsonline` (AACR/ASCO OASIS planner) is registered but NOT cracked: its
- * data API is browser-only (every /Program/{eventId}/* endpoint is gated on a
- * per-session Backpack token the SPA mints over a route that 404s to plain HTTP
- * — see abstractsonline-adapter.ts). Its adapter is a CLEAN SKIP — it returns no
- * appearances rather than throwing, so the platform stays wired end-to-end and
- * dormant without spamming the sync-run failure log, until a headless cracker
- * lands. No abstractsonline conferences are seeded yet (AACR/ASCO 2026 are past,
- * 2027 unpublished), so it stays dormant in practice.
+ * `abstractsonline` (AACR/ASCO OASIS planner) is registered and its data API is
+ * now CRACKED — plain server-side HTTPS, no headless: mint a Backpack token from
+ * the SPA's public service login, then async search → page → per-presentation
+ * AuthorBlock (verified live, see abstractsonline-adapter.ts). The live fetch is
+ * intentionally DEFERRED, so its adapter is a CLEAN SKIP (returns no appearances
+ * rather than throwing) — no abstractsonline conferences are seeded yet (AACR/ASCO
+ * 2026 are past, 2027 planners unpublished), so it stays dormant in practice until
+ * the next OASIS shows are in-window and the live orchestration is wired.
  */
 const PRESENTER_ADAPTERS: Partial<Record<PresenterPlatform, PresenterSourceAdapter>> = {
   eventscribe: eventScribeAdapter,

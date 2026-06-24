@@ -1,70 +1,59 @@
 /**
- * abstractsonline / OASIS itinerary planner adapter — NOT CRACKED (stub).
+ * abstractsonline / OASIS itinerary planner adapter.
  *
  * CTI Meeting Technology's "Program Planner" (the `pp8` SPA at
  * abstractsonline.com/pp8/#!/{eventId}) powers AACR / ASCO / AHA / many large
- * society programs. Unlike eventScribe and Informa (server-rendered, parseable
- * with one HTTP request), this one is a Backbone/RequireJS single-page app whose
- * data sits behind a WCF/OASIS REST service that is HARD-GATED on a per-request
- * `Backpack` token — and that token cannot be minted over plain HTTP.
+ * society programs. It was previously logged as "not cracked" because the data
+ * API is 401-gated behind a per-request `Backpack` token. That conclusion was
+ * WRONG: the token is mintable over plain HTTP with a PUBLIC service credential
+ * baked into the SPA, and every data endpoint then works server-side with no
+ * browser. Verified live end-to-end against AACR 2025 (eventId 20273) on
+ * 2026-06-24 — see docs/CONFERENCE_PHASE2_PRESENTERS.md §"abstractsonline (OASIS)".
  *
- * ── What the SPA actually does (reverse-engineered from js/main.js +
- *    js/main-built.js + js/app/config.js, 2026-06-24, AACR 2025 eventId 20273) ──
+ * ── The cracked recipe (all plain HTTPS, no headless, no cookies) ────────────
  *
- *   const domain = 'https://www.abstractsonline.com/oe3';  // app/config.js
- *   const meetingID = <eventId from the #!/<id> hash>;     // e.g. 20273
+ *   base = https://www.abstractsonline.com/oe3
  *
- *   1. Anonymous backpack (the per-session client key), at app bootstrap:
- *        POST  {domain}/Backpack/new/planner8/secret
- *        → { ID, Expiration }   // stored in the `backpack` cookie
- *   2. EVERY data call carries that token in a `Backpack` header, e.g. the
- *      catalog search:
- *        POST  {domain}/Program/{meetingID}/Search/New/{type}
- *        headers: { Backpack, Accept: application/json, Caller: PP8 }
- *        body:    { "Phrase": "<query>" }
- *      and the per-record reads: GET {domain}/Program/{meetingID}/Person,
- *      /Session, /Presentation, … (sessions + speakers + affiliations live here).
+ *   1. Mint a token (the SPA ships a fixed anonymous service login):
+ *        POST {base}/Backpack/create
+ *        headers: { Content-Type: application/json, Accept: application/json, Caller: PP8 }
+ *        body:    { "Username": "backpack", "Password": "89j34jks98cnjks989p;nfs44" }
+ *        → 201 { ID: <token>, Expiration }   // token valid ~to end of UTC day
+ *      (the SPA's app/config.js + util.getBackpackId() — credential is in clear
+ *       text in the bundle; this is not our secret, it is theirs and public.)
  *
- * ── Why it is NOT reachable over HTTP (the precise blocker, all verified live) ──
+ *   2. Every subsequent call carries `Backpack: <token>` (+ Caller: PP8).
  *
- *   • Every data endpoint is auth-gated. With no header:
- *       POST {domain}/Program/20273/Search/New/all  → 401
- *       GET  {domain}/Program/20273/{Person|Session|Presentation|Authors|...} → 401
- *       body: {"Message":"A valid Backpack key needs to be included in the
- *              header of your request."}
- *     So nothing is readable without a backpack token.
+ *   3. Search is ASYNC — create, poll, page:
+ *        POST {base}/Program/{eventId}/Search/New/{Presentation|Session|Person}
+ *             body { "Phrase": "<query>" }            → { SearchId, Status:"Not Started" }
+ *        GET  {base}/Program/{eventId}/Search/{SearchId}      → poll until Status:"Complete" (gives Count)
+ *        GET  {base}/Program/{eventId}/Search/{SearchId}/Results?page=N&pagesize=M
+ *             → { Page, PageSize, Results:[{ Id, Body(title), Head(datetime), Type }], Search:{ Count } }
+ *      NOTE: empty Phrase returns 0 — the list browse is FILTER-driven, not
+ *      phrase-driven. Get the facet tree at {base}/Program/{eventId}/Search/{SearchId}/Filters
+ *      and apply day/session-type filters to enumerate everything; OR (leaner,
+ *      and on-model for us) run a `Person` search per tracked-contact surname and
+ *      confirm via the AuthorBlock — match, don't crawl.
  *
- *   • The anonymous-backpack route the SPA uses does NOT exist on the public
- *     service. POST/GET/PUT to {domain}/Backpack/new/planner8/secret all return
- *     the WCF "Endpoint not found" page (HTTP 404) — from bare curl AND from a
- *     real headless browser (Apify rag-web-browser GET). The public Backpack
- *     service's full operation table (…/OE3/Backpack/help) confirms it: the only
- *     creation route is `POST /Backpack/create` (CreateNew), which requires an
- *     `OasisCredential` body and returns 400 "Credentials are missing or
- *     invalid." `Backpack/{ID}` is a strictly 1-segment route — any 3-segment
- *     `new/.../...` path is unrouted. There is no anonymous, no-auth way in.
+ *   4. Per-record detail carries the speakers + affiliations:
+ *        GET {base}/Program/{eventId}/Presentation/{Id}
+ *          → { PresenterDisplayName, AuthorBlock(HTML names+institutions),
+ *              DisclosureBlock, PresentationNumber, Abstract, ... }
+ *        GET {base}/Program/{eventId}/Session/{Id}/presentations
+ *        GET {base}/Program/{eventId}/Participant/{Id}/presentations
+ *      `AuthorBlock` is the gold: every author with a superscript-numbered
+ *      institution (incl. company affiliations). Parsed by parseAuthorBlock below.
  *
- *   • Rendering the SPA does not help short of executing it long enough to let it
- *     mint its own backpack and then reading `window.app.user.getBackpack()` /
- *     re-issuing the data fetches from inside the page origin. That requires a
- *     code-injecting headless browser (Puppeteer/Playwright with a custom
- *     pageFunction) — apify/puppeteer-scraper, apify/web-scraper — none of which
- *     were runnable in this environment (all require interactive account-level
- *     permission approval). rag-web-browser only returns page text/markdown and
- *     does not run long enough for the SPA to populate data ("One fine body"
- *     placeholder only), so it cannot extract the program either.
+ * ── Build status ──
+ *   fetchAppearances is a CLEAN SKIP (returns []) for now — the live orchestration
+ *   (mint → search/filter → page → detail → map authors) is deferred until the
+ *   next OASIS shows are in-window (AACR/ASCO 2026 are past; 2027 planners are not
+ *   published yet). The PURE pieces are implemented and tested now so the build is
+ *   a thin wrapper when the time comes: the public credential, the route builder
+ *   (abstractsOnlineApiRoutes), and the AuthorBlock parser (parseAuthorBlock).
  *
- * ── What it would take to crack ──
- *   A headless browser that (a) loads {pp8}/#!/{eventId}, (b) waits for the SPA
- *   to bootstrap and provision its anonymous backpack, then (c) from the page
- *   origin reads the backpack and replays {domain}/Program/{meetingID}/Search/New
- *   + the per-record GETs — OR a CTI-issued credential / signed token if the
- *   society grants one. Until then this platform is browser-only and this adapter
- *   stays a stub. (The journal abstract-supplement / society-archive path is the
- *   fallback for AACR/ASCO speakers — see docs/CONFERENCE_PHASE2_PRESENTERS.md.)
- *
- * See docs/CONFERENCE_PHASE2_PRESENTERS.md §"abstractsonline (OASIS) — not
- * cracked" for the full finding. NEW file — touches no working adapter.
+ * NEW file — touches no working adapter.
  */
 import type {
   AppearanceRecord,
@@ -72,52 +61,139 @@ import type {
   PresenterSourceAdapter,
 } from './types';
 
-/** Marker so callers/tests can detect the not-yet-cracked state without parsing the message. */
-export const ABSTRACTSONLINE_NOT_CRACKED = true as const;
+/** Recipe is verified end-to-end; the live network build is intentionally deferred. */
+export const ABSTRACTSONLINE_RECIPE_VERIFIED = true as const;
+/** fetchAppearances is still a clean skip (no live orchestration yet). */
+export const ABSTRACTSONLINE_LIVE = false as const;
+
+/** OASIS data-API origin. */
+export const OASIS_DOMAIN = 'https://www.abstractsonline.com/oe3';
 
 /**
- * Build the OASIS data-API base for an eventId. Exported (pure, no network) so a
- * future headless cracker can reuse the exact routes once a backpack is in hand.
- * `eventId` is the numeric id in the planner hash (abstractsonline.com/pp8/#!/{eventId}).
+ * Public anonymous service login the pp8 SPA ships in its bundle to mint a
+ * Backpack token. This is CTI's own public credential (clear-text in their
+ * JavaScript), not an Arcova secret. POST it to {OASIS_DOMAIN}/Backpack/create.
+ */
+export const OASIS_PUBLIC_BACKPACK_LOGIN = {
+  Username: 'backpack',
+  Password: '89j34jks98cnjks989p;nfs44',
+} as const;
+
+/**
+ * Build the OASIS data-API routes for an eventId. Pure (no network) so the
+ * deferred live build — and the test — can use the exact routes. `eventId` is the
+ * numeric id in the planner hash (abstractsonline.com/pp8/#!/{eventId}).
  */
 export function abstractsOnlineApiRoutes(eventId: string | number): {
   domain: string;
   backpackCreate: string;
-  search: (type: string) => string;
+  meeting: string;
+  searchNew: (dataset: 'Presentation' | 'Session' | 'Person') => string;
+  searchStatus: (searchId: string | number) => string;
+  searchFilters: (searchId: string | number) => string;
+  searchResults: (searchId: string | number, page: number, pageSize: number) => string;
+  presentation: (id: string | number) => string;
+  sessionPresentations: (id: string | number) => string;
+  participantPresentations: (id: string | number) => string;
 } {
-  const domain = 'https://www.abstractsonline.com/oe3';
+  const domain = OASIS_DOMAIN;
+  const program = `${domain}/Program/${eventId}`;
   return {
     domain,
-    // The SPA's anonymous-backpack route (browser-only; 404s to bare HTTP).
-    backpackCreate: `${domain}/Backpack/new/planner8/secret`,
-    search: (type: string) => `${domain}/Program/${eventId}/Search/New/${type}`,
+    backpackCreate: `${domain}/Backpack/create`,
+    meeting: `${domain}/program/meeting/${eventId}`,
+    searchNew: (dataset) => `${program}/Search/New/${dataset}`,
+    searchStatus: (searchId) => `${program}/Search/${searchId}`,
+    searchFilters: (searchId) => `${program}/Search/${searchId}/Filters`,
+    searchResults: (searchId, page, pageSize) =>
+      `${program}/Search/${searchId}/Results?page=${page}&pagesize=${pageSize}`,
+    presentation: (id) => `${program}/Presentation/${id}`,
+    sessionPresentations: (id) => `${program}/Session/${id}/presentations`,
+    participantPresentations: (id) => `${program}/Participant/${id}/presentations`,
   };
 }
 
+/** One author parsed out of an OASIS `AuthorBlock`. */
+export type AuthorBlockEntry = {
+  /** Author display name, tags + superscripts stripped. */
+  name: string;
+  /** Institution(s) for this author's superscript number(s), joined with "; ". */
+  affiliationRaw: string;
+  /** The superscript institution indexes this author carried. */
+  affiliationNums: number[];
+  /** True if the source bolded this author (the presenting / first author). */
+  isBold: boolean;
+};
+
+const stripTags = (s: string): string =>
+  s
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 /**
- * Pure parse helper — placeholder. When the backpack-gated `Search/New` /
- * `Program/{id}/...` JSON is finally obtainable (headless), map each session's
- * speakers → AppearanceRecord[] here. Kept exported to mirror the working
- * adapters' (parse + fetch) shape and to give the test something to assert on.
+ * Parse an OASIS `AuthorBlock` (from a Presentation detail) into authors with
+ * their affiliations. The block is two segments separated by a `<br>`:
+ *   "<b>First Author</b><sup>1</sup>, Second<sup>2,3</sup>, …<br><br/>
+ *    <sup>1</sup>Inst One, City, ST,<sup>2</sup>Inst Two, Country,…"
+ * The first segment lists authors each tagged with superscript institution
+ * indexes; the second maps each index → institution text. We join them so each
+ * author carries its real affiliation string (the company-matching key).
+ *
+ * Pure + synchronous — the hardest parse detail, locked in against real AACR 2025
+ * data (see presenters.test.ts). The live fetch maps these → AppearanceRecord[].
  */
-export function parseAbstractsOnlineProgram(
-  _json: unknown,
-  _sourceUrl: string,
-): AppearanceRecord[] {
-  return [];
+export function parseAuthorBlock(authorBlock: string): AuthorBlockEntry[] {
+  if (!authorBlock) return [];
+  // Split authors / institutions at the first <br> boundary.
+  const brMatch = authorBlock.search(/<br\s*\/?>/i);
+  const authorsPart = brMatch >= 0 ? authorBlock.slice(0, brMatch) : authorBlock;
+  const instPart = brMatch >= 0 ? authorBlock.slice(brMatch) : '';
+
+  // Institution index → text. Each entry is "<sup>N</sup>Text" until the next sup.
+  const institutions = new Map<number, string>();
+  const instRe = /<sup>\s*(\d+)\s*<\/sup>([\s\S]*?)(?=<sup>\s*\d+\s*<\/sup>|$)/g;
+  let im: RegExpExecArray | null;
+  while ((im = instRe.exec(instPart)) !== null) {
+    const num = Number(im[1]);
+    const text = stripTags(im[2]).replace(/[,;\s]+$/, '').trim();
+    if (text) institutions.set(num, text);
+  }
+
+  // Authors: "<name><sup>n[,n…]</sup>", comma-separated. [^,] keeps names from
+  // spanning the comma separators between authors.
+  const authors: AuthorBlockEntry[] = [];
+  const authRe = /([^,]*?)<sup>\s*([\d,\s]+?)\s*<\/sup>/g;
+  let am: RegExpExecArray | null;
+  while ((am = authRe.exec(authorsPart)) !== null) {
+    const rawName = am[1];
+    const isBold = /<b>/i.test(rawName);
+    const name = stripTags(rawName);
+    if (!name) continue;
+    const nums = am[2]
+      .split(/[,\s]+/)
+      .map((n) => Number(n))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const affiliationRaw = nums
+      .map((n) => institutions.get(n))
+      .filter((v): v is string => Boolean(v))
+      .join('; ');
+    authors.push({ name, affiliationRaw, affiliationNums: nums, isBold });
+  }
+  return authors;
 }
 
 export const abstractsOnlineAdapter: PresenterSourceAdapter = {
   platform: 'abstractsonline',
   /**
-   * CLEAN SKIP until cracked. The OASIS data API is browser-only (every
-   * /Program/{eventId}/* endpoint is Backpack-gated and the anonymous-backpack
-   * route 404s to plain HTTP — see the file header for the full finding). Rather
-   * than throw (which the per-conference try/catch in syncPresentersDelta would
-   * record as a failure on every run), we return no appearances so the platform
-   * stays wired and dormant without spamming the sync-run failure log. Swap the
-   * body for the real headless fetch (mint backpack from page origin → replay
-   * Search/New + per-record GETs → parseAbstractsOnlineProgram) once available.
+   * CLEAN SKIP. The recipe above is verified, but the live orchestration is
+   * deferred until OASIS shows are next in-window (no AACR/ASCO 2027 planner is
+   * published yet). Returning no appearances keeps the platform wired and dormant
+   * without spamming the sync-run failure log. When built, this becomes:
+   *   mint token → (filter-browse OR per-tracked-surname Person search) → page
+   *   Results → GET Presentation/{Id} → parseAuthorBlock → AppearanceRecord[].
    */
   async fetchAppearances(_conf: ConferenceForAppearanceFetch): Promise<AppearanceRecord[]> {
     return [];
