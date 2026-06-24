@@ -171,8 +171,8 @@ const CURTAIN: Icon = {
 }
 const ALL: Icon[] = [...ICONS, CURTAIN]
 
-// The side-nav trial is narrowed to the two finalists; the Scope section still shows everything.
-const SHORTLIST: Icon[] = [...ICONS.filter((i) => i.id === "C6"), CURTAIN]
+// The side-nav trial is narrowed to the finalists; the Scope section still shows everything.
+const SHORTLIST: Icon[] = [...ICONS.filter((i) => i.id === "C5" || i.id === "C6"), CURTAIN]
 
 // Brand feedback, graded on three axes from logo research:
 //  • small-size survivability (the 16-32px favicon test)

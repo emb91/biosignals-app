@@ -745,7 +745,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
            was, floating over the now-full-width page content. Same glass treatment
            as the full panel. Expand control restores the panel; sending a message
            also expands so the reply is visible. */
-        <div className="absolute right-3 top-2.5 z-30 flex w-[360px] items-center gap-1.5 rounded-[1.3125rem] border border-arcova-teal/60 bg-white/65 px-3 py-2 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2),_0_2px_6px_-2px_rgba(0,164,180,0.12)] ring-1 ring-arcova-teal/10 backdrop-blur-[28px] backdrop-saturate-150">
+        <div className="absolute right-7 top-2.5 z-30 flex w-[360px] items-center gap-1.5 rounded-[1.3125rem] border border-arcova-teal/60 bg-white/65 px-3 py-2 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2),_0_2px_6px_-2px_rgba(0,164,180,0.12)] ring-1 ring-arcova-teal/10 backdrop-blur-[28px] backdrop-saturate-150">
           <AgentChatBar
             ref={inputRef}
             value={input}

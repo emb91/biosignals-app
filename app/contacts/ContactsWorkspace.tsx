@@ -3384,7 +3384,7 @@ export function ContactsWorkspace() {
   if (!user) return null;
 
   const contactsPageTitleBlock = (
-    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between lg:[.arcova-agent-collapsed_&]:pr-[24rem]">
+    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
           <Users className="h-3.5 w-3.5" />
@@ -3401,7 +3401,10 @@ export function ContactsWorkspace() {
       </div>
 
       {total > 0 && (
-        <div className="flex items-center gap-2">
+        // When the agent is collapsed it floats over the top-right; drop the
+        // Actions cluster below it (right-aligned with the table) so they stack
+        // cleanly instead of overlapping.
+        <div className="flex items-center gap-2 lg:[.arcova-agent-collapsed_&]:mt-[5rem] lg:[.arcova-agent-collapsed_&]:self-start">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button

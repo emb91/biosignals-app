@@ -28,7 +28,7 @@
     "test:patent-surge": "rm -rf /tmp/arcova-patent-surge-tests && tsc -p tsconfig.test.patent-surge.json && node --test /tmp/arcova-patent-surge-tests/patent-surge.test.js",
     "test:funding-monitor": "rm -rf /tmp/arcova-funding-monitor-tests && tsc -p tsconfig.test.funding-monitor.json && node --test /tmp/arcova-funding-monitor-tests/signals/sec-form-d-filters.test.js /tmp/arcova-funding-monitor-tests/signals/sec-form-d-screener.test.js",
     "test:signal-guards": "rm -rf /tmp/arcova-signal-guards-tests && tsc -p tsconfig.test.signal-guards.json && node --test /tmp/arcova-signal-guards-tests/signals/signal-entity-guards.test.js",
-    "test:signal-ownership": "rm -rf /tmp/arcova-signal-ownership-tests && tsc -p tsconfig.test.signal-ownership.json && node --test /tmp/arcova-signal-ownership-tests/signal-ownership.test.js",
+    "test:signal-ownership": "rm -rf /tmp/arcova-signal-ownership-tests && tsc -p tsconfig.test.signal-ownership.json && node --test /tmp/arcova-signal-ownership-tests/signals/signal-ownership.test.js",
     "test:clinical-trial-admission": "rm -rf /tmp/arcova-clinical-trial-admission-tests && tsc -p tsconfig.test.clinical-trial-admission.json && node --test /tmp/arcova-clinical-trial-admission-tests/signals/clinical-trial-admission.test.js",
     "test:resolver-provenance-admission": "rm -rf /tmp/arcova-resolver-provenance-admission-tests && tsc -p tsconfig.test.resolver-provenance-admission.json && node --test /tmp/arcova-resolver-provenance-admission-tests/signals/resolver-provenance-admission.test.js",
     "gen-sitemap": "node generate-sitemap.js",
