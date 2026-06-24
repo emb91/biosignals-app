@@ -57,6 +57,16 @@ function coverageAfterFromMetadata(
   return { company_count: current_company_count, contact_count: current_contact_count };
 }
 
+function needsCompletedBillingRecovery(row: JobRow): boolean {
+  if (row.status !== 'complete' || !row.upload_batch_id) return false;
+  const metadata = row.metadata ?? {};
+  if (metadata.customer_billing_settled_at) return false;
+  return (
+    typeof metadata.customer_credit_transaction_id === 'string' ||
+    typeof metadata.customer_usage_operation_id === 'string'
+  );
+}
+
 export async function GET() {
   try {
     const supabase = await createClient();
@@ -115,7 +125,7 @@ export async function GET() {
     // A serverless invocation can finish the upload batch and be terminated in
     // the brief gap before it marks the acquisition job complete and settles
     // credits. Polling repairs that state idempotently instead of leaving the
-    // customer staring at "Importing" with a permanent pending reservation.
+    // customer staring at "Importing" or with a permanent pending reservation.
     const activeWithBatch = rows.filter(
       (row) => ACTIVE_JOB_STATUSES.includes(row.status) && Boolean(row.upload_batch_id),
     );
@@ -139,6 +149,20 @@ export async function GET() {
         } else {
           after(recover);
         }
+      }
+    }
+    const completeMissingSettlement = rows.filter(needsCompletedBillingRecovery);
+    for (const row of completeMissingSettlement) {
+      const recover = () =>
+        finalizeCompletedDataAcquisitionJob(row.id).catch((err) => {
+          console.error('[data-acquisition/jobs] completion billing recovery failed', err);
+        });
+      if (process.env.NODE_ENV === 'development') {
+        setTimeout(() => {
+          void recover();
+        }, 0);
+      } else {
+        after(recover);
       }
     }
 

@@ -46,6 +46,7 @@ type DataAcquisitionJob = {
   max_contact_enrichments: number | null;
   max_credit_units: number | string | null;
   actual_credit_units: number | string | null;
+  imported_contact_count?: number | null;
   status: string;
   metadata: Record<string, unknown> | null;
 };
@@ -856,6 +857,12 @@ async function updateJob(jobId: string, values: Record<string, unknown>) {
   if (error) throw new Error(error.message);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 // ─── Pre-flight contact gap helpers ──────────────────────────────────────────
 
 /**
@@ -1324,6 +1331,54 @@ async function advanceQueueForUser(userId: string): Promise<void> {
   await runDataAcquisitionJob(nextId);
 }
 
+async function settleDataAcquisitionCustomerBilling(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+): Promise<boolean> {
+  const { data: current, error } = await admin
+    .from('data_acquisition_jobs')
+    .select('metadata, imported_contact_count')
+    .eq('id', job.id)
+    .maybeSingle<{ metadata: Record<string, unknown> | null; imported_contact_count: number | null }>();
+  if (error) throw new Error(error.message);
+
+  const metadata = asRecord(current?.metadata) ?? job.metadata ?? {};
+  if (metadata.customer_billing_settled_at) return false;
+
+  const transactionId = typeof metadata.customer_credit_transaction_id === 'string'
+    ? metadata.customer_credit_transaction_id
+    : null;
+  const usageOperationId = typeof metadata.customer_usage_operation_id === 'string'
+    ? metadata.customer_usage_operation_id
+    : null;
+  if (!transactionId && !usageOperationId) return false;
+
+  const delivered = Math.max(
+    0,
+    Number(current?.imported_contact_count ?? job.imported_contact_count ?? 0),
+  );
+  await settleCredits(transactionId, delivered * 4);
+  if (job.org_id && usageOperationId) {
+    await settleUsage({
+      orgId: job.org_id,
+      action: 'net_new_enriched_lead',
+      operationKey: usageOperationId,
+      quantity: delivered,
+    });
+  }
+
+  const settledAt = new Date().toISOString();
+  await updateJob(job.id, {
+    metadata: {
+      ...metadata,
+      customer_billing_settled_at: settledAt,
+      customer_billing_settled_quantity: delivered,
+      customer_billing_settled_credits: delivered * 4,
+    },
+  });
+  return true;
+}
+
 /**
  * Serverless recovery for the narrow failure window where the import pipeline
  * completed its upload batch but the invocation ended before the acquisition
@@ -1339,56 +1394,41 @@ export async function finalizeCompletedDataAcquisitionJob(jobId: string): Promis
   if (jobError || !jobData) return false;
 
   const job = jobData as DataAcquisitionJob;
-  if (!ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number])) {
+  const activeStatus = ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number]);
+  const completeStatus = job.status === 'complete';
+  if (!activeStatus && !completeStatus) {
     return false;
   }
   if (!job.upload_batch_id) return false;
 
-  const { data: batch } = await admin
-    .from('upload_batches')
-    .select('status')
-    .eq('id', job.upload_batch_id)
-    .maybeSingle<{ status: string | null }>();
-  if (batch?.status !== 'complete') return false;
+  if (activeStatus) {
+    const { data: batch } = await admin
+      .from('upload_batches')
+      .select('status')
+      .eq('id', job.upload_batch_id)
+      .maybeSingle<{ status: string | null }>();
+    if (batch?.status !== 'complete') return false;
 
-  const metadata = await buildCoverageWritebackMetadata(admin, job);
-  const completedAt = new Date().toISOString();
-  const { data: finalized, error: finalizeError } = await admin
-    .from('data_acquisition_jobs')
-    .update({
-      status: 'complete',
-      completed_at: completedAt,
-      metadata,
-      updated_at: completedAt,
-    })
-    .eq('id', job.id)
-    .in('status', [...ACTIVE_JOB_STATUSES])
-    .select('imported_contact_count');
-  if (finalizeError || (finalized ?? []).length === 0) return false;
-
-  const delivered = Math.max(
-    0,
-    Number((finalized?.[0] as { imported_contact_count?: number | null })?.imported_contact_count ?? 0),
-  );
-  const transactionId = typeof job.metadata?.customer_credit_transaction_id === 'string'
-    ? job.metadata.customer_credit_transaction_id
-    : null;
-  await settleCredits(transactionId, delivered * 4);
-
-  const usageOperationId = typeof job.metadata?.customer_usage_operation_id === 'string'
-    ? job.metadata.customer_usage_operation_id
-    : null;
-  if (job.org_id && usageOperationId) {
-    await settleUsage({
-      orgId: job.org_id,
-      action: 'net_new_enriched_lead',
-      operationKey: usageOperationId,
-      quantity: delivered,
-    });
+    const metadata = await buildCoverageWritebackMetadata(admin, job);
+    const completedAt = new Date().toISOString();
+    const { data: finalized, error: finalizeError } = await admin
+      .from('data_acquisition_jobs')
+      .update({
+        status: 'complete',
+        completed_at: completedAt,
+        metadata,
+        updated_at: completedAt,
+      })
+      .eq('id', job.id)
+      .in('status', [...ACTIVE_JOB_STATUSES])
+      .select('imported_contact_count');
+    if (finalizeError || (finalized ?? []).length === 0) return false;
+    job.imported_contact_count = (finalized?.[0] as { imported_contact_count?: number | null })?.imported_contact_count ?? null;
   }
 
+  const settled = await settleDataAcquisitionCustomerBilling(admin, job);
   await advanceQueueForUser(job.user_id);
-  return true;
+  return activeStatus || settled;
 }
 
 // ─── Job execution ────────────────────────────────────────────────────────────
@@ -1416,26 +1456,7 @@ export async function runDataAcquisitionJob(jobId: string): Promise<void> {
 
   try {
     await executeClaimedJob(admin, job);
-    const transactionId = typeof job.metadata?.customer_credit_transaction_id === 'string'
-      ? job.metadata.customer_credit_transaction_id
-      : null;
-    const { data: completed } = await admin.from('data_acquisition_jobs')
-      .select('imported_contact_count')
-      .eq('id', job.id)
-      .maybeSingle<{ imported_contact_count: number | null }>();
-    const delivered = Math.max(0, Number(completed?.imported_contact_count ?? 0));
-    await settleCredits(transactionId, delivered * 4);
-    const usageOperationId = typeof job.metadata?.customer_usage_operation_id === 'string'
-      ? job.metadata.customer_usage_operation_id
-      : null;
-    if (job.org_id && usageOperationId) {
-      await settleUsage({
-        orgId: job.org_id,
-        action: 'net_new_enriched_lead',
-        operationKey: usageOperationId,
-        quantity: delivered,
-      });
-    }
+    await settleDataAcquisitionCustomerBilling(admin, job);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown data acquisition failure';
     await updateJob(job.id, { status: 'failed', error: message, completed_at: new Date().toISOString() });

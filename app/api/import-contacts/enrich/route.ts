@@ -28,18 +28,11 @@ export async function POST(request: Request) {
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
   if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
-  const { data: orgMembers, error: membersError } = await admin
-    .from('org_members')
-    .select('user_id')
-    .eq('org_id', member.org_id);
-  if (membersError) return NextResponse.json({ error: membersError.message }, { status: 500 });
-  const orgUserIds = (orgMembers || [])
-    .map((row) => row.user_id as string | null)
-    .filter((id): id is string => Boolean(id));
-  if (!orgUserIds.length) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
   const { data: candidateRows, error } = await admin.from('raw_uploads')
     .select('id, user_id, batch_id, full_name, email, linkedin_url, company_name, raw_data, status, triage_group, triage_override_group')
-    .in('user_id', orgUserIds).in('id', rawUploadIds).eq('status', 'awaiting_enrichment');
+    .eq('org_id', member.org_id)
+    .in('id', rawUploadIds)
+    .eq('status', 'awaiting_enrichment');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const rows = (candidateRows || []).filter((row) => {
     const effectiveTriage = (row.triage_override_group || row.triage_group) as string | null;
@@ -100,7 +93,9 @@ export async function POST(request: Request) {
       }
       const { count: successful } = await admin.from('raw_uploads')
         .select('id', { count: 'exact', head: true })
-        .in('id', rows.map((row) => row.id as string)).eq('status', 'enriched');
+        .eq('org_id', member.org_id)
+        .in('id', rows.map((row) => row.id as string))
+        .eq('status', 'enriched');
       await settleCredits(reservation.transactionId, (successful ?? 0) * 4);
       await settleUsage({
         orgId: member.org_id,
