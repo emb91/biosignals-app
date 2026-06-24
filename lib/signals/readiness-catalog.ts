@@ -34,12 +34,14 @@ const SIGNAL_IMPACT_OVERRIDES: Partial<Record<SignalKey, number>> = {
   milestone_payment: 70,
   facility_expansion: 70,
   grant_award: 50,
-  // Conference / in-market timing — a meeting window + reachability, not buying
-  // intent. exhibiting (company commercial motion) > presenting (named contact,
-  // personal hook) > attending (self-declared LinkedIn post, weak but timely).
-  exhibiting_at_conference: 54,
-  presenting_at_conference: 50,
-  attending_conference: 40,
+  // Conference / in-market timing — context + reachability (a meeting window),
+  // NOT buying intent: being at a show doesn't make them a customer. Kept in the
+  // weak/context band, just above pure narrative. exhibiting (company commercial
+  // motion) > presenting (named contact, personal hook) > attending (self-declared
+  // LinkedIn post).
+  exhibiting_at_conference: 44,
+  presenting_at_conference: 43,
+  attending_conference: 42,
   // Deals / partnerships.
   partnership_with_upfront_economics: 78,
   commercialization_move: 70,
