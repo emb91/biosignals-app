@@ -17,6 +17,7 @@
     "lib/signals/conference/presenters/types.ts",
     "lib/signals/conference/presenters/eventscribe-adapter.ts",
     "lib/signals/conference/presenters/informa-agenda-adapter.ts",
+    "lib/signals/conference/presenters/abstractsonline-adapter.ts",
     "lib/signals/conference/presenters/eventscribe-fixture.ts",
     "lib/signals/conference/presenters/presenter-resolution.ts",
     "lib/signals/conference/presenters/presenters.test.ts"
