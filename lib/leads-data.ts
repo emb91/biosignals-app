@@ -3,13 +3,14 @@
  * Used by /api/contacts/query and /api/agent/chat.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getActionFromScores } from '@/lib/lead-action';
+import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 import {
   formatDataProvenanceTypeOnly,
   resolveContactDataProvenance,
 } from '@/lib/data-provenance';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ export interface QueryLead {
   company_fit_score: number | null;
   contact_fit_score: number | null;
   readiness_score: number | null;
+  company_readiness_score: number | null;
   crm_is_suppressed: boolean;
   source: string | null;
   created_at: string | null;
@@ -161,7 +163,7 @@ export function applyLeadsSort(leads: QueryLead[], sortBy: LeadSortBy): QueryLea
       getActionFromScores(
         fit,
         lead.contact_fit_score ?? null,
-        lead.readiness_score ?? null,
+        effectiveReadiness(lead.company_readiness_score, lead.readiness_score),
         lead.crm_is_suppressed ? 'dormant' : null,
       );
     switch (sortBy) {
@@ -196,7 +198,7 @@ export function applyLeadsFilters(leads: QueryLead[], filters: LeadQueryFilters)
       const action = getActionFromScores(
         companyFit,
         lead.contact_fit_score ?? null,
-        lead.readiness_score ?? null,
+        effectiveReadiness(lead.company_readiness_score, lead.readiness_score),
         lead.crm_is_suppressed ? 'dormant' : null,
       );
       if (!filters.actions.includes(action)) return false;
@@ -358,12 +360,37 @@ export async function fetchFilteredLeads(
   // Fetch company data for matched company IDs
   const companyIds = [...new Set(rows.map((r) => r.company_id).filter(Boolean))] as string[];
   let companiesById = new Map<string, Record<string, unknown>>();
+  let companyStateById = new Map<
+    string,
+    {
+      company_fit_score?: number | null;
+      readiness_score?: number | null;
+      matched_icp_id?: string | null;
+    }
+  >();
 
   if (companyIds.length > 0) {
+    const stateRows = (await listActiveCompanyStateForUser(
+      supabase as any,
+      userId,
+      'company_id, company_fit_score, readiness_score, matched_icp_id',
+    )) as Array<{
+      company_id: string;
+      company_fit_score?: number | null;
+      readiness_score?: number | null;
+      matched_icp_id?: string | null;
+    }>;
+    const companyIdSet = new Set(companyIds);
+    companyStateById = new Map(
+      stateRows
+        .filter((row) => companyIdSet.has(row.company_id))
+        .map((row) => [row.company_id, row]),
+    );
+
     const companySelects = [
-      'id, company_name, domain, website, company_type, company_type_display, platform_category, funding_stage, therapeutic_areas, modalities, matched_icp_id, company_fit_score, logo_url, industry, employee_count, employee_range',
-      'id, company_name, domain, website, company_type, company_type_display, platform_category, funding_stage, therapeutic_area, modality, matched_icp_id, company_fit_score',
-      'id, company_name, company_type, funding_stage, matched_icp_id, company_fit_score',
+      'id, company_name, domain, website, company_type, company_type_display, platform_category, funding_stage, therapeutic_areas, modalities, logo_url, industry, employee_count, employee_range',
+      'id, company_name, domain, website, company_type, company_type_display, platform_category, funding_stage, therapeutic_area, modality',
+      'id, company_name, company_type, funding_stage',
     ];
 
     for (const sel of companySelects) {
@@ -386,7 +413,7 @@ export async function fetchFilteredLeads(
   // Resolve ICP labels
   const icpIds = [
     ...new Set(
-      [...companiesById.values()]
+      [...companyStateById.values()]
         .map((c) => c.matched_icp_id)
         .filter((id): id is string => typeof id === 'string'),
     ),
@@ -414,7 +441,11 @@ export async function fetchFilteredLeads(
   const leads: QueryLead[] = rows.map((r) => {
     const companyId = typeof r.company_id === 'string' ? r.company_id : null;
     const company = companyId ? companiesById.get(companyId) ?? null : null;
-    const matchedIcpId = company && typeof company.matched_icp_id === 'string' ? company.matched_icp_id : null;
+    const companyState = companyId ? companyStateById.get(companyId) ?? null : null;
+    const matchedIcpId =
+      companyState && typeof companyState.matched_icp_id === 'string'
+        ? companyState.matched_icp_id
+        : null;
     const matchedIcpName = matchedIcpId ? icpNamesById.get(matchedIcpId) ?? null : null;
     const matchedIcpIndex = matchedIcpId ? icpIndexById.get(matchedIcpId) ?? null : null;
 
@@ -424,8 +455,8 @@ export async function fetchFilteredLeads(
       source: typeof r.source === 'string' ? r.source : null,
     });
 
-    const companyFitFromCompany = company && typeof company.company_fit_score === 'number'
-      ? company.company_fit_score : null;
+    const companyFitFromCompany = typeof companyState?.company_fit_score === 'number'
+      ? companyState.company_fit_score : null;
     const companyFitScore =
       companyFitFromCompany ??
       (typeof r.overall_fit_score === 'number' ? r.overall_fit_score : null) ??
@@ -446,6 +477,7 @@ export async function fetchFilteredLeads(
       company_fit_score: companyFitScore,
       contact_fit_score: typeof r.contact_fit_score === 'number' ? r.contact_fit_score : null,
       readiness_score: typeof r.readiness_score === 'number' ? r.readiness_score : null,
+      company_readiness_score: typeof companyState?.readiness_score === 'number' ? companyState.readiness_score : null,
       crm_is_suppressed: r.crm_is_suppressed === true,
       source: typeof r.source === 'string' ? r.source : null,
       created_at: typeof r.created_at === 'string' ? r.created_at : null,
@@ -465,8 +497,7 @@ export async function fetchFilteredLeads(
               ? (company.therapeutic_areas as string[]) : null,
             modalities: Array.isArray(company.modalities)
               ? (company.modalities as string[]) : null,
-            company_fit_score: typeof company.company_fit_score === 'number'
-              ? company.company_fit_score : null,
+            company_fit_score: companyFitFromCompany,
             domain: (company.domain as string | null) ?? null,
             website: (company.website as string | null) ?? null,
           }

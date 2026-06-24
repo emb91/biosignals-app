@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { authoritativeAccountReadiness } from '@/lib/effective-priority';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -7,6 +8,13 @@ export type ActiveCompanyStateRow = {
   company_fit_score?: number | null;
   readiness_score?: number | null;
 };
+
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 async function orgIdForCompanyStateUser(
   client: DatabaseClient,
@@ -43,8 +51,39 @@ export async function listActiveCompanyStateForUser(
     throw new Error(`company state query: ${error.message}`);
   }
 
-  return ((data ?? []) as unknown as ActiveCompanyStateRow[]).filter(
+  const rows = ((data ?? []) as unknown as ActiveCompanyStateRow[]).filter(
     (row) => typeof row.company_id === 'string' && Boolean(row.company_id),
+  );
+
+  if (!select.includes('readiness_score') && select.trim() !== '*') return rows;
+
+  const companyIds = [...new Set(rows.map((row) => row.company_id))];
+  if (companyIds.length === 0) return rows;
+
+  const { data: snapshots, error: snapshotError } = await client
+    .from('account_readiness_snapshots')
+    .select('company_id, overall_score')
+    .eq('user_id', userId)
+    .in('company_id', companyIds);
+
+  if (snapshotError || !snapshots) return rows;
+
+  const readinessByCompanyId = new Map(
+    (snapshots as Array<{ company_id?: unknown; overall_score?: unknown }>)
+      .filter((row) => typeof row.company_id === 'string')
+      .map((row) => [row.company_id as string, finiteNumber(row.overall_score)]),
+  );
+
+  return rows.map((row) =>
+    readinessByCompanyId.has(row.company_id)
+      ? {
+          ...row,
+          readiness_score: authoritativeAccountReadiness(
+            readinessByCompanyId.get(row.company_id),
+            row.readiness_score,
+          ),
+        }
+      : row,
   );
 }
 
