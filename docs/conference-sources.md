@@ -356,47 +356,44 @@ curl -s -A "Mozilla/5.0" "https://events.jspargo.com/asco25/Public/Exhibitors.as
 
 ---
 
-## 3. Small World Labs — 🟡 PARTIAL (ASGCT)
+## 3. Small World Labs — 🟢 CRACKED (single-page); 🟡 multi-page pending (ASGCT/ToxExpo)
 
-`https://asgct2026.smallworldlabs.com/exhibitors` (platform host `*.pcomm.net`) server-renders an
-**alphabetic filter list** of exhibitor anchors:
-```html
-<a class="generic-option-link" href="/co/agc-biologics" data-option-url="/co/agc-biologics" ...>AGC Biologics</a>
-```
-The slug (`/co/<slug>`) is a per-company profile URL; the anchor text is the display name. **40
-companies** are server-rendered this way without auth (proof: `AGC Biologics`, `ACROBiosystems`,
-`Andelyn Biosciences, Inc.`, `Altasciences`, `ATCC`). ASGCT has ~320 exhibitors, so the remaining
-~280 load through the member-directory **widget AJAX** call (the page references `/swl/js/ajax.js`,
-`js_ajax_refresh.js`, and a paginated "widget" listing) which needs the rendered page's widget id +
-session — **not reproducible with a bare curl**.
+`https://<event>.smallworldlabs.com/exhibitors` (platform host `*.pcomm.net`) server-renders the
+directory in **two templates** (both now parsed — `adapters/smallworldlabs.ts`):
+- **LIST** (e.g. ASGCT): `<a class="generic-option-link" href="/co/<slug>">NAME</a>` — name + /co/ profile.
+- **CARD** (e.g. SOT/ToxExpo): `<h5 class="generic-option …" title="NAME">` — the card's
+  `generic-option-link` points to an **a2z booth map**, not /co/, so the old list-only regex returned
+  **zero** here. Re-verified live 2026-06-24: ToxExpo 2026 = 45 companies, fully server-rendered via
+  the card path.
 
 ### What works today
-- **URL:** `GET https://<event>.smallworldlabs.com/exhibitors`, normal `User-Agent`, no auth.
-- **Extract:** `<a class="generic-option-link" href="/co/<slug>" ...>NAME</a>` → `name` + `slug`.
-- **Field map:** `name` = anchor text; `sourceUrl` = `https://<event>.smallworldlabs.com/co/<slug>`;
-  booth/website/category not present in the list markup.
+- `GET https://<event>.smallworldlabs.com/exhibitors`, normal UA, no auth → both templates parsed,
+  deduped by name. Single-page events (the common case) are **fully covered**.
 
-### To finish cracking (TODO)
-Capture the widget directory request from a real browser session (DevTools → Network, filter the
-`/swl/`/widget XHR while scrolling the directory) to get the paginated full-list endpoint + params.
-A headless fetch (Apify/Playwright) is the pragmatic fallback for the full 320+.
+### Multi-page (TODO — needs a live large event to capture)
+When the directory exceeds one page it adds a "More" button wired to jQuery `jsPaginator`:
+`ajaxParams = { module:'organizations_organization_list', method:'paginationHandler', site_page_id:'<id>', template:'generic…' }`.
+The exact AJAX endpoint isn't pinned (ASGCT 2026 is now archived/empty, so no live multi-page event
+was available to capture the XHR). When a big SWL show is live, capture the paginationHandler request
+and wire it server-side (it's a plain POST, replicable like the OASIS recipe — no headless needed).
 
 ---
 
-## 4. Terrapinn — 🔴 NOT CRACKED (World Vaccine Congress, Festival of Biologics)
+## 4. Terrapinn — 🟢 server-rendered logo wall = the public list (World Vaccine Congress, Festival of Biologics)
 
-The `.stm` exhibitor pages are JS-hydrated. Findings:
-- `sponsors-and-exhibitors.stm` server-renders only **sponsor logos** (a handful, via `<img alt="X at Festival of Biologics ...">`) plus **2 featured exhibitor profiles** (`exhibitor-proteogenix.stm`, `exhibitor-quality-assistance.stm`). The full exhibitor grid is `<div id="ExhibitorListing" data-eventId="11109">` populated client-side.
-- The site's only generic AJAX service is `POST /serviced/core.asmx/EventData` (body `{"hash": <meta siteHash>}`, gzipped response) — but it returns the **global Terrapinn event calendar**, not per-event exhibitors. No per-event exhibitor JSON feed was found via curl.
-- Bundles checked: `/js/core.js`, `/js/general.js` — only a `ContactRequest` and `EventData` SOAP-ish call; no exhibitor-list fetch.
+Re-verified live 2026-06-24 with a headless network capture: the `.stm` page makes **no per-event
+exhibitor XHR at all** (only third-party trackers). The earlier "`#ExhibitorListing` hydrated
+client-side / headless candidate" note was wrong — what's server-rendered **is** the public list.
+Each entry is a `<div class="col-sm-3 Panel" data-eventId="<eid>">` card grouped under an `<h3>` tier
+(`Gold/Silver/Bronze Sponsor`, **`Exhibitor`**), with the company name in the logo's
+`title`/`alt` = `"<Name> at <Event> <Year>"`. The `Exhibitor` tier confirms it is the full floor, not
+sponsors-only. `adapters/terrapinn.ts` parses this.
 
-### What's extractable today (low value)
-- Sponsor logo `alt` text on `sponsors-and-exhibitors.stm` (e.g. `Ecolab`, `Kactus`, `SCIEX`, `Lonza` for Festival of Biologics) — sponsors only, not the full exhibitor list.
-
-### To crack (TODO)
-Open the exhibitor page in a real browser, watch Network for the XHR that fills `#ExhibitorListing`
-(keyed off `data-eventId`), and capture its URL/params. Likely a Terrapinn internal service keyed by
-`eid`. Until then, Terrapinn is a **headless-render** candidate, not a clean curl pull.
+### Caveat
+The card list only includes exhibitors with an **uploaded logo** (no-logo, text-only entries — if any
+— aren't in the static markup). No public XHR feed exists to recover those, so this is the complete
+*public* list, not necessarily every registered exhibitor. Acceptable: the omitted tail (if present)
+is small and logo-less micro-exhibitors.
 
 ---
 

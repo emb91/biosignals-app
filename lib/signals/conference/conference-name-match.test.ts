@@ -88,6 +88,25 @@ test('smallworldlabs parser extracts company anchors + absolute profile url', ()
   assert.equal(rows[0].sourceUrl, 'https://asgct2026.smallworldlabs.com/co/agc-biologics');
 });
 
+test('smallworldlabs parser also reads the card template (SOT/ToxExpo)', () => {
+  // Card layout: name in the heading's title attr; the card's generic-option-link
+  // points to an a2z booth map (not /co/), so the list-only regex saw nothing.
+  const html = `
+    <div class="card" data-item-id="128">
+      <div class="card-header bg-light">
+        <h5 data-generic-layout="heading" class="generic-option font-weight-bold truncate-1-line" title="28bio">28bio</h5>
+      </div>
+      <a class="generic-option-link font-weight-bold" href="https://s36.a2zinc.net/clients/AIM-SOT/toxexpo2026/Public/eventmap.aspx?EventId=16">28bio</a>
+    </div>
+    <div class="card" data-item-id="200">
+      <h5 class="generic-option font-weight-bold" title="Cytek Biosciences">Cytek Biosciences</h5>
+    </div>
+  `;
+  const rows = parseSmallWorldLabsExhibitors(html, 'https://toxexpo2026.smallworldlabs.com');
+  assert.deepEqual(rows.map((r) => r.name), ['28bio', 'Cytek Biosciences']);
+  assert.equal(rows[0].sourceUrl, 'https://toxexpo2026.smallworldlabs.com/exhibitors');
+});
+
 test('a2z EventMap parser pairs exhibitorName with the row booth + decodes entities', () => {
   // Mirrors the real EventMap.aspx markup: a companyName cell with an
   // exhibitorName anchor, followed by a boothLabel anchor in the same row.
