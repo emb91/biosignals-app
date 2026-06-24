@@ -31,6 +31,20 @@ export function dueForCadence(cadenceDays: number, now: number = Date.now()): bo
   return isFirstWeekdayOccurrenceOfMonth(now);
 }
 
+/**
+ * Subscriber attribution gate for shared sweep targets. The shared target may
+ * run at a faster cadence because another customer pays for it; this predicate
+ * decides whether a given subscriber is due to receive writes from that run.
+ */
+export function dueForRollingCadence(
+  cadenceDays: number,
+  lastSuccessfulAt: number | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!lastSuccessfulAt) return true;
+  return now - lastSuccessfulAt >= cadenceDays * 86_400_000;
+}
+
 /** Monitor lookback window (days) sized to comfortably cover one cadence gap. */
 export function lookbackDaysForCadence(cadenceDays: number): number {
   // Weekly: 7-day gap + buffer. Monthly: first-weekday spacing runs up to ~35

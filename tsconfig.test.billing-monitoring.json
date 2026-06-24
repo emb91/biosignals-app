@@ -6,6 +6,18 @@
   },
   "include": [
     "app/api/stripe/webhook/route.ts",
+    "app/api/cron/contact-job-change/route.ts",
+    "app/api/cron/clinical-trials-delta/route.ts",
+    "app/api/cron/conference-delta/route.ts",
+    "app/api/cron/conference-presenters-delta/route.ts",
+    "app/api/cron/conference-social-delta/route.ts",
+    "app/api/cron/fda-delta/route.ts",
+    "app/api/cron/funding-delta/route.ts",
+    "app/api/cron/grants-delta/route.ts",
+    "app/api/cron/jobs-delta/route.ts",
+    "app/api/cron/patents-delta/route.ts",
+    "app/api/cron/press-releases-delta/route.ts",
+    "app/api/cron/publications-delta/route.ts",
     "lib/billing/monitoring.ts"
   ]
 }

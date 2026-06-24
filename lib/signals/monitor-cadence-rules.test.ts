@@ -12,6 +12,7 @@ import {
   WEEKLY_CADENCE_DAYS,
   isFirstWeekdayOccurrenceOfMonth,
   dueForCadence,
+  dueForRollingCadence,
   lookbackDaysForCadence,
 } from './monitor-cadence-rules';
 
@@ -59,4 +60,13 @@ test('lookbackDaysForCadence: weekly window covers a week, monthly covers ~35-da
   assert.equal(lookbackDaysForCadence(MONTHLY), 37);
   // Monthly lookback must exceed the worst-case first-weekday spacing (35 days).
   assert.ok(lookbackDaysForCadence(MONTHLY) > 35);
+});
+
+test('dueForRollingCadence: subscriber attribution waits for the subscriber cadence', () => {
+  const now = utc(2026, 6, 24);
+  assert.equal(dueForRollingCadence(MONTHLY, null, now), true, 'bootstrap run is due');
+  assert.equal(dueForRollingCadence(GROWTH, utc(2026, 6, 17), now), true, 'weekly after 7 days');
+  assert.equal(dueForRollingCadence(GROWTH, utc(2026, 6, 20), now), false, 'weekly before 7 days');
+  assert.equal(dueForRollingCadence(MONTHLY, utc(2026, 6, 1), now), false, 'monthly subscriber gated out of weekly overlap');
+  assert.equal(dueForRollingCadence(MONTHLY, utc(2026, 5, 24), now), true, 'monthly after 30 days');
 });

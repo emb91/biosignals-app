@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import {
-  getLeadAction,
+  effectiveReadiness,
+  getLeadActionFromFits,
   isMonitorOrReachOutAction,
-  type LeadLikeForAction,
 } from '@/lib/lead-action';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 /**
  * Per ICP: count distinct companies that have at least one contact whose recommended
@@ -39,28 +40,25 @@ export async function GET() {
 
     const orgId = await orgIdForUser(supabase, user.id);
 
-    // matched_icp_id + company_fit_score are org-scoped state. Fall back to the
-    // legacy user layer only if the user somehow has no org membership yet.
-    const companyStateResult = orgId
-      ? await supabase
-          .from('org_companies')
-          .select('company_id, matched_icp_id, company_fit_score')
-          .eq('org_id', orgId)
-          .is('archived_at', null)
-      : await supabase
-          .from('user_companies')
-          .select('company_id, matched_icp_id, company_fit_score')
-          .eq('user_id', user.id)
-          .is('archived_at', null);
-    if (companyStateResult.error) {
-      console.error('[icp-coverage] company state:', companyStateResult.error);
-      return NextResponse.json({ error: companyStateResult.error.message }, { status: 500 });
-    }
-    const stateByCompanyId = new Map<string, { matched_icp_id: string | null; company_fit_score: number | null }>();
-    for (const r of (companyStateResult.data ?? []) as Array<{ company_id: string; matched_icp_id: string | null; company_fit_score: number | null }>) {
+    const companyStateRows = await listActiveCompanyStateForUser(
+      supabase as any,
+      user.id,
+      'company_id, matched_icp_id, company_fit_score, readiness_score',
+    );
+    const stateByCompanyId = new Map<
+      string,
+      { matched_icp_id: string | null; company_fit_score: number | null; readiness_score: number | null }
+    >();
+    for (const r of companyStateRows as Array<{
+      company_id: string;
+      matched_icp_id: string | null;
+      company_fit_score: number | null;
+      readiness_score: number | null;
+    }>) {
       stateByCompanyId.set(r.company_id, {
         matched_icp_id: r.matched_icp_id,
         company_fit_score: r.company_fit_score,
+        readiness_score: r.readiness_score,
       });
     }
 
@@ -73,7 +71,19 @@ export async function GET() {
       const companyState = stateByCompanyId.get(companyId);
       if (!companyState) continue;
 
-      const action = getLeadAction(row as LeadLikeForAction);
+      const contactReadiness =
+        typeof row.readiness_score === 'number' && Number.isFinite(row.readiness_score)
+          ? row.readiness_score
+          : null;
+      const contactFit =
+        typeof row.contact_fit_score === 'number' && Number.isFinite(row.contact_fit_score)
+          ? row.contact_fit_score
+          : null;
+      const action = getLeadActionFromFits(
+        companyState.company_fit_score,
+        contactFit,
+        effectiveReadiness(companyState.readiness_score, contactReadiness),
+      );
       if (!isMonitorOrReachOutAction(action)) continue;
 
       const icpId =

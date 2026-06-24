@@ -154,6 +154,8 @@ type SignalSubItem = {
   url: string | null;
   what: string | null;
   ago: string;
+  /** Optional metadata pills rendered in the expanded list (e.g. "Booth 1234", conference date). */
+  pills?: string[];
 };
 
 const PERSON_SUBJECT_SIGNAL_KEYS = new Set([
@@ -237,6 +239,9 @@ const SIGNAL_LABELS: Record<string, string> = {
   recently_promoted:           'Promoted',
   new_contact_added_in_crm:    'Contact added',
   open_opportunity_in_crm:     'Deal in pipeline',
+  // Conferences
+  exhibiting_at_conference:    'Exhibiting',
+  presenting_at_conference:    'Presenting',
 };
 
 function signalLabel(key: string): string {
@@ -297,6 +302,7 @@ const SIGNAL_FAMILIES: SignalFamilyDef[] = [
   { key: 'research', eyebrow: 'Science',  title: 'Research' },
   { key: 'pipeline', eyebrow: 'Clinical', title: 'Pipeline' },
   { key: 'funding',  eyebrow: 'Market',   title: 'Funding'  },
+  { key: 'conferences', eyebrow: 'Events', title: 'Conferences' },
   { key: 'people',   eyebrow: 'Moves',    title: 'People'   },
 ];
 
@@ -309,6 +315,7 @@ const FAMILY_MAX_AGE_MS: Record<string, number> = {
   research: 30 * 86_400_000,
   pipeline: 30 * 86_400_000,
   funding:  30 * 86_400_000,
+  conferences: 30 * 86_400_000,
 };
 
 const SIGNAL_KEY_TO_FAMILY: Record<string, string> = {
@@ -340,6 +347,10 @@ const SIGNAL_KEY_TO_FAMILY: Record<string, string> = {
   series_announcement:             'funding',
   acquisition:                     'funding',
   partnership_announcement:        'funding',
+  // Conferences — exhibitor lists, agenda presenters, social attendance
+  exhibiting_at_conference:        'conferences',
+  presenting_at_conference:        'conferences',
+  attending_conference:            'conferences',
   // Pipeline — ClinicalTrials.gov, FDA
   clinical_trial_recruiting:       'pipeline',
   clinical_trial_registered:       'pipeline',
@@ -373,6 +384,37 @@ function relativeTime(isoStr: string | null | undefined): string {
   if (diffDays < 7) return `${diffDays}d ago`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
   return `${Math.floor(diffDays / 30)}mo ago`;
+}
+
+const CONF_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Parse a YYYY-MM-DD string into parts without a timezone shift. */
+function ymd(d: string | null | undefined): { y: number; m: number; day: number } | null {
+  const mm = d?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return mm ? { y: +mm[1], m: +mm[2] - 1, day: +mm[3] } : null;
+}
+
+/**
+ * Compact conference-date pill with a past/upcoming cue, built from the event
+ * start/end dates at render time (not the stored phase, which can be stale).
+ * Upcoming → bare future date ("Dec 12–15, 2026"); ongoing → "Live · …";
+ * recently ended → "Ended · …" (the monitor suppresses anything >21d past).
+ */
+function conferenceDatePill(startDate: string | null | undefined, endDate: string | null | undefined): string | null {
+  const s = ymd(startDate);
+  if (!s) return null;
+  const e = ymd(endDate) ?? s;
+  let range: string;
+  if (e.y === s.y && e.m === s.m && e.day === s.day) range = `${CONF_MONTHS[s.m]} ${s.day}, ${s.y}`;
+  else if (e.y === s.y && e.m === s.m) range = `${CONF_MONTHS[s.m]} ${s.day}–${e.day}, ${s.y}`;
+  else if (e.y === s.y) range = `${CONF_MONTHS[s.m]} ${s.day} – ${CONF_MONTHS[e.m]} ${e.day}, ${s.y}`;
+  else range = `${CONF_MONTHS[s.m]} ${s.day}, ${s.y} – ${CONF_MONTHS[e.m]} ${e.day}, ${e.y}`;
+  const startMs = Date.UTC(s.y, s.m, s.day);
+  const endMs = Date.UTC(e.y, e.m, e.day) + 86_400_000;
+  const now = Date.now();
+  if (now < startMs) return range;
+  if (now <= endMs) return `Live · ${range}`;
+  return `Ended · ${range}`;
 }
 
 /**
@@ -567,7 +609,18 @@ function sourceMatchNote(
   const displayNorm = normalizeForSourceMatchNote(displayCompany);
   if (!sourceNorm || !displayNorm || sourceNorm === displayNorm) return null;
 
-  return `This FDA source lists ${sourceName}, which Arcova connects to ${displayCompany}.`;
+  return `This FDA source lists ${softenSourceName(sourceName)}, which Arcova connects to ${displayCompany}.`;
+}
+
+// FDA source names often arrive shouted in all caps (e.g. "ALKEM LABS LTD"); soften to title case.
+function softenSourceName(name: string): string {
+  if (name !== name.toUpperCase()) return name;
+  const keepUpper = new Set(['LLC', 'LP', 'LLP', 'PLC', 'USA', 'US', 'AG', 'NV', 'SA', 'PR']);
+  return name
+    .toLowerCase()
+    .replace(/\b[a-z]+\b/g, (word) =>
+      keepUpper.has(word.toUpperCase()) ? word.toUpperCase() : word.charAt(0).toUpperCase() + word.slice(1),
+    );
 }
 
 function addUniqueMatchNote(row: SignalGroupRow, note: string | null) {
@@ -1069,16 +1122,29 @@ export default function BriefingPage() {
       // Aggregate hiring signals: pills tell the story; a single job-posting URL
       // out of 40+ roles would be misleading — suppress it.
       const isHiringAggregate = s.signalKey === 'hiring_expansion' || s.signalKey === 'job_surge';
+      // Conference signals: show the conference name (not the booth-laden summary),
+      // surface the booth as a pill, and never expose the underlying source link.
+      const isConference = familyKey === 'conferences';
+      const conferenceBooth = isConference ? metaStr(meta.booth) : null;
+      const conferencePills = isConference
+        ? ([
+            conferenceBooth ? `Booth ${conferenceBooth}` : null,
+            conferenceDatePill(metaStr(meta.event_start_date), metaStr(meta.event_end_date)),
+          ].filter((p): p is string => Boolean(p)))
+        : [];
 
       // Sub-item title comes from structured metadata first, generated text last.
       // ago is intentionally blank — the row's right-column timestamp is the single
       // source of truth (no second timestamp inside the expanded list).
       const subItem: SignalSubItem = {
         id: s.id,
-        title: metaTitle(s.signalKey, meta) ?? cleanSubItemTitle(s.signalKey, s.sourceTitle, s.sourceSummary, s.contactName),
-        url: isHiringAggregate ? null : cleanSubItemUrl(s.sourceUrl),
+        title: isConference
+          ? metaStr(meta.conference_name) ?? metaTitle(s.signalKey, meta) ?? cleanSubItemTitle(s.signalKey, s.sourceTitle, s.sourceSummary, s.contactName)
+          : metaTitle(s.signalKey, meta) ?? cleanSubItemTitle(s.signalKey, s.sourceTitle, s.sourceSummary, s.contactName),
+        url: isHiringAggregate || isConference ? null : cleanSubItemUrl(s.sourceUrl),
         what: null,
         ago: '',
+        pills: conferencePills.length ? conferencePills : undefined,
       };
 
       if (!family.has(rowKey)) {
@@ -1232,8 +1298,9 @@ export default function BriefingPage() {
           {group.rows.map((row, i) => {
             const isOpen = expandedSignalRows.has(row.key);
             const expandableItems = row.items.filter(item => item.title || item.url);
-            // Expandable if has linked sub-items OR category pills to reveal
-            const isExpandable = expandableItems.length > 0 || (row.pills != null && row.pills.length > 0);
+            const hasMatchNotes = row.matchNotes != null && row.matchNotes.length > 0;
+            // Expandable if has linked sub-items, category pills, or source-match notes to reveal
+            const isExpandable = expandableItems.length > 0 || (row.pills != null && row.pills.length > 0) || hasMatchNotes;
             const RowEl = isExpandable ? 'button' : 'div';
             return (
               <li key={row.key} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
@@ -1250,13 +1317,6 @@ export default function BriefingPage() {
                         <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
                       )}
                     </span>
-                    {row.matchNotes && row.matchNotes.length > 0 && (
-                      <span className="bt-sig-what">
-                        {row.matchNotes.length === 1
-                          ? row.matchNotes[0]
-                          : `${row.matchNotes[0]} + ${row.matchNotes.length - 1} more source match${row.matchNotes.length === 2 ? '' : 'es'}.`}
-                      </span>
-                    )}
                   </span>
                   <span className="bt-sig-ago">{row.ago}</span>
                   {isExpandable && (
@@ -1267,6 +1327,13 @@ export default function BriefingPage() {
                 {/* Expanded area: category pills + linked sub-items */}
                 {isOpen && isExpandable && (
                   <>
+                    {hasMatchNotes && (
+                      <p className="bt-sig-what bt-sig-what--expanded">
+                        {row.matchNotes!.length === 1
+                          ? row.matchNotes![0]
+                          : `${row.matchNotes![0]} + ${row.matchNotes!.length - 1} more source match${row.matchNotes!.length === 2 ? '' : 'es'}.`}
+                      </p>
+                    )}
                     {row.pills && row.pills.length > 0 && (
                       <div className="bt-sig-expanded-pills">
                         {row.pills.map((pill, j) => (
@@ -1297,6 +1364,9 @@ export default function BriefingPage() {
                               ) : (
                                 <span className="bt-sig-sub-text">{label}</span>
                               )}
+                              {item.pills?.map((p) => (
+                                <span key={p} className="bt-sig-pill bt-sig-sub-pill">{p}</span>
+                              ))}
                               {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
                             </li>
                           );
@@ -1482,14 +1552,14 @@ export default function BriefingPage() {
       prompt: `Here is silent workspace context only (do not recite): ${briefing}. Suggest one concrete place for me to start today and why. Keep it under 55 words.`,
     },
     {
-      label: '+ Summarise overnight',
-      threadPreview: 'Summarise what changed overnight',
-      prompt: `Here is silent workspace context only (do not recite): ${briefing}. Summarise what changed overnight that matters for today. Keep it under 55 words.`,
+      label: '+ Summarise changes',
+      threadPreview: 'Summarise what changed',
+      prompt: `Here is silent workspace context only (do not recite): ${briefing}. Summarise what changed that matters for today. Keep it under 55 words.`,
     },
     {
-      label: '+ Just the top lead',
-      threadPreview: 'Walk me through my best lead',
-      prompt: `Here is silent workspace context only (do not recite): ${briefing}. Focus only on my best lead to work today: name them and the next step. Keep it under 55 words.`,
+      label: '+ What is my coverage like',
+      threadPreview: 'How is my coverage looking',
+      prompt: `Here is silent workspace context only (do not recite): ${briefing}. Tell me how my coverage is looking right now and where the biggest gap is. Keep it under 55 words.`,
     },
   ];
 
@@ -1640,18 +1710,30 @@ export default function BriefingPage() {
                   <ul className="bt-sig-list">
                     {crmActivity.slice(0, 6).map((item, i) => {
                       const detail = crmActivityDetail(item);
+                      const rowKey = `crm:${item.id}`;
+                      const isOpen = expandedSignalRows.has(rowKey);
+                      const isExpandable = Boolean(detail);
+                      const RowEl = isExpandable ? 'button' : 'div';
                       return (
                         <li key={item.id} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
-                          <div className="bt-sig-row bt-sig-row--group bt-sig-row--static">
+                          <RowEl
+                            {...(isExpandable ? { type: 'button' as const, onClick: () => toggleSignalRow(rowKey), 'aria-expanded': isOpen } : {})}
+                            className={cn('bt-sig-row bt-sig-row--group', isOpen && 'is-open', !isExpandable && 'bt-sig-row--static')}
+                          >
                             <span className="bt-sig-body">
                               <span className="bt-sig-line">
                                 <strong>{crmActivitySubject(item)}</strong>
                                 {` · ${crmActivityLabel(item.eventType)}`}
                               </span>
-                              {detail && <span className="bt-sig-what">{detail}</span>}
                             </span>
                             <span className="bt-sig-ago">{relativeTime(item.eventAt ?? item.observedAt)}</span>
-                          </div>
+                            {isExpandable && (
+                              <ChevronRight className="bt-sig-chevron h-3 w-3" strokeWidth={2.2} />
+                            )}
+                          </RowEl>
+                          {isOpen && isExpandable && detail && (
+                            <p className="bt-sig-what bt-sig-what--expanded">{detail}</p>
+                          )}
                         </li>
                       );
                     })}

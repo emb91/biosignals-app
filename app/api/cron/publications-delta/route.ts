@@ -20,8 +20,14 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runPublicationsMonitor } from '@/lib/signals/run-publications-monitor';
-import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
-import { attributionDueForUser } from '@/lib/signals/monitor-cadence';
+import {
+  accountSweepSubscribersForTargets,
+  contactSweepSubscribersForTargets,
+  listDueAccountSweepTargets,
+  listDueContactSweepTargets,
+  markAccountSourceSweep,
+  markContactSourceSweep,
+} from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -29,10 +35,6 @@ export const maxDuration = 300;
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  return listUserIdsWithActiveCompanyState(admin);
 }
 
 async function runCron(request: Request) {
@@ -45,25 +47,68 @@ async function runCron(request: Request) {
     const { searchParams } = new URL(request.url);
     const lookbackRaw = searchParams.get('lookbackDays');
     const admin = createAdminClient();
+    const dispatcherLimit = Math.max(1, Number(process.env.PUBLICATIONS_MONITOR_DISPATCH_LIMIT ?? '2500'));
 
-    const userIds = await loadActiveUserIds(admin);
+    const [accountTargets, contactTargets] = await Promise.all([
+      listDueAccountSweepTargets({ source: 'publications', limit: dispatcherLimit }),
+      listDueContactSweepTargets({ source: 'publications', limit: dispatcherLimit }),
+    ]);
+    const [accountSubscribers, contactSubscribers] = await Promise.all([
+      accountSweepSubscribersForTargets({
+        companyIds: accountTargets.map((target) => target.companyId),
+        runner: 'publications',
+      }),
+      contactSweepSubscribersForTargets({
+        personIds: contactTargets.map((target) => target.personId),
+        runner: 'publications',
+      }),
+    ]);
     let monitorOk = 0;
     let monitorFailed = 0;
     let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
-    for (const userId of userIds) {
+    const byUser = new Map<string, { accounts: typeof accountSubscribers; contacts: typeof contactSubscribers }>();
+    for (const item of accountSubscribers) {
+      const work = byUser.get(item.userId) ?? { accounts: [], contacts: [] };
+      work.accounts.push(item);
+      byUser.set(item.userId, work);
+    }
+    for (const item of contactSubscribers) {
+      const work = byUser.get(item.userId) ?? { accounts: [], contacts: [] };
+      work.contacts.push(item);
+      byUser.set(item.userId, work);
+    }
+
+    const failedCompanies = new Set<string>();
+    const failedPersons = new Set<string>();
+    const subscriberCompanyIds = new Set(accountSubscribers.map((item) => item.companyId));
+    const subscriberPersonIds = new Set(contactSubscribers.map((item) => item.personId));
+    for (const [userId, work] of byUser) {
       try {
-        const { due, lookbackDays: cadenceLookback } = await attributionDueForUser(admin, { userId, runner: 'publications' });
-        if (!due) {
-          monitorSkipped += 1;
-          continue;
-        }
+        const cadenceLookback = Math.max(
+          1,
+          ...work.accounts.map((item) => item.lookbackDays),
+          ...work.contacts.map((item) => item.lookbackDays),
+        );
         // Manual override via ?lookbackDays wins; otherwise size to the customer's cadence.
         const lookbackDays = lookbackRaw
           ? Math.max(1, Math.trunc(Number(lookbackRaw) || cadenceLookback))
           : cadenceLookback;
-        const result = await runPublicationsMonitor({ userId, lookbackDays });
+        const result = await runPublicationsMonitor({
+          userId,
+          companyIds: [...new Set(work.accounts.map((item) => item.companyId))],
+          contactIds: [...new Set(work.contacts.map((item) => item.contactId))],
+          lookbackDays,
+        });
         monitorOk += 1;
+        const contactIdToPersonId = new Map(work.contacts.map((item) => [item.contactId, item.personId]));
+        for (const failure of result.failures) {
+          if (failure.entity_type === 'company') failedCompanies.add(failure.entity_id);
+          if (failure.entity_type === 'contact') {
+            const personId = contactIdToPersonId.get(failure.entity_id);
+            if (personId) failedPersons.add(personId);
+          }
+        }
         await persistRunHistory(admin, {
           userId,
           signalKey: 'publications_all',
@@ -96,11 +141,49 @@ async function runCron(request: Request) {
         });
       }
     }
+    if (byUser.size === 0) monitorSkipped = accountTargets.length + contactTargets.length;
+
+    await Promise.all([
+      ...accountTargets.filter((target) => subscriberCompanyIds.has(target.companyId)).map((target) => markAccountSourceSweep({
+        companyId: target.companyId,
+        source: 'publications',
+        cadenceDays: target.cadenceDays,
+        status: failedCompanies.has(target.companyId) ? 'failed' : 'succeeded',
+        providerCostUsd: 0,
+      })),
+      ...contactTargets.filter((target) => subscriberPersonIds.has(target.personId)).map((target) => markContactSourceSweep({
+        personId: target.personId,
+        source: 'publications',
+        cadenceDays: target.cadenceDays,
+        status: failedPersons.has(target.personId) ? 'failed' : 'succeeded',
+        providerCostUsd: 0,
+      })),
+    ]);
+    const [{ count: overdueAccounts }, { count: overdueContacts }] = await Promise.all([
+      admin.from('account_source_sweep_targets')
+        .select('id', { count: 'exact', head: true })
+        .eq('source', 'publications').eq('status', 'active').lte('next_sweep_at', new Date().toISOString()),
+      admin.from('contact_source_sweep_targets')
+        .select('id', { count: 'exact', head: true })
+        .eq('source', 'publications').eq('status', 'active').lte('next_sweep_at', new Date().toISOString()),
+    ]);
 
     return NextResponse.json({
       success: true,
+      targets_due: {
+        accounts: accountTargets.length,
+        contacts: contactTargets.length,
+      },
+      subscribers_due: {
+        accounts: accountSubscribers.length,
+        contacts: contactSubscribers.length,
+      },
+      overdue: {
+        accounts: overdueAccounts ?? 0,
+        contacts: overdueContacts ?? 0,
+      },
       monitor: {
-        users_total: userIds.length,
+        users_total: byUser.size,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
         users_skipped: monitorSkipped,

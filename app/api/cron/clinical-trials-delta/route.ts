@@ -10,8 +10,12 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runClinicalTrialsMonitor } from '@/lib/signals/run-clinical-trials-monitor';
 import { syncCtDelta } from '@/lib/signals/sync-ct-delta';
 import { observeCron } from '@/lib/cron-observability';
-import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
-import { attributionDueForUser } from '@/lib/signals/monitor-cadence';
+import {
+  accountSweepSubscribersForTargets,
+  listDueAccountSweepTargets,
+  markAccountSourceSweep,
+  refreshAllMonitoringUniverses,
+} from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -19,10 +23,6 @@ export const maxDuration = 300;
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  return listUserIdsWithActiveCompanyState(admin);
 }
 
 async function runCron(request: Request) {
@@ -38,22 +38,42 @@ async function runCron(request: Request) {
       ? Math.min(8, Math.max(1, Math.trunc(Number(overlapDaysRaw) || 2)))
       : undefined;
     const admin = createAdminClient();
-    const syncResult = await syncCtDelta({ admin, overlapDays });
+    const dispatcherLimit = Math.max(1, Number(process.env.CLINICAL_TRIALS_MONITOR_DISPATCH_LIMIT ?? '2500'));
+    const refreshFailures = await refreshAllMonitoringUniverses();
+    const targets = await listDueAccountSweepTargets({ source: 'clinical_trials', limit: dispatcherLimit });
+    const subscribers = await accountSweepSubscribersForTargets({
+      companyIds: targets.map((target) => target.companyId),
+      runner: 'clinical_trials',
+    });
+    const syncResult = subscribers.length > 0
+      ? await syncCtDelta({ admin, overlapDays })
+      : { skipped: true as const, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };
 
-    const userIds = await loadActiveUserIds(admin);
     let monitorOk = 0;
     let monitorFailed = 0;
     let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
-    for (const userId of userIds) {
+    const byUser = new Map<string, typeof subscribers>();
+    for (const item of subscribers) {
+      const list = byUser.get(item.userId) ?? [];
+      list.push(item);
+      byUser.set(item.userId, list);
+    }
+    const failedCompanies = new Set<string>();
+    const resultCountsByCompany = new Map<string, number>();
+    for (const [userId, items] of byUser) {
       try {
-        const { due, lookbackDays } = await attributionDueForUser(admin, { userId, runner: 'clinical_trials' });
-        if (!due) {
-          monitorSkipped += 1;
-          continue;
-        }
-        const result = await runClinicalTrialsMonitor({ userId, lookbackDays });
+        const lookbackDays = Math.max(1, ...items.map((item) => item.lookbackDays));
+        const result = await runClinicalTrialsMonitor({
+          userId,
+          companyIds: [...new Set(items.map((item) => item.companyId))],
+          lookbackDays,
+        });
         monitorOk += 1;
+        for (const failure of result.failures) failedCompanies.add(failure.company_id);
+        for (const companyId of new Set(items.map((item) => item.companyId))) {
+          resultCountsByCompany.set(companyId, result.processed);
+        }
         await persistRunHistory(admin, {
           userId,
           signalKey: 'clinical_trials_all',
@@ -86,13 +106,30 @@ async function runCron(request: Request) {
         });
       }
     }
+    if (byUser.size === 0) monitorSkipped = targets.length;
+    const subscriberCompanyIds = new Set(subscribers.map((item) => item.companyId));
+    await Promise.all(targets.filter((target) => subscriberCompanyIds.has(target.companyId)).map((target) => markAccountSourceSweep({
+      companyId: target.companyId,
+      source: 'clinical_trials',
+      cadenceDays: target.cadenceDays,
+      status: failedCompanies.has(target.companyId) ? 'failed' : 'succeeded',
+      resultCount: resultCountsByCompany.get(target.companyId) ?? 0,
+      providerCostUsd: 0,
+    })));
+    const { count: overdue } = await admin.from('account_source_sweep_targets')
+      .select('id', { count: 'exact', head: true })
+      .eq('source', 'clinical_trials').eq('status', 'active').lte('next_sweep_at', new Date().toISOString());
 
     return NextResponse.json({
       success: true,
       overlap_days: overlapDays ?? 2,
       sync: syncResult,
+      targets_due: targets.length,
+      subscribers_due: subscribers.length,
+      overdue: overdue ?? 0,
+      refresh_failures: refreshFailures,
       monitor: {
-        users_total: userIds.length,
+        users_total: byUser.size,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
         users_skipped: monitorSkipped,

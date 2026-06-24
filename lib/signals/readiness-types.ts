@@ -109,7 +109,9 @@ export type SignalKey =
   | 'key_contact_departed'
   | 'terminated_deal'
   | 'principal_investigator_new_trial'
-  | 'exhibiting_at_conference';
+  | 'exhibiting_at_conference'
+  | 'presenting_at_conference'
+  | 'attending_conference';
 
 export type SignalCatalogEntry = {
   signalKey: SignalKey;

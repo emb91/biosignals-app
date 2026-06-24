@@ -11,8 +11,12 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runFdaRegulatoryMonitor } from '@/lib/signals/run-fda-regulatory-monitor';
 import { syncFdaDelta } from '@/lib/signals/sync-fda-delta';
 import { observeCron } from '@/lib/cron-observability';
-import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
-import { attributionDueForUser } from '@/lib/signals/monitor-cadence';
+import {
+  accountSweepSubscribersForTargets,
+  listDueAccountSweepTargets,
+  markAccountSourceSweep,
+  refreshAllMonitoringUniverses,
+} from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -20,10 +24,6 @@ export const maxDuration = 300;
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  return listUserIdsWithActiveCompanyState(admin);
 }
 
 async function runCron(request: Request) {
@@ -34,22 +34,42 @@ async function runCron(request: Request) {
   }
   try {
     const admin = createAdminClient();
-    const syncResult = await syncFdaDelta({ admin });
+    const dispatcherLimit = Math.max(1, Number(process.env.FDA_MONITOR_DISPATCH_LIMIT ?? '2500'));
+    const refreshFailures = await refreshAllMonitoringUniverses();
+    const targets = await listDueAccountSweepTargets({ source: 'fda_regulatory', limit: dispatcherLimit });
+    const subscribers = await accountSweepSubscribersForTargets({
+      companyIds: targets.map((target) => target.companyId),
+      runner: 'fda_regulatory',
+    });
+    const syncResult = subscribers.length > 0
+      ? await syncFdaDelta({ admin })
+      : { skipped: true as const, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };
 
-    const userIds = await loadActiveUserIds(admin);
     let monitorOk = 0;
     let monitorFailed = 0;
     let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
-    for (const userId of userIds) {
+    const byUser = new Map<string, typeof subscribers>();
+    for (const item of subscribers) {
+      const list = byUser.get(item.userId) ?? [];
+      list.push(item);
+      byUser.set(item.userId, list);
+    }
+    const failedCompanies = new Set<string>();
+    const resultCountsByCompany = new Map<string, number>();
+    for (const [userId, items] of byUser) {
       try {
-        const { due, lookbackDays } = await attributionDueForUser(admin, { userId, runner: 'fda_regulatory' });
-        if (!due) {
-          monitorSkipped += 1;
-          continue;
-        }
-        const result = await runFdaRegulatoryMonitor({ userId, lookbackDays });
+        const lookbackDays = Math.max(1, ...items.map((item) => item.lookbackDays));
+        const result = await runFdaRegulatoryMonitor({
+          userId,
+          companyIds: [...new Set(items.map((item) => item.companyId))],
+          lookbackDays,
+        });
         monitorOk += 1;
+        for (const failure of result.failures) failedCompanies.add(failure.company_id);
+        for (const companyId of new Set(items.map((item) => item.companyId))) {
+          resultCountsByCompany.set(companyId, result.processed);
+        }
         await persistRunHistory(admin, {
           userId,
           signalKey: 'fda_regulatory_all',
@@ -82,12 +102,29 @@ async function runCron(request: Request) {
         });
       }
     }
+    if (byUser.size === 0) monitorSkipped = targets.length;
+    const subscriberCompanyIds = new Set(subscribers.map((item) => item.companyId));
+    await Promise.all(targets.filter((target) => subscriberCompanyIds.has(target.companyId)).map((target) => markAccountSourceSweep({
+      companyId: target.companyId,
+      source: 'fda_regulatory',
+      cadenceDays: target.cadenceDays,
+      status: failedCompanies.has(target.companyId) ? 'failed' : 'succeeded',
+      resultCount: resultCountsByCompany.get(target.companyId) ?? 0,
+      providerCostUsd: 0,
+    })));
+    const { count: overdue } = await admin.from('account_source_sweep_targets')
+      .select('id', { count: 'exact', head: true })
+      .eq('source', 'fda_regulatory').eq('status', 'active').lte('next_sweep_at', new Date().toISOString());
 
     return NextResponse.json({
       success: true,
       sync: syncResult,
+      targets_due: targets.length,
+      subscribers_due: subscribers.length,
+      overdue: overdue ?? 0,
+      refresh_failures: refreshFailures,
       monitor: {
-        users_total: userIds.length,
+        users_total: byUser.size,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
         users_skipped: monitorSkipped,

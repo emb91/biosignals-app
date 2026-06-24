@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-monitoring-cadence-dry-run-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/billing/monitoring-cadence-dry-run.test.ts",
+    "lib/billing/monitoring-sources.ts",
+    "lib/signals/monitor-cadence-rules.ts"
+  ]
+}

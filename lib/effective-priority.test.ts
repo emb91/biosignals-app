@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  authoritativeAccountReadiness,
   CRM_SUPPRESSED_READINESS,
+  computeIntrinsicPriority,
   effectiveReadiness,
   isCrmSuppressed,
   isEligibleForPriorityNudge,
@@ -71,6 +73,30 @@ test('denormalized suppression state takes precedence for SQL-backed consumers',
 test('contact effective readiness still combines account and personal signals', () => {
   assert.equal(effectiveReadiness(0.8, 0.4), 0.8400000000000001);
   assert.equal(effectiveReadiness(null, 0.6), 0.6);
+});
+
+test('account snapshot readiness wins over stale company-state mirror', () => {
+  const staleMirrorReadiness = 0.52;
+  const snapshotReadiness = 1;
+  const readiness = authoritativeAccountReadiness(snapshotReadiness, staleMirrorReadiness);
+
+  assert.equal(readiness, 1);
+  assert.equal(
+    computeIntrinsicPriority({
+      companyFit: 0.9,
+      contactFit: 1,
+      readiness,
+    }),
+    0.9,
+  );
+  assert.equal(
+    computeIntrinsicPriority({
+      companyFit: 0.9,
+      contactFit: 1,
+      readiness: staleMirrorReadiness,
+    }),
+    0.684,
+  );
 });
 
 test('priority-change nudges fail closed on suppressed or unknown eligibility', () => {

@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { runJobChangeMonitor } from '@/lib/signals/run-job-change-monitor';
 import {
+  contactSweepSubscribersForTargets,
+  listDueContactSweepTargets,
+  markContactSourceSweep,
   markContactSweep,
-  monitoringRepresentativeContacts,
   refreshMonitoringUniverse,
 } from '@/lib/billing/monitoring';
 import { observeCron } from '@/lib/cron-observability';
@@ -23,47 +25,14 @@ async function runCron(request: Request) {
   const { data: orgRows, error } = await admin.from('organizations').select('id');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const dispatcherLimit = Math.max(1, Number(process.env.CONTACT_MONITOR_DISPATCH_LIMIT ?? '1500'));
-  let remaining = dispatcherLimit;
   let processed = 0;
   let failed = 0;
   const failures: Array<{ org_id: string; error: string }> = [];
 
   for (const org of orgRows ?? []) {
-    if (remaining <= 0) break;
     const orgId = org.id as string;
     try {
       await refreshMonitoringUniverse(orgId);
-      const due = await monitoringRepresentativeContacts(orgId, remaining);
-      remaining -= due.length;
-      const byUser = new Map<string, typeof due>();
-      for (const item of due) {
-        const list = byUser.get(item.userId) ?? [];
-        list.push(item);
-        byUser.set(item.userId, list);
-      }
-
-      for (const [userId, items] of byUser) {
-        for (let index = 0; index < items.length; index += CHUNK_SIZE) {
-          const chunk = items.slice(index, index + CHUNK_SIZE);
-          const result = await runJobChangeMonitor({
-            userId,
-            contactIds: chunk.map((item) => item.contactId),
-            limit: CHUNK_SIZE,
-          });
-          const failedIds = new Set(result.failures.map((item) => item.contact_id));
-          await Promise.all(chunk.map(async (item) => {
-            const didFail = failedIds.has(item.contactId);
-            await markContactSweep({
-              monitorId: item.monitorId,
-              cadenceDays: item.cadenceDays,
-              status: didFail ? 'failed' : 'succeeded',
-              providerCostUsd: 0.004,
-            });
-            if (didFail) failed += 1;
-            else processed += 1;
-          }));
-        }
-      }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       failures.push({ org_id: orgId, error: message });
@@ -71,13 +40,63 @@ async function runCron(request: Request) {
     }
   }
 
-  const { count: overdue } = await admin.from('org_monitored_contacts')
+  const targets = await listDueContactSweepTargets({ source: 'job_change', limit: dispatcherLimit });
+  const subscribers = await contactSweepSubscribersForTargets({
+    personIds: targets.map((target) => target.personId),
+    runner: 'job_change',
+  });
+  const byUser = new Map<string, typeof subscribers>();
+  for (const item of subscribers) {
+    const list = byUser.get(item.userId) ?? [];
+    list.push(item);
+    byUser.set(item.userId, list);
+  }
+
+  const failedPersons = new Set<string>();
+  const subscriberPersonIds = new Set(subscribers.map((item) => item.personId));
+  for (const [userId, items] of byUser) {
+    for (let index = 0; index < items.length; index += CHUNK_SIZE) {
+      const chunk = items.slice(index, index + CHUNK_SIZE);
+      const result = await runJobChangeMonitor({
+        userId,
+        contactIds: chunk.map((item) => item.contactId),
+        limit: CHUNK_SIZE,
+      });
+      const failedIds = new Set(result.failures.map((item) => item.contact_id));
+      await Promise.all(chunk.map(async (item) => {
+        const didFail = failedIds.has(item.contactId);
+        if (didFail) failedPersons.add(item.personId);
+        if (item.monitorId) {
+          await markContactSweep({
+            monitorId: item.monitorId,
+            cadenceDays: item.cadenceDays,
+            status: didFail ? 'failed' : 'succeeded',
+            providerCostUsd: 0.004,
+            markSharedTarget: false,
+          });
+        }
+        if (didFail) failed += 1;
+        else processed += 1;
+      }));
+    }
+  }
+  await Promise.all(targets.filter((target) => subscriberPersonIds.has(target.personId)).map((target) => markContactSourceSweep({
+    personId: target.personId,
+    source: 'job_change',
+    cadenceDays: target.cadenceDays,
+    status: failedPersons.has(target.personId) ? 'failed' : 'succeeded',
+    providerCostUsd: 0.004,
+  })));
+
+  const { count: overdue } = await admin.from('contact_source_sweep_targets')
     .select('id', { count: 'exact', head: true })
-    .eq('status', 'active').lte('next_sweep_at', new Date().toISOString());
+    .eq('source', 'job_change').eq('status', 'active').lte('next_sweep_at', new Date().toISOString());
   return NextResponse.json({
     success: true,
     processed,
     failed,
+    targets_due: targets.length,
+    subscribers_due: subscribers.length,
     overdue: overdue ?? 0,
     dispatcherLimit,
     failures,

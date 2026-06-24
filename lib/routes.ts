@@ -1,7 +1,6 @@
 export const ROUTES = {
   admin: {
     llmUsage: '/admin/llm-usage',
-    signalsTodo: '/admin/signals-todo',
   },
   today: '/today',
   outreach: '/outreach',

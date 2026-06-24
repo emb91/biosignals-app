@@ -26,6 +26,26 @@ export function normalizeScore01(value: number | null | undefined): number | nul
   return null;
 }
 
+export function normalizeUnknownScore01(value: unknown): number | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return normalizeScore01(Number(trimmed));
+  }
+  return typeof value === 'number' ? normalizeScore01(value) : null;
+}
+
+/**
+ * Account readiness snapshots are the authoritative signal score. Company state
+ * mirrors exist for compatibility/write locality and must only be a fallback.
+ */
+export function authoritativeAccountReadiness(
+  snapshotReadiness: unknown,
+  mirrorReadiness: unknown,
+): number | null {
+  return normalizeUnknownScore01(snapshotReadiness) ?? normalizeUnknownScore01(mirrorReadiness);
+}
+
 export function isCrmSuppressed(
   leadState: CrmPriorityState,
   closedAtIso: string | null | undefined,

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { effectiveReadiness } from '@/lib/lead-action';
-import { computeIntrinsicPriority } from '@/lib/effective-priority';
+import { authoritativeAccountReadiness, computeIntrinsicPriority } from '@/lib/effective-priority';
 import { orgIdForUser } from '@/lib/org-context';
 import { buildAccountReadinessContext } from '@/lib/signals/readiness-context';
 import { normalizeReadinessEvent } from '@/lib/signals/readiness-normalize';
@@ -30,6 +30,13 @@ import type {
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
+function finiteScoreNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 async function updateOrgCompanyReadinessMirror(
   supabase: DatabaseClient,
   userId: string,
@@ -55,6 +62,9 @@ async function getCompanyFitReadinessState(
   userId: string,
   companyId: string,
 ): Promise<{ company_fit_score: number | null; readiness_score: number | null } | null> {
+  let fitScore: number | null = null;
+  let mirrorReadinessScore: number | null = null;
+
   const orgId = await orgIdForUser(supabase, userId);
   if (orgId) {
     const { data, error } = await supabase
@@ -64,17 +74,43 @@ async function getCompanyFitReadinessState(
       .eq('company_id', companyId)
       .maybeSingle();
     if (!error && data) {
-      return data as { company_fit_score: number | null; readiness_score: number | null };
+      const row = data as { company_fit_score?: unknown; readiness_score?: unknown };
+      fitScore = finiteScoreNumber(row.company_fit_score);
+      mirrorReadinessScore = finiteScoreNumber(row.readiness_score);
     }
   }
 
-  const { data } = await supabase
-    .from('user_companies')
-    .select('company_fit_score, readiness_score')
+  if (!orgId || fitScore == null) {
+    const { data } = await supabase
+      .from('user_companies')
+      .select('company_fit_score, readiness_score')
+      .eq('user_id', userId)
+      .eq('company_id', companyId)
+      .maybeSingle();
+    const row = data as { company_fit_score?: unknown; readiness_score?: unknown } | null;
+    fitScore = fitScore ?? finiteScoreNumber(row?.company_fit_score);
+    mirrorReadinessScore = mirrorReadinessScore ?? finiteScoreNumber(row?.readiness_score);
+  }
+
+  const { data: snapshot } = await supabase
+    .from('account_readiness_snapshots')
+    .select('overall_score')
     .eq('user_id', userId)
     .eq('company_id', companyId)
     .maybeSingle();
-  return (data as { company_fit_score: number | null; readiness_score: number | null } | null) ?? null;
+
+  const snapshotReadinessScore = finiteScoreNumber(
+    (snapshot as { overall_score?: unknown } | null)?.overall_score,
+  );
+
+  if (fitScore == null && snapshotReadinessScore == null && mirrorReadinessScore == null) {
+    return null;
+  }
+
+  return {
+    company_fit_score: fitScore,
+    readiness_score: authoritativeAccountReadiness(snapshotReadinessScore, mirrorReadinessScore),
+  };
 }
 
 export type IngestSignalSourceEventInput = {

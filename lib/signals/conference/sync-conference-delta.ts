@@ -25,6 +25,9 @@ type Admin = ReturnType<typeof createAdminClient>;
 
 export const CONFERENCE_SOURCE = 'conference_exhibitor';
 
+/** Max conferences polled per cron run (bounds runtime; the schedule rotates). */
+const CONFERENCE_SYNC_BATCH = 5;
+
 type ConferenceRow = {
   id: string;
   name: string;
@@ -49,8 +52,10 @@ function messageFromUnknown(error: unknown): string {
 
 export async function syncConferenceDelta(params: {
   admin: Admin;
-  /** Restrict to specific conferences (else all registry rows). */
+  /** Restrict to specific conferences (else a rotating batch of active rows). */
   conferenceIds?: string[];
+  /** Override the per-run batch size (default CONFERENCE_SYNC_BATCH). */
+  limit?: number;
 }): Promise<ConferenceSyncResult> {
   const { admin } = params;
   const startedAt = new Date();
@@ -65,7 +70,20 @@ export async function syncConferenceDelta(params: {
   let query = admin
     .from('conferences')
     .select('id,name,platform,exhibitor_source_url,platform_params,start_date,end_date');
-  if (params.conferenceIds?.length) query = query.in('id', params.conferenceIds);
+  if (params.conferenceIds?.length) {
+    query = query.in('id', params.conferenceIds);
+  } else {
+    // Bound per-run work so the cron can't time out as the registry grows (a full
+    // sweep of all active shows exceeds Vercel's 300s — each big show resolves
+    // hundreds of exhibitor names). Skip clearly-expired shows (end_date older
+    // than the 21d recent window), then poll the least-recently-polled first and
+    // cap the batch — the schedule rotates through the whole registry over runs.
+    const expiryCutoff = new Date(Date.now() - 21 * 86_400_000).toISOString().slice(0, 10);
+    query = query
+      .or(`end_date.is.null,end_date.gte.${expiryCutoff}`)
+      .order('last_polled_at', { ascending: true, nullsFirst: true })
+      .limit(params.limit ?? CONFERENCE_SYNC_BATCH);
+  }
   const { data: confs, error } = await query;
   if (error) throw new Error(`conferences query: ${error.message}`);
 

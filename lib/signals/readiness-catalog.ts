@@ -34,6 +34,12 @@ const SIGNAL_IMPACT_OVERRIDES: Partial<Record<SignalKey, number>> = {
   milestone_payment: 70,
   facility_expansion: 70,
   grant_award: 50,
+  // Conference / in-market timing — a meeting window + reachability, not buying
+  // intent. exhibiting (company commercial motion) > presenting (named contact,
+  // personal hook) > attending (self-declared LinkedIn post, weak but timely).
+  exhibiting_at_conference: 54,
+  presenting_at_conference: 50,
+  attending_conference: 40,
   // Deals / partnerships.
   partnership_with_upfront_economics: 78,
   commercialization_move: 70,
@@ -130,6 +136,25 @@ const RAW_READINESS_SIGNAL_CATALOG: readonly RawSignalCatalogEntry[] = [
     buyerFunctions: ['business_development', 'commercial', 'partnerships'],
     intentMechanisms: ['commercial_interest'],
     notes: 'Company exhibiting at a relevant industry conference — in-market activity; phase drives the outreach angle.',
+  },
+  {
+    signalKey: 'presenting_at_conference',
+    scope: 'contact',
+    dimensions: ['new_needs', 'new_strategy'],
+    // Phase-based lifecycle + hard 21d post-event expiry in the monitor; decayDays backstop.
+    decayDays: 30,
+    buyerFunctions: ['research_and_development', 'clinical_operations', 'medical_affairs', 'commercial'],
+    intentMechanisms: ['commercial_interest', 'strategy_shift'],
+    notes: 'A tracked contact is a named speaker/presenter at a relevant conference — warm, contact-level outreach trigger.',
+  },
+  {
+    signalKey: 'attending_conference',
+    scope: 'contact',
+    dimensions: ['new_needs', 'new_strategy'],
+    decayDays: 30,
+    buyerFunctions: ['business_development', 'commercial', 'partnerships'],
+    intentMechanisms: ['commercial_interest'],
+    notes: 'A tracked contact self-declared conference attendance on LinkedIn (in-window hashtag) — contact-level intent.',
   },
   {
     signalKey: 'ipo_or_follow_on',

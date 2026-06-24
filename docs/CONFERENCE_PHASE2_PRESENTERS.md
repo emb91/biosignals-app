@@ -47,7 +47,7 @@ Status legend (same as `conference-sources.md`): ✅ clean public pull · 🟡 p
 |---|---|---|---|---|---|---|
 | **CadmiumCD / eventScribe** | `GET {event}.eventscribe.net/agenda.asp?pfp=FullSchedule&all=1` — server-rendered full schedule; per-presenter detail `GET /ajaxcalls/presenterInfo.asp?HPRID={id}` | ✅ | ✅ | ✅ | 🔴 (not in agenda) | ✅ **cracked** |
 | **ACR-style society WordPress abstract archive** | `GET acrabstracts.org/abstract/{slug}/` — `authors-and-affiliation` block, `<sup>`-keyed institutions | ✅ | ✅ | ✅ (abstract title) | 🔴 | ✅ **cracked** |
-| **AACR / abstractsonline (OASIS)** | `abstractsonline.com/pp8/#!/{eventId}` itinerary planner | ✅ | ✅ | ✅ | 🔴 | 🔴 JS/REST (OASIS API path is per-event, not curl-trivial) |
+| **AACR / abstractsonline (OASIS)** | mint token `POST oe3/Backpack/create` (public login) → async `Search/New` → `Search/{id}/Results` → `Presentation/{Id}` AuthorBlock | ✅ | ✅ | ✅ | 🔴 | ✅ **cracked** (plain HTTPS, no headless; live build deferred — see below) |
 | **SPARGO / a2zinc session planner** | sibling of the cracked `Exhibitors.aspx` — `Public/SessionsList.aspx` / itinerary planner on the same `events.jspargo.com/{event}` host | likely ✅ | partial | ✅ | 🔴 | 🟡 (not yet curl-verified for presenters; same host family as the cracked exhibitor path) |
 | **Society self-hosted advance-program PDF** | direct PDF on the org site (same shape as the ESMO/CPHI exhibitor PDFs) | ✅ | ✅ | ✅ | 🔴 | ✅ clean where published (per-show) |
 | **Abstract supplement (journal)** | published abstract supplement (e.g. *Journal of Clinical Oncology*, *Cancer Research*) — DOI/PDF | ✅ | ✅ | ✅ | 🟡 corresponding-author email sometimes printed | ✅ clean (per-journal; this is the **email-capture** surface — see §3) |
@@ -115,9 +115,11 @@ the many societies that run an OpenConf/WordPress abstract archive.
   only ethical contact-level email surface is the **published corresponding-author email** in a
   journal abstract supplement (see §3) — and even then it's the *paper's* corresponding author, which
   may not be the conference speaker. Treat email capture as opt-in / low-yield, never the primary join.
-- **abstractsonline (OASIS)** is the big AACR/ASCO/AHA itinerary platform; its data is behind a
-  per-event REST path we did not crack with bare curl (the `pp8` shell is JS). Headless render or the
-  journal abstract supplement is the fallback for those societies.
+- **abstractsonline (OASIS)** — the big AACR/ASCO/AHA itinerary platform — is now **cracked** (plain
+  server-side HTTPS via the SPA's public Backpack login; no headless needed in production). The live
+  `fetchAppearances` is intentionally deferred (no OASIS show is in-window until the 2027 planners
+  publish), so the pure pieces (credential, routes, AuthorBlock parser) are built + tested and the
+  adapter is a clean skip. Full recipe: see §"abstractsonline (OASIS) — CRACKED" below.
 - **SPARGO session planner** is the same host family as the cracked exhibitor path and very likely
   server-renders sessions too, but I did not curl-verify a presenter list this pass — flagged 🟡,
   not claimed.
@@ -278,6 +280,70 @@ runner: 'conference-presenters' })` — growth weekly / starter+free monthly, id
 signal monitor. **Source polling** (shared mirror refresh, in the delta sync) reuses the Phase 1
 event-date `next_poll_at` schedule (>3mo weekly · 6–8wk out 2–3×/wk · event week daily · post-event
 stop). Pulls are cheap HTTP/PDF (no Apollo), so the cost guardrail stays downstream on enrichment.
+
+---
+
+## abstractsonline (OASIS) — CRACKED (2026-06-24)
+
+CTI Meeting Technology's "Program Planner" (`abstractsonline.com/pp8/#!/{eventId}`) is the agenda
+platform for AACR / ASCO / AHA and many large societies. It was first logged as "not cracked"
+because the data API is 401-gated behind a per-request `Backpack` token. **That was wrong.** A live
+reverse-engineering pass (via `apify/puppeteer-scraper`, used only as a discovery tool to capture the
+SPA's own network traffic) against **AACR Annual Meeting 2025, eventId `20273`** showed the token is
+mintable over plain HTTP with a **public service credential the SPA ships in its bundle**, after
+which every endpoint works **server-side with no browser**. Verified end-to-end: **8,113 AACR 2025
+presentations** enumerated, with full author + institution blocks. Production needs **zero headless /
+zero Apify** — it is plain HTTPS from our own cron, same shape as the other adapters.
+
+**The cracked recipe (all plain HTTPS, no cookies, no browser):**
+
+```
+base = https://www.abstractsonline.com/oe3
+
+1. Mint a token (the SPA's fixed anonymous service login — clear-text in its JS, theirs not ours):
+     POST {base}/Backpack/create
+       headers: { Content-Type: application/json, Accept: application/json, Caller: PP8 }
+       body:    { "Username": "backpack", "Password": "89j34jks98cnjks989p;nfs44" }
+     → 201 { ID: <token>, Expiration }            // token valid ~to end of UTC day
+   (NB the earlier "Backpack/create needs an OasisCredential / 400" finding was a wrong-body guess —
+    the real body above returns 201. The /Backpack/new/planner8/secret path never existed.)
+
+2. Every call below adds `Backpack: <token>` (+ Caller: PP8). Search is ASYNC — create, poll, page:
+     POST {base}/Program/{eventId}/Search/New/{Presentation|Session|Person}  body {"Phrase":"…"}
+        → { SearchId, Status:"Not Started" }
+     GET  {base}/Program/{eventId}/Search/{SearchId}          → poll until Status:"Complete" (gives Count)
+     GET  {base}/Program/{eventId}/Search/{SearchId}/Results?page=N&pagesize=M
+        → { Page, PageSize, Results:[{ Id, Body(title), Head(datetime), Type }], Search:{ Count } }
+
+3. Per-record detail carries the speakers + affiliations:
+     GET {base}/Program/{eventId}/Presentation/{Id}
+        → { PresenterDisplayName, AuthorBlock(HTML names+superscript institutions),
+            DisclosureBlock, PresentationNumber, Abstract, … }
+     GET {base}/Program/{eventId}/Session/{Id}/presentations
+     GET {base}/Program/{eventId}/Participant/{Id}/presentations
+```
+
+**Enumeration:** an empty `Phrase` returns `Count: 0` — the list browse is **filter-driven**, not
+phrase-driven. Get the facet tree at `…/Search/{SearchId}/Filters` and apply day/session-type filters
+to enumerate everything. **Leaner and on-model for us:** run a `Person` search per **tracked-contact
+surname** and confirm via the `AuthorBlock` — match, don't crawl. (Big OASIS shows have thousands of
+presentations, and affiliations live only in the per-record detail, so the targeted approach avoids
+thousands of detail GETs and fits our "match, never acquire" resolver.)
+
+**AuthorBlock shape** (the company-matching gold), from `Presentation/1830`:
+`"<b>Jason Willis</b><sup>1</sup>, Anna Morena D'Alise<sup>2</sup>, …<br><br/><sup>1</sup>… The
+University of Texas MD Anderson Cancer Center, Houston, TX,<sup>2</sup>Nouscom S.R.L., Roma, Italy,…"`
+— two segments split at `<br>`: authors each tagged with superscript institution indexes, then the
+index→institution map. The bold author is the presenter; `PresenterDisplayName` gives it directly.
+
+**Code:** `lib/signals/conference/presenters/abstractsonline-adapter.ts` — implemented + tested now:
+`OASIS_PUBLIC_BACKPACK_LOGIN`, `abstractsOnlineApiRoutes(eventId)` (every route above), and
+`parseAuthorBlock(html)` (the hardest parse, locked in against the real AACR 2025 block). The live
+`fetchAppearances` is a deliberate **CLEAN SKIP** (returns `[]`, never throws) — `ABSTRACTSONLINE_LIVE
+= false`. **No abstractsonline conference rows are seeded** (AACR/ASCO 2026 are past, 2027 unpublished),
+so the adapter is dormant; build the live orchestration (mint → filter/surname search → page → detail
+→ `parseAuthorBlock`) and seed `agenda_source_url` + `platform_params.eventId` per show when the 2027
+planners publish. **Investigation cost:** 8 discovery runs ≈ 0.26 compute units ≈ ~13¢, one-time.
 
 ---
 

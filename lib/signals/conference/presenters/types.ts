@@ -27,6 +27,7 @@
  */
 export type PresenterPlatform =
   | 'eventscribe' // CadmiumCD eventScribe — agenda.asp?pfp=FullSchedule (cracked)
+  | 'informa' // Informa Connect /{event}/speakers/ — EsSpeakerView JSON blob (cracked)
   | 'society_abstract_archive' // ACR-style WordPress / OpenConf abstract archive (cracked)
   | 'abstractsonline' // AACR/ASCO OASIS itinerary planner (JS/REST — not cracked by bare curl)
   | 'spargo_sessions' // SPARGO/a2zinc session planner (same host family as the exhibitor path; partial)

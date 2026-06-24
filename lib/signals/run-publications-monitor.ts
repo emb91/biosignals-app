@@ -478,6 +478,7 @@ export async function runPublicationsMonitor(
   // ── Load user's active companies ────────────────────────────────────────────
   let ownedCompanyIds = (await listActiveCompanyStateForUser(admin, input.userId))
     .map((r) => r.company_id);
+  const contactEligibleCompanyIds = new Set(ownedCompanyIds);
 
   if (Array.isArray(input.companyIds) && input.companyIds.length > 0) {
     const allowed = new Set(input.companyIds.filter(Boolean));
@@ -498,9 +499,8 @@ export async function runPublicationsMonitor(
 
   const { data: contacts, error: contactsError } = await contactQuery;
   if (contactsError) throw new Error(`contacts query: ${contactsError.message}`);
-  const activeOwnedCompanyIds = new Set(ownedCompanyIds);
   const contactRows = ((contacts ?? []) as ContactRow[]).filter(
-    (contact) => Boolean(contact.company_id && activeOwnedCompanyIds.has(contact.company_id)),
+    (contact) => Boolean(contact.company_id && contactEligibleCompanyIds.has(contact.company_id)),
   );
 
   // ── Build contact author-token lookup for the company-phase cross-match ────
