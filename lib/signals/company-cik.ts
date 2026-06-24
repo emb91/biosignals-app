@@ -18,8 +18,9 @@ import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants
 import { secFetchJson, secFetchText, isRateLimitError } from '@/lib/signals/sec-edgar-client';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { CIK_REFRESH_DAYS, isCikResolutionStale } from '@/lib/signals/cik-staleness';
 
-const CIK_REFRESH_DAYS = 90;
+export { isCikResolutionStale } from '@/lib/signals/cik-staleness';
 const TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
 
 type SecTickerRow = {
@@ -374,6 +375,39 @@ export async function loadAllTrackedCiks(
   return result;
 }
 
+/**
+ * Returns the set of normalized company names known to any company. Used by the
+ * SEC sync to decide which Form D filings are worth a primary-doc fetch: a Form
+ * D whose issuer name matches a tracked company should get its offering amounts
+ * and industry_group_type parsed even when we don't yet know its CIK — otherwise
+ * the funding monitor sees an index-only row (no amount, no fund filter). Mirrors
+ * the >= 4 char guard used by the CIK resolver so the keys line up.
+ */
+export async function loadAllTrackedNormalizedNames(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<Set<string>> {
+  const result = new Set<string>();
+  const PAGE_SIZE = 1000;
+  let from = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await admin
+      .from('companies')
+      .select('company_name')
+      .not('company_name', 'is', null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(`loadAllTrackedNormalizedNames: ${error.message}`);
+    const rows = (data ?? []) as Array<{ company_name: string | null }>;
+    for (const r of rows) {
+      const norm = normalizeCompanyForMatching(r.company_name ?? '');
+      if (norm.length >= 4) result.add(norm);
+    }
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return result;
+}
+
 export type EnsureTrackedCompanyCiksResult = {
   processed: number;
   resolved: number;
@@ -387,51 +421,83 @@ function messageFromUnknown(error: unknown): string {
 }
 
 /**
- * Prime CIKs for active companies before SEC syncs that rely on `companies.cik`
- * for high-precision filtering (notably 8-K item fetching). This keeps the
- * first funding run from missing public-company filings just because the local
- * CIK cache was empty.
+ * Distinct company ids that are actually tracked by some user (org- or
+ * user-scoped, non-archived) — the only companies a funding run will query. We
+ * scope CIK priming to these instead of every canonical company so the cost
+ * stays proportional to what's monitored, not the whole companies table.
+ */
+async function loadMonitoredCompanyIds(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const table of ['org_companies', 'user_companies'] as const) {
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { data, error } = await admin
+        .from(table)
+        .select('company_id')
+        .is('archived_at', null)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw new Error(`loadMonitoredCompanyIds(${table}): ${error.message}`);
+      const rows = (data ?? []) as Array<{ company_id: string | null }>;
+      for (const r of rows) {
+        if (typeof r.company_id === 'string' && r.company_id) ids.add(r.company_id);
+      }
+      if (rows.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * Prime CIKs before SEC syncs that rely on `companies.cik` for high-precision
+ * filtering (8-K item fetching, Form D primary-doc gate). Scoped to monitored
+ * companies, and only the stale ones are resolved — so a steady-state run does a
+ * couple of cheap id reads and zero per-company SEC/LLM/DB work once the 90-day
+ * cache is warm, instead of touching every canonical company every run.
  */
 export async function ensureTrackedCompanyCiks(
   admin: ReturnType<typeof createAdminClient>,
 ): Promise<EnsureTrackedCompanyCiksResult> {
-  const PAGE_SIZE = 500;
-  let from = 0;
   let processed = 0;
   let resolved = 0;
   let failed = 0;
   const failures: Array<{ company_id: string; error: string }> = [];
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    // CIK is a canonical company property. Iterate all canonical companies;
-    // resolving an orphan CIK is harmless.
-    const { data, error } = await admin
-      .from('companies')
-      .select('id')
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) throw new Error(`ensureTrackedCompanyCiks: ${error.message}`);
-
-    const rows = (data ?? []) as Array<{ id: string }>;
-    for (const row of rows) {
-      processed += 1;
-      try {
-        const result = await ensureCompanyCik(admin, row.id);
-        if (result.cik) resolved += 1;
-      } catch (entryError) {
-        failed += 1;
-        failures.push({ company_id: row.id, error: messageFromUnknown(entryError) });
-      }
-    }
-
-    if (rows.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+  const monitoredIds = await loadMonitoredCompanyIds(admin);
+  if (monitoredIds.length === 0) {
+    return { processed, resolved, failed, failures };
   }
 
-  return {
-    processed,
-    resolved,
-    failed,
-    failures,
-  };
+  // Batch the staleness check: one chunked read of cik_checked_at, then resolve
+  // only the companies that are actually due (those need SEC work anyway).
+  const nowMs = Date.now();
+  const staleIds: string[] = [];
+  for (let i = 0; i < monitoredIds.length; i += 200) {
+    const slice = monitoredIds.slice(i, i + 200);
+    const { data, error } = await admin
+      .from('companies')
+      .select('id, cik_checked_at')
+      .in('id', slice);
+    if (error) throw new Error(`ensureTrackedCompanyCiks staleness read: ${error.message}`);
+    for (const r of (data ?? []) as Array<{ id: string; cik_checked_at: string | null }>) {
+      if (isCikResolutionStale(r.cik_checked_at, nowMs)) staleIds.push(r.id);
+    }
+  }
+
+  for (const id of staleIds) {
+    processed += 1;
+    try {
+      const result = await ensureCompanyCik(admin, id);
+      if (result.cik) resolved += 1;
+    } catch (entryError) {
+      failed += 1;
+      failures.push({ company_id: id, error: messageFromUnknown(entryError) });
+    }
+  }
+
+  return { processed, resolved, failed, failures };
 }

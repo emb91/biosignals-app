@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-cik-staleness-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/cik-staleness.ts",
+    "lib/signals/cik-staleness.test.ts"
+  ]
+}

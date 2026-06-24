@@ -23,6 +23,7 @@ import { reconcileMonitoringAfterBillingChange } from '@/lib/billing/monitoring'
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { orgIdForStripeCustomer } from '@/lib/billing/customer';
 import { invoiceSubscriptionId } from '@/lib/billing/stripe-invoice';
+import { expireFreeCreditBucketsForPaidPlan } from '@/lib/billing/credits';
 import {
   CREDIT_PACK_SIZE,
   PAYMENT_GRACE_DAYS,
@@ -306,6 +307,7 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
     ?? (linePeriod?.end
       ? new Date(linePeriod.end * 1000).toISOString()
       : new Date(Date.now() + (annual ? 366 : 32) * 86_400_000).toISOString());
+  await expireFreeCreditBucketsForPaidPlan(orgId, validFrom);
   const { error: grantError } = await admin.rpc('grant_org_credit_bucket', {
     p_org_id: orgId,
     p_source: annual ? 'annual' : 'paid_monthly',

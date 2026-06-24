@@ -11,7 +11,7 @@ export function getNangoClient(): Nango {
   return client;
 }
 
-export const HUBSPOT_INTEGRATION_ID = 'hubspot';
+export const HUBSPOT_INTEGRATION_ID = process.env.NANGO_HUBSPOT_INTEGRATION_ID?.trim() || 'hubspot';
 
 export async function getNangoAccessToken(
   integrationId: string,

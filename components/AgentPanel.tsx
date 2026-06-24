@@ -87,6 +87,8 @@ export interface AgentPanelProps {
   briefingIdleChips?: { label: string; prompt: string; threadPreview?: string }[];
   /** Override the subtitle line in the panel header (e.g. "Watching · Kumar Bala"). Supports ReactNode for bold/styled text. */
   headerSubtitle?: React.ReactNode;
+  /** Override the chat-bar input placeholder (e.g. "triaged leads" on /triage, where `page` is still 'leads'). */
+  inputPlaceholder?: string;
   className?: string;
   /**
    * Force the side-rail column into its expanded (width-reserving) layout even when
@@ -263,7 +265,7 @@ function stripMarkdown(text: string): string {
 // surfaces where the user wants the full-width table first.
 const DEFAULT_COLLAPSED_PAGES = new Set<AgentPage>(['accounts', 'leads', 'outreach']);
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, forceExpandedLayout, variant = 'side-rail' }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, inputPlaceholder, className, forceExpandedLayout, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -771,7 +773,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             placeholder={
               messages.length > 0
                 ? 'Ask a follow-up…'
-                : PAGE_INPUT_PLACEHOLDER[page] ?? 'Ask anything…'
+                : inputPlaceholder ?? PAGE_INPUT_PLACEHOLDER[page] ?? 'Ask anything…'
             }
             isLoading={isLoading}
             className="flex-1"
@@ -1301,7 +1303,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               placeholder={
                 messages.length > 0
                   ? 'Ask a follow-up…'
-                  : PAGE_INPUT_PLACEHOLDER[page] ?? 'Ask anything…'
+                  : inputPlaceholder ?? PAGE_INPUT_PLACEHOLDER[page] ?? 'Ask anything…'
               }
               isLoading={isLoading}
               className="flex-1"

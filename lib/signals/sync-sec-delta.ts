@@ -17,7 +17,7 @@
  */
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
-import { loadAllTrackedCiks } from '@/lib/signals/company-cik';
+import { loadAllTrackedCiks, loadAllTrackedNormalizedNames } from '@/lib/signals/company-cik';
 import { buildCompanyMentionMatches, hasVerifiedCanonicalCompanyMatch } from '@/lib/companies/mention-provenance';
 import { classifySecFiling, type SecFilingClassification } from '@/lib/signals/classify-sec-filing';
 import {
@@ -51,6 +51,11 @@ const ALL_TARGET_FORM_TYPES = new Set<string>([
 ]);
 
 const UPSERT_CHUNK = 200;
+
+// A 'running' sec_delta_sync_runs row older than this never finished (the
+// process died hard). New runs sweep these to 'failed' so the log doesn't
+// accumulate zombies and the resume/reuse lookups aren't misled by them.
+const ORPHAN_RUNNING_THRESHOLD_MS = 60 * 60 * 1000;
 
 /** Default backfill window for first-time runs. Subsequent runs use overlapDays. */
 const DEFAULT_OVERLAP_DAYS = 90;
@@ -419,16 +424,29 @@ type ProcessedFiling = { row: FilingUpsertRow; kind: 'd' | '8k' | '424b' } | nul
  */
 async function processFiling(
   row: DailyIndexRow,
-  ctx: { trackedCiks: Set<string>; startedAtIso: string; formDTrackedCiksOnly: boolean },
+  ctx: {
+    trackedCiks: Set<string>;
+    trackedNames: Set<string>;
+    startedAtIso: string;
+    formDTrackedCiksOnly: boolean;
+    alreadyMirrored: Set<string>;
+  },
 ): Promise<ProcessedFiling> {
-  const { trackedCiks, startedAtIso, formDTrackedCiksOnly } = ctx;
+  const { trackedCiks, trackedNames, startedAtIso, formDTrackedCiksOnly, alreadyMirrored } = ctx;
   try {
     if (TARGET_FORM_TYPES_FORM_D.has(row.formType)) {
-      // Form D: the primary_doc.xml fetch (offering amounts) is the expensive
-      // part. Only pay it for tracked CIKs; everything else gets a cheap
-      // index-only row that still name-matches at flush and can be enriched
-      // later — same shape as the 424B path.
-      if (formDTrackedCiksOnly && !trackedCiks.has(row.cik)) {
+      // Form D: the primary_doc.xml fetch (offering amounts + industry group) is
+      // the expensive part. Pay it when the issuer matches a tracked company by
+      // CIK *or* by name — name-matching keeps offering amounts and the
+      // pooled-investment-fund filter working for tracked companies whose CIK we
+      // don't know yet. Everything else gets a cheap index-only row.
+      const normName = row.entityName ? normalizeCompanyForMatching(row.entityName) : '';
+      const tracked = trackedCiks.has(row.cik) || (normName.length >= 4 && trackedNames.has(normName));
+      if (formDTrackedCiksOnly && !tracked) {
+        // Untracked + already mirrored: nothing new to write. Skipping it lets a
+        // resumed/overlap day converge (re-runs only do remaining work) instead
+        // of re-building every index-only row.
+        if (alreadyMirrored.has(row.accessionNumber)) return null;
         return { row: buildBaseUpsertRow(row, null, startedAtIso), kind: 'd' };
       }
       const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'xml');
@@ -499,10 +517,9 @@ async function processFiling(
       // 424B: default to index-only record for the global mirror; but if the
       // CIK is tracked, also fetch the prospectus body and classify it to
       // extract proceeds / use-of-proceeds.
-      let base: FilingUpsertRow;
       if (trackedCiks.has(row.cik)) {
         const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'htm');
-        base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
+        const base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
         if (primaryDocUrl) {
           try {
             const body = await secFetchText(primaryDocUrl);
@@ -523,10 +540,11 @@ async function processFiling(
             );
           }
         }
-      } else {
-        base = buildBaseUpsertRow(row, null, startedAtIso);
+        return { row: base, kind: '424b' };
       }
-      return { row: base, kind: '424b' };
+      // Untracked + already mirrored: nothing new — skip so resumed/overlap days converge.
+      if (alreadyMirrored.has(row.accessionNumber)) return null;
+      return { row: buildBaseUpsertRow(row, null, startedAtIso), kind: '424b' };
     }
 
     return null;
@@ -545,18 +563,28 @@ async function processFiling(
  * module-level throttle still enforces the global 8 req/s cap, so concurrency
  * only removes per-request round-trip stalls. The first error halts scheduling
  * and rejects (used for rate-limit halts).
+ *
+ * `shouldStop` is checked before each item is scheduled, so a time budget can
+ * stop a long day mid-flight (in-flight items finish; unstarted ones are left as
+ * holes). `stoppedEarly` tells the caller a deadline cut the work short.
  */
 async function runConcurrent<T, R>(
   items: T[],
   limit: number,
   worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
+  shouldStop?: () => boolean,
+): Promise<{ results: R[]; stoppedEarly: boolean }> {
   const out = new Array<R>(items.length);
   let cursor = 0;
   let halt: unknown = null;
+  let stoppedEarly = false;
   const pump = async (): Promise<void> => {
     while (true) {
       if (halt) return;
+      if (shouldStop && shouldStop()) {
+        stoppedEarly = true;
+        return;
+      }
       const i = cursor++;
       if (i >= items.length) return;
       try {
@@ -570,7 +598,7 @@ async function runConcurrent<T, R>(
   const workers = Math.max(1, Math.min(limit, items.length || 1));
   await Promise.all(Array.from({ length: workers }, () => pump()));
   if (halt) throw halt;
-  return out;
+  return { results: out, stoppedEarly };
 }
 
 export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDeltaResult> {
@@ -596,7 +624,21 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
     throw new Error(`syncSecDelta startDate ${isoFromDate(startDate)} is after endDate ${isoFromDate(endDate)}`);
   }
 
+  const formDTrackedCiksOnly = input.formDTrackedCiksOnly ?? (process.env.SEC_FORM_D_ALL_CIKS !== 'true');
   const trackedCiks = await loadAllTrackedCiks(admin);
+  // Name set only needed when we're gating Form D fetches by tracked issuer.
+  const trackedNames = formDTrackedCiksOnly
+    ? await loadAllTrackedNormalizedNames(admin)
+    : new Set<string>();
+
+  // Sweep zombie 'running' rows from hard-killed prior runs before we add ours.
+  const orphanCutoff = new Date(startedAt.getTime() - ORPHAN_RUNNING_THRESHOLD_MS).toISOString();
+  const { error: orphanErr } = await admin
+    .from('sec_delta_sync_runs')
+    .update({ status: 'failed', error: 'orphaned run (no completion recorded)', finished_at: startedAtIso })
+    .eq('status', 'running')
+    .lt('started_at', orphanCutoff);
+  if (orphanErr) console.warn(`[sync-sec-delta] orphan-run cleanup skipped: ${orphanErr.message}`);
 
   const { data: runRow, error: runInsertErr } = await admin
     .from('sec_delta_sync_runs')
@@ -613,7 +655,6 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
 
   const softDeadlineMs = input.softDeadlineMs ?? null;
   const concurrency = input.concurrency ?? Math.max(1, Number(process.env.SEC_SYNC_CONCURRENCY) || 6);
-  const formDTrackedCiksOnly = input.formDTrackedCiksOnly ?? (process.env.SEC_FORM_D_ALL_CIKS !== 'true');
 
   let daysProcessed = 0;
   let daysSkipped = 0;
@@ -724,10 +765,46 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
       const rows = parseDailyIndex(indexText, filingDateIso);
       daysProcessed += 1;
 
+      // Accessions already mirrored for this day. Untracked filings already here
+      // are skipped (nothing new to write), so a resumed or overlap re-run of a
+      // day only does the remaining work and converges — without this, a single
+      // oversized day would restart from scratch every time and never finish.
+      const alreadyMirrored = new Set<string>();
+      {
+        const { data: mirrored, error: mirroredErr } = await admin
+          .from('sec_filings_local')
+          .select('accession_number')
+          .eq('filing_date', filingDateIso);
+        if (mirroredErr) {
+          console.warn(`[sync-sec-delta] mirrored-accession read failed for ${filingDateIso}: ${mirroredErr.message}`);
+        } else {
+          for (const r of (mirrored ?? []) as Array<{ accession_number: string | null }>) {
+            if (r.accession_number) alreadyMirrored.add(r.accession_number);
+          }
+        }
+      }
+
       let dayResults: ProcessedFiling[];
+      let stoppedEarly = false;
       try {
-        dayResults = await runConcurrent(rows, concurrency, (row) =>
-          processFiling(row, { trackedCiks, startedAtIso, formDTrackedCiksOnly }));
+        const run = await runConcurrent(
+          rows,
+          concurrency,
+          (row) => processFiling(row, {
+            trackedCiks,
+            trackedNames,
+            startedAtIso,
+            formDTrackedCiksOnly,
+            alreadyMirrored,
+          }),
+          // Per-filing budget check: stop a long day mid-flight rather than only
+          // at day boundaries, so a single huge day can't blow the function limit.
+          softDeadlineMs !== null
+            ? () => Date.now() - startedAt.getTime() > softDeadlineMs
+            : undefined,
+        );
+        dayResults = run.results;
+        stoppedEarly = run.stoppedEarly;
       } catch (error) {
         if (isRateLimitError(error)) {
           rateLimitHalted = true;
@@ -745,6 +822,14 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
         else if (res.kind === '8k') form8kUpserted += 1;
         else form424bUpserted += 1;
         if (upsertBuffer.length >= UPSERT_CHUNK) await flush();
+      }
+
+      // Mid-day budget stop: partial progress is flushed below; resume re-runs
+      // this same day, which now skips the already-mirrored filings → converges.
+      if (stoppedEarly) {
+        timedOut = true;
+        resumeDate = isoFromDate(cursor);
+        break;
       }
 
       cursor.setUTCDate(cursor.getUTCDate() + 1);

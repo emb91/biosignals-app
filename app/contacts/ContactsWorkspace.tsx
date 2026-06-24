@@ -5549,7 +5549,7 @@ export function ContactsWorkspace() {
                                   <div className="space-y-3">
                                     <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
                                       An outreach sequence is staged for {contactName || 'this contact'} but hasn&apos;t
-                                      been dispatched yet. Review the draft and send it when you&apos;re ready.
+                                      been sent yet. Go to the outreach tab and send it when you&apos;re ready.
                                     </p>
                                     <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                       <button
@@ -5557,7 +5557,7 @@ export function ContactsWorkspace() {
                                         onClick={() => router.push(ROUTES.outreach)}
                                         className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                       >
-                                        Open outreach editor
+                                        Open outreach
                                         <ChevronRight className="w-4 h-4" aria-hidden />
                                       </button>
                                     </div>

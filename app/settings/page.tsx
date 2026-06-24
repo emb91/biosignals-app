@@ -41,6 +41,8 @@ export default function SettingsPage() {
 
   // HubSpot connection state.
   const [hubspotStatus, setHubspotStatus] = useState<HubSpotStatus | null>(null);
+  const [hubspotConnecting, setHubspotConnecting] = useState(false);
+  const [hubspotConnectError, setHubspotConnectError] = useState<string | null>(null);
   const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
 
   // Call-to-action link.
@@ -194,16 +196,35 @@ export default function SettingsPage() {
   };
 
   const handleHubSpotConnect = async () => {
+    setHubspotConnectError(null);
+    setHubspotConnecting(true);
     try {
       // Get a short-lived session token from our backend (auth'd server-side).
       const sessionRes = await fetch('/api/nango/session', { method: 'POST' });
-      if (!sessionRes.ok) return;
-      const { sessionToken } = await sessionRes.json();
-      if (!sessionToken) return;
+      const sessionBody = (await sessionRes.json().catch(() => ({}))) as { sessionToken?: string; error?: string };
+      if (!sessionRes.ok) {
+        throw new Error(sessionBody.error ?? 'Could not start the HubSpot connection.');
+      }
+      if (!sessionBody.sessionToken) {
+        throw new Error('HubSpot connection is not configured. Add Nango credentials and try again.');
+      }
 
       const nangoClient = new Nango();
       const connectUI = nangoClient.openConnectUI({
         onEvent: async (event) => {
+          if (event.type === 'ready') {
+            setHubspotConnecting(false);
+            return;
+          }
+          if (event.type === 'close') {
+            setHubspotConnecting(false);
+            return;
+          }
+          if (event.type === 'error') {
+            setHubspotConnectError(event.payload.errorMessage || 'Could not connect HubSpot.');
+            setHubspotConnecting(false);
+            return;
+          }
           if (event.type === 'connect') {
             const { connectionId, providerConfigKey } = event.payload;
             await fetch('/api/nango/connection', {
@@ -212,17 +233,22 @@ export default function SettingsPage() {
               body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
             });
             await refreshHubSpotStatus();
+            setHubspotConnecting(false);
           }
         },
       });
-      connectUI.setSessionToken(sessionToken);
-    } catch { /* user cancelled or error */ }
+      connectUI.setSessionToken(sessionBody.sessionToken);
+    } catch (error) {
+      setHubspotConnectError(error instanceof Error ? error.message : 'Could not start the HubSpot connection.');
+      setHubspotConnecting(false);
+    }
   };
 
   const handleHubSpotDisconnect = async () => {
     setHubspotDisconnecting(true);
     try {
       await fetch('/api/hubspot/disconnect', { method: 'DELETE' });
+      setHubspotConnectError(null);
       await refreshHubSpotStatus();
     } finally {
       setHubspotDisconnecting(false);
@@ -316,7 +342,7 @@ export default function SettingsPage() {
                       : 'Connect your CRM so Arcova can read deals, contacts, and lifecycle stage.'}
                   </p>
                 </div>
-                <div className="shrink-0">
+                <div className="shrink-0 flex flex-col items-end gap-2">
                   {hubspotStatus?.connected ? (
                     <button
                       type="button"
@@ -330,10 +356,16 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => void handleHubSpotConnect()}
+                      disabled={hubspotConnecting}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547]"
                     >
-                      Connect HubSpot
+                      {hubspotConnecting ? 'Connecting...' : 'Connect HubSpot'}
                     </button>
+                  )}
+                  {hubspotConnectError && (
+                    <p className="max-w-[220px] text-right text-[12px] leading-snug text-amber-700">
+                      {hubspotConnectError}
+                    </p>
                   )}
                 </div>
               </div>

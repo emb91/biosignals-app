@@ -93,6 +93,7 @@ type ImportBatchDetails = {
 };
 
 const BATCH_ID_STORAGE_KEY = 'arcova_current_batch_id';
+const BATCH_MODE_STORAGE_KEY = 'arcova_current_batch_mode';
 const HIDDEN_IMPORTS_STORAGE_KEY = 'arcova_hidden_import_batch_ids';
 const CSV_PREVIEW_ROW_COUNT = 3;
 
@@ -111,6 +112,16 @@ const IMPORT_FIELD_OPTIONS: { value: ImportField; label: string }[] = [
   { value: 'location', label: 'Location' },
   { value: 'ignore', label: "Don't import this column" },
 ];
+
+// Company-first import maps only company columns — no person identity.
+const COMPANY_FIELD_OPTIONS: { value: ImportField; label: string }[] = [
+  { value: 'company_name', label: 'Company name' },
+  { value: 'company_domain', label: 'Company domain' },
+  { value: 'company_linkedin_url', label: 'Company LinkedIn URL' },
+  { value: 'ignore', label: "Don't import this column" },
+];
+
+type ImportMode = 'contacts' | 'companies';
 
 const parseCsvLine = (line: string): string[] => {
   const cells: string[] = [];
@@ -230,6 +241,8 @@ export default function ImportPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [parsedCsv, setParsedCsv] = useState<ParsedCsv | null>(null);
+  const [importMode, setImportMode] = useState<ImportMode>('contacts');
+  const [batchMode, setBatchMode] = useState<ImportMode>('contacts');
   const [columnMappings, setColumnMappings] = useState<Record<string, ImportField>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
@@ -247,16 +260,21 @@ export default function ImportPage() {
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [hubspotDomain, setHubspotDomain] = useState<string | null>(null);
   const [hubspotSyncLog, setHubspotSyncLog] = useState<HubspotSyncLog | null>(null);
+  const [hubspotConnecting, setHubspotConnecting] = useState(false);
+  const [hubspotConnectError, setHubspotConnectError] = useState<string | null>(null);
   const [hubspotSyncing, setHubspotSyncing] = useState(false);
   const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
   const [agentOpener, setAgentOpener] = useState<AgentPendingMessage | undefined>();
 
-  const persistBatchId = (id: string | null) => {
+  const persistBatchId = (id: string | null, mode: ImportMode = 'contacts') => {
     setCurrentBatchId(id);
     if (id) {
       localStorage.setItem(BATCH_ID_STORAGE_KEY, id);
+      localStorage.setItem(BATCH_MODE_STORAGE_KEY, mode);
+      setBatchMode(mode);
     } else {
       localStorage.removeItem(BATCH_ID_STORAGE_KEY);
+      localStorage.removeItem(BATCH_MODE_STORAGE_KEY);
     }
   };
 
@@ -348,9 +366,11 @@ export default function ImportPage() {
   useEffect(() => {
     if (!user) return;
     const savedBatchId = localStorage.getItem(BATCH_ID_STORAGE_KEY);
+    const savedBatchMode = localStorage.getItem(BATCH_MODE_STORAGE_KEY);
     const savedHiddenBatchIds = localStorage.getItem(HIDDEN_IMPORTS_STORAGE_KEY);
     if (savedBatchId) {
       setCurrentBatchId(savedBatchId);
+      setBatchMode(savedBatchMode === 'companies' ? 'companies' : 'contacts');
     }
     if (savedHiddenBatchIds) {
       try {
@@ -454,29 +474,56 @@ export default function ImportPage() {
   const handleConnectHubSpot = async () => {
     if (!user) return;
 
-    // Get a short-lived session token from our backend
-    const sessionRes = await fetch('/api/nango/session', { method: 'POST' });
-    if (!sessionRes.ok) return;
-    const { sessionToken } = await sessionRes.json();
+    setHubspotConnectError(null);
+    setHubspotConnecting(true);
+    try {
+      // Get a short-lived session token from our backend
+      const sessionRes = await fetch('/api/nango/session', { method: 'POST' });
+      const sessionBody = (await sessionRes.json().catch(() => ({}))) as { sessionToken?: string; error?: string };
+      if (!sessionRes.ok) {
+        throw new Error(sessionBody.error ?? 'Could not start the HubSpot connection.');
+      }
+      if (!sessionBody.sessionToken) {
+        throw new Error('HubSpot connection is not configured. Add Nango credentials and try again.');
+      }
 
-    const nangoClient = new Nango();
-    const connectUI = nangoClient.openConnectUI({
-      onEvent: async (event) => {
-        if (event.type === 'connect') {
-          const { connectionId, providerConfigKey } = event.payload;
-          // Persist the Nango connectionId to our DB
-          await fetch('/api/nango/connection', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
-          });
-          setHubspotConnected(true);
-          void fetchHubspotStatus();
-          void fetchHubspotSyncLog();
-        }
-      },
-    });
-    connectUI.setSessionToken(sessionToken);
+      const nangoClient = new Nango();
+      const connectUI = nangoClient.openConnectUI({
+        onEvent: async (event) => {
+          if (event.type === 'ready') {
+            setHubspotConnecting(false);
+            return;
+          }
+          if (event.type === 'close') {
+            setHubspotConnecting(false);
+            return;
+          }
+          if (event.type === 'error') {
+            setHubspotConnectError(event.payload.errorMessage || 'Could not connect HubSpot.');
+            setHubspotConnecting(false);
+            return;
+          }
+          if (event.type === 'connect') {
+            const { connectionId, providerConfigKey } = event.payload;
+            // Persist the Nango connectionId to our DB
+            await fetch('/api/nango/connection', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
+            });
+            setHubspotConnected(true);
+            setHubspotConnecting(false);
+            setHubspotConnectError(null);
+            void fetchHubspotStatus();
+            void fetchHubspotSyncLog();
+          }
+        },
+      });
+      connectUI.setSessionToken(sessionBody.sessionToken);
+    } catch (error) {
+      setHubspotConnectError(error instanceof Error ? error.message : 'Could not start the HubSpot connection.');
+      setHubspotConnecting(false);
+    }
   };
 
   const handleHubspotSync = async () => {
@@ -508,20 +555,26 @@ export default function ImportPage() {
       setHubspotConnected(false);
       setHubspotDomain(null);
       setHubspotSyncLog(null);
+      setHubspotConnectError(null);
     } finally {
       setHubspotDisconnecting(false);
     }
   };
 
-  const initializeMappings = (headers: string[]) => {
+  const COMPANY_FIELDS: ImportField[] = ['company_name', 'company_domain', 'company_linkedin_url'];
+
+  const initializeMappings = (headers: string[], mode: ImportMode) => {
     const nextMappings: Record<string, ImportField> = {};
     headers.forEach((header) => {
-      nextMappings[header] = inferFieldFromHeader(header);
+      const inferred = inferFieldFromHeader(header);
+      // Company import only accepts company columns — drop any person inference.
+      nextMappings[header] =
+        mode === 'companies' && !COMPANY_FIELDS.includes(inferred) ? 'ignore' : inferred;
     });
     setColumnMappings(nextMappings);
   };
 
-  const handleParsedFile = (file: File, text: string) => {
+  const handleParsedFile = (file: File, text: string, mode: ImportMode) => {
     const { headers, rows } = parseCsvText(text);
 
     if (headers.length === 0) {
@@ -536,7 +589,8 @@ export default function ImportPage() {
       headers,
       rows,
     });
-    initializeMappings(headers);
+    setImportMode(mode);
+    initializeMappings(headers, mode);
     setErrorMessage(null);
     setBatchDetails(null);
     setBatchDetailsError(null);
@@ -545,33 +599,34 @@ export default function ImportPage() {
     setProgress(null);
   };
 
-  const processFile = async (file: File) => {
+  const processFile = async (file: File, mode: ImportMode) => {
     if (!file.name.toLowerCase().endsWith('.csv')) {
       setErrorMessage('Only .csv files are supported.');
       return;
     }
 
     const text = await file.text();
-    handleParsedFile(file, text);
+    handleParsedFile(file, text, mode);
   };
 
-  const handleBrowseClick = () => {
+  const handleBrowseClick = (mode: ImportMode) => {
+    setImportMode(mode);
     fileInputRef.current?.click();
   };
 
   const handleFileInputChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    await processFile(file);
+    await processFile(file, importMode);
     event.target.value = '';
   };
 
-  const handleDrop = async (event: DragEvent<HTMLDivElement>) => {
+  const handleDrop = (mode: ImportMode) => async (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragOver(false);
     const file = event.dataTransfer.files?.[0];
     if (!file) return;
-    await processFile(file);
+    await processFile(file, mode);
   };
 
   const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -585,6 +640,10 @@ export default function ImportPage() {
 
   const canConfirmImport = useMemo(() => {
     const mappedTargets = Object.values(columnMappings);
+    if (importMode === 'companies') {
+      // A company list just needs a company name or domain to resolve each row.
+      return mappedTargets.includes('company_name') || mappedTargets.includes('company_domain');
+    }
     const hasPersonIdentifier =
       (mappedTargets.includes('first_name') && mappedTargets.includes('last_name')) ||
       mappedTargets.includes('full_name') ||
@@ -596,15 +655,99 @@ export default function ImportPage() {
       mappedTargets.includes('linkedin_url');
 
     return hasPersonIdentifier && hasCompanyIdentifier;
-  }, [columnMappings]);
+  }, [columnMappings, importMode]);
 
   const rawPreviewRows = useMemo(() => {
     if (!parsedCsv) return [];
     return parsedCsv.rows.slice(0, CSV_PREVIEW_ROW_COUNT);
   }, [parsedCsv]);
 
+  const handleConfirmCompanyImport = async () => {
+    if (!parsedCsv || !canConfirmImport) return;
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const payload = {
+        headers: parsedCsv.headers,
+        rows: parsedCsv.rows,
+        columnMappings,
+        filename: parsedCsv.fileName,
+      };
+
+      // Cost shown upfront: preview the spend (no enrichment runs yet), confirm,
+      // then import. Nothing is charged until the user accepts.
+      const previewRes = await fetch('/api/import-companies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, preview: true }),
+      });
+      const preview = await previewRes.json();
+      if (!previewRes.ok) throw new Error(preview.error || 'Could not price this import.');
+
+      const importable = Number(preview.importable ?? 0);
+      const credits = Number(preview.estimatedCredits ?? 0);
+      const alreadyImported = Number(preview.alreadyImported ?? 0);
+      const invalid = Number(preview.invalid ?? 0);
+
+      if (importable === 0) {
+        setErrorMessage(
+          alreadyImported > 0
+            ? 'Every company in this file is already in your companies.'
+            : 'No companies with a usable name or domain to import.',
+        );
+        return;
+      }
+
+      const skipped: string[] = [];
+      if (alreadyImported > 0) skipped.push(`${alreadyImported.toLocaleString()} already in your companies`);
+      if (invalid > 0) skipped.push(`${invalid.toLocaleString()} with no usable name or domain`);
+      const skipNote = skipped.length ? `\n\nSkipped: ${skipped.join(', ')}.` : '';
+      if (
+        !window.confirm(
+          `Enrich and score ${importable.toLocaleString()} ${importable === 1 ? 'company' : 'companies'} for ${credits.toLocaleString()} credits?${skipNote}`,
+        )
+      ) {
+        return;
+      }
+
+      const response = await fetch('/api/import-companies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to start import.');
+
+      persistBatchId(result.batchId, 'companies');
+      setParsedCsv(null);
+      setColumnMappings({});
+      setBatchDetails(null);
+      setBatchDetailsError(null);
+      setExpandedBatchSection(null);
+      setProgress({
+        total: result.totalUploaded || 0,
+        processed: result.duplicatesRemoved || 0,
+        remaining: result.beingEnriched || 0,
+        duplicates: result.duplicatesRemoved || 0,
+        enriching: result.beingEnriched || 0,
+        enriched: 0,
+        notEnriched: 0,
+        batchStatus: 'processing',
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to start import.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleConfirmImport = async () => {
     if (!parsedCsv || !canConfirmImport) return;
+    if (importMode === 'companies') {
+      await handleConfirmCompanyImport();
+      return;
+    }
 
     setIsSubmitting(true);
     setErrorMessage(null);
@@ -787,12 +930,16 @@ export default function ImportPage() {
               <PageHeader
                 eyebrow="Import"
                 eyebrowIcon={<Upload className="h-3 w-3" />}
-                title="Import contacts"
-                subtitle="Connect your CRM or upload a CSV — Arcova will enrich, score against your ICP, and tell you who to prioritise."
+                title={parsedCsv && importMode === 'companies' ? 'Import companies' : 'Import contacts'}
+                subtitle={
+                  parsedCsv && importMode === 'companies'
+                    ? 'Upload a list of companies — Arcova will enrich and score each against your ICP. Buy contacts at the good-fit ones whenever you are ready.'
+                    : 'Connect your CRM or upload a CSV — Arcova will enrich, score against your ICP, and tell you who to prioritise.'
+                }
               />
 
               {/* Import methods */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
                 {/* HubSpot */}
                 <div className={`rounded-xl border-2 p-5 flex flex-col gap-4 transition-colors ${hubspotConnected ? 'border-[#ff7a59]/40 bg-[#fff5f2]' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
                   <div className="flex items-center justify-between">
@@ -844,28 +991,34 @@ export default function ImportPage() {
                       <button
                         type="button"
                         onClick={() => void handleConnectHubSpot()}
-                        className="flex-1 rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white hover:bg-[#e8693f] transition-colors text-center"
+                        disabled={hubspotConnecting}
+                        className="flex-1 rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white hover:bg-[#e8693f] disabled:opacity-50 transition-colors text-center"
                       >
-                        Connect HubSpot
+                        {hubspotConnecting ? 'Connecting...' : 'Connect HubSpot'}
                       </button>
                     )}
                   </div>
+                  {hubspotConnectError && (
+                    <p className="text-xs leading-snug text-amber-700">{hubspotConnectError}</p>
+                  )}
                 </div>
 
-                {/* CSV upload */}
+                {/* Hidden file input shared by both CSV cards — importMode decides the flow */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={handleFileInputChange}
+                />
+
+                {/* CSV upload — contacts */}
                 <div className="rounded-xl border-2 border-dashed border-gray-200 bg-white hover:border-arcova-teal/50 transition-colors flex flex-col">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,text/csv"
-                    className="hidden"
-                    onChange={handleFileInputChange}
-                  />
                   <div
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    onClick={handleBrowseClick}
+                    onDrop={handleDrop('contacts')}
+                    onClick={() => handleBrowseClick('contacts')}
                     className={`flex-1 flex flex-col items-center justify-center gap-3 p-6 cursor-pointer rounded-xl transition-colors ${isDragOver ? 'bg-arcova-teal/5' : ''}`}
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
@@ -875,9 +1028,30 @@ export default function ImportPage() {
                     </div>
                     <div className="text-center">
                       <p className="text-sm font-medium text-gray-700">
-                        {isDragOver ? 'Drop to upload' : 'Upload a CSV'}
+                        {isDragOver ? 'Drop to upload' : 'Upload contacts'}
                       </p>
-                      <p className="text-xs text-gray-400 mt-0.5">Drag and drop or click to browse</p>
+                      <p className="text-xs text-gray-400 mt-0.5">CSV of people — we enrich and score each one</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CSV upload — companies */}
+                <div className="rounded-xl border-2 border-dashed border-gray-200 bg-white hover:border-arcova-teal/50 transition-colors flex flex-col">
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop('companies')}
+                    onClick={() => handleBrowseClick('companies')}
+                    className="flex-1 flex flex-col items-center justify-center gap-3 p-6 cursor-pointer rounded-xl transition-colors"
+                  >
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
+                      <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3m4-14h.01M11 7h.01M15 7h.01M7 11h.01M11 11h.01M15 11h.01M7 15h.01M11 15h.01M15 15h.01" />
+                      </svg>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-gray-700">Upload companies</p>
+                      <p className="text-xs text-gray-400 mt-0.5">CSV of companies — we enrich and score, no contacts needed</p>
                     </div>
                   </div>
                 </div>
@@ -926,7 +1100,7 @@ export default function ImportPage() {
                                   }
                                   className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
                                 >
-                                  {IMPORT_FIELD_OPTIONS.map((option) => (
+                                  {(importMode === 'companies' ? COMPANY_FIELD_OPTIONS : IMPORT_FIELD_OPTIONS).map((option) => (
                                     <option key={option.value} value={option.value}>
                                       {option.label}
                                     </option>
@@ -969,7 +1143,9 @@ export default function ImportPage() {
 
                   {!canConfirmImport && (
                     <p className="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      Map a person identifier (first + last name, full name, or LinkedIn URL) and a company identifier (company name, domain, email, or LinkedIn URL) to continue.
+                      {importMode === 'companies'
+                        ? 'Map a company name or company domain to continue.'
+                        : 'Map a person identifier (first + last name, full name, or LinkedIn URL) and a company identifier (company name, domain, email, or LinkedIn URL) to continue.'}
                     </p>
                   )}
 
@@ -987,7 +1163,7 @@ export default function ImportPage() {
                       onClick={handleConfirmImport}
                       className="px-5 py-2 rounded-lg text-white text-sm font-medium bg-arcova-teal hover:bg-arcova-teal/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
-                      {isSubmitting ? 'Starting…' : 'Confirm import'}
+                      {isSubmitting ? 'Starting…' : importMode === 'companies' ? 'Review cost' : 'Confirm import'}
                     </button>
                   </div>
                 </div>
@@ -1002,9 +1178,14 @@ export default function ImportPage() {
                     eyebrow="Import"
                     eyebrowIcon={<Upload className="h-3 w-3" />}
                     title={importCancelled ? 'Import stopped' : 'Import analyzed'}
-                    subtitle={importCancelled
-                      ? 'Enriched, scored contacts were added to Leads before stopping.'
-                      : 'Your records are stored and ranked. Choose when to spend credits enriching the strongest matches.'}
+                    subtitle={
+                      batchMode === 'companies'
+                        ? importCancelled
+                          ? 'Enriched, scored companies were added before stopping.'
+                          : 'Your companies are in, with a first-pass fit now and a deeper biotech fit landing over the next few minutes. Open Companies to see them — and buy contacts at the good-fit ones whenever you are ready.'
+                        : importCancelled
+                          ? 'Enriched, scored contacts were added to Leads before stopping.'
+                          : 'Your records are stored and ranked. Choose when to spend credits enriching the strongest matches.'}
                     action={
                       <button type="button" onClick={resetBatchView} className="text-xs text-arcova-navy/40 hover:text-arcova-navy/70 mt-1">
                         ← Back
@@ -1113,8 +1294,11 @@ export default function ImportPage() {
 
                   {/* CTA */}
                   <div className="rounded-xl border border-gray-200 bg-white p-5">
-                    <Link href={ROUTES.contacts} className="inline-flex px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
-                      View Leads
+                    <Link
+                      href={batchMode === 'companies' ? ROUTES.companies : ROUTES.contacts}
+                      className="inline-flex px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors"
+                    >
+                      {batchMode === 'companies' ? 'View companies' : 'View Leads'}
                     </Link>
                   </div>
                 </>
@@ -1132,7 +1316,7 @@ export default function ImportPage() {
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-arcova-teal" />
-                            <span className="text-sm font-semibold text-gray-900">Enriching your contacts</span>
+                            <span className="text-sm font-semibold text-gray-900">{batchMode === 'companies' ? 'Enriching your companies' : 'Enriching your contacts'}</span>
                           </div>
                           <p className="text-xs text-gray-400">This takes a few minutes — you don&apos;t need to stay on this page.</p>
                         </div>

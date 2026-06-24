@@ -496,9 +496,17 @@ export async function enrichOrganizationWithApollo(input: {
     return {};
   }
 
+  return mapApolloOrganization(organization, domain);
+}
+
+/** Map a raw Apollo organization to our canonical enrichment-result shape. */
+function mapApolloOrganization(
+  organization: ApolloOrganization,
+  fallbackDomain?: string | null,
+): ApolloOrganizationEnrichmentResult {
   return {
     company_name: organization.name || undefined,
-    company_domain: normalizeDomain(organization.primary_domain || organization.website_url || domain),
+    company_domain: normalizeDomain(organization.primary_domain || organization.website_url || fallbackDomain || null),
     company_linkedin_url: organization.linkedin_url || undefined,
     company_description: organization.short_description || undefined,
     company_industry: organization.industry || undefined,
@@ -512,6 +520,64 @@ export async function enrichOrganizationWithApollo(input: {
     company_latest_funding_date: organization.latest_funding_round_date || undefined,
     raw_company: organization,
   };
+}
+
+/**
+ * Bulk organization enrichment — Apollo's `organizations/bulk_enrich` accepts up
+ * to 10 domains per call. Returns a map keyed by the REQUESTED domain (and, as a
+ * fallback, the returned primary domain). Best-effort: misses are simply absent
+ * from the map. Used by the company-first import for a fast firmographic pass
+ * before the per-company deep enrichment runs.
+ */
+export async function bulkEnrichOrganizationsWithApollo(
+  domains: string[],
+): Promise<Map<string, ApolloOrganizationEnrichmentResult>> {
+  const out = new Map<string, ApolloOrganizationEnrichmentResult>();
+  const cleaned = [
+    ...new Set(domains.map((d) => normalizeDomain(d)).filter((d): d is string => Boolean(d))),
+  ];
+
+  for (let i = 0; i < cleaned.length; i += 10) {
+    const chunk = cleaned.slice(i, i + 10);
+    const params = new URLSearchParams();
+    for (const d of chunk) params.append('domains[]', d);
+
+    const response = await fetch(
+      `https://api.apollo.io/api/v1/organizations/bulk_enrich?${params.toString()}`,
+      {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'x-api-key': getApolloApiKey(),
+          'cache-control': 'no-cache',
+        },
+      },
+    );
+
+    if (!response.ok) {
+      // 404/422 mean nothing matched in this chunk — skip rather than fail the lot.
+      if (response.status === 404 || response.status === 422) continue;
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`Apollo bulk organization enrich failed (${response.status}): ${errorText.slice(0, 300)}`);
+    }
+
+    const payload = (await response.json()) as { organizations?: Array<ApolloOrganization | null> };
+    const orgs = Array.isArray(payload.organizations) ? payload.organizations : [];
+    // Apollo returns the organizations index-aligned to the input domains (null
+    // on a miss). We key by the requested domain, and also by the returned
+    // primary domain so a caller using either lands the match.
+    orgs.forEach((org, idx) => {
+      if (!org) return;
+      const requested = chunk[idx];
+      const mapped = mapApolloOrganization(org, requested);
+      if (requested) out.set(requested, mapped);
+      if (mapped.company_domain && !out.has(mapped.company_domain)) {
+        out.set(mapped.company_domain, mapped);
+      }
+    });
+  }
+
+  return out;
 }
 
 export async function searchOrganizationsWithApollo(
