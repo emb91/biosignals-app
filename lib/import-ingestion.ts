@@ -8,6 +8,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
+import { orgIdForUser } from '@/lib/org-context';
 
 export type EnrichedImportRecord = {
   raw_upload_id: string;
@@ -209,8 +210,46 @@ async function upsertCompany(
 
   const existingCompany = (existing?.data as ExistingCompany | null) || null;
   const now = new Date().toISOString();
-  // Per-user source label (lives on user_companies).
-  const perUserSource = record.enrichment_provider || 'imported';
+  const orgId = await orgIdForUser(supabase as any, userId);
+  const source = record.enrichment_provider || 'imported';
+  const linkCompanyToWorkspace = async (companyId: string, archivedAt: string | null = null) => {
+    if (orgId) {
+      const { error: orgLinkError } = await supabase
+        .from('org_companies')
+        .upsert(
+          {
+            org_id: orgId,
+            company_id: companyId,
+            source,
+            created_by: userId,
+            archived_at: archivedAt,
+            updated_at: now,
+          },
+          { onConflict: 'org_id,company_id' },
+        );
+      const formatted = formatSupabaseErrorMessage(orgLinkError);
+      if (formatted) {
+        throw new Error(`[import-ingestion] Failed to link org company (${context} id=${companyId}): ${formatted}`);
+      }
+    }
+
+    const legacyLinkResult = await supabase
+      .from('user_companies')
+      .upsert(
+        {
+          user_id: userId,
+          company_id: companyId,
+          source,
+          archived_at: archivedAt,
+          updated_at: now,
+        },
+        { onConflict: 'user_id,company_id' },
+      );
+    const formatted = formatSupabaseErrorMessage(legacyLinkResult?.error);
+    if (formatted) {
+      throw new Error(`[import-ingestion] Failed to mirror user company link (${context} id=${companyId}): ${formatted}`);
+    }
+  };
   const companyPayload = {
     domain,
     company_name: pickCanonicalString(record.company_name, existingCompany?.company_name),
@@ -254,18 +293,7 @@ async function upsertCompany(
       );
     }
 
-    // Link this user to the canonical company.
-    await supabase
-      .from('user_companies')
-      .upsert(
-        {
-          user_id: userId,
-          company_id: existingCompany.id,
-          source: perUserSource,
-          updated_at: now,
-        },
-        { onConflict: 'user_id,company_id' },
-      );
+    await linkCompanyToWorkspace(existingCompany.id);
 
     return { companyId: existingCompany.id, created: false };
   }
@@ -283,19 +311,7 @@ async function upsertCompany(
 
   const insertedId = (insertResult.data?.id as string) ?? null;
   if (insertedId) {
-    // Link this user to the new canonical company.
-    await supabase
-      .from('user_companies')
-      .upsert(
-        {
-          user_id: userId,
-          company_id: insertedId,
-          source: perUserSource,
-          archived_at: null,
-          updated_at: now,
-        },
-        { onConflict: 'user_id,company_id' },
-      );
+    await linkCompanyToWorkspace(insertedId, null);
 
     // Eager: populate aliases in the background. Doesn't block the import.
     void ensureCompanyAliases(createAdminClient(), insertedId).catch((err) => {

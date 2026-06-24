@@ -37,6 +37,8 @@ import { resolveCadenceDaysForUser } from '@/lib/signals/job-change-cadence';
 import { runApifyActor } from '@/lib/apify';
 import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
 import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
+import { orgIdForUser } from '@/lib/org-context';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -247,11 +249,11 @@ function extractCurrentEmployment(
  * Order of attempts:
  *   1. Fast path — scraped name matches the contact's currently-recorded
  *      company name (case-insensitive). Return existing company_id.
- *   2. Existing link in user_companies for this user. Return its company_id.
- *   3. Existing canonical company globally (any user). Link the user via
- *      user_companies upsert, then return its id.
- *   4. Brand-new company. Insert a minimal companies stub + user_companies
- *      link, return the new id.
+ *   2. Existing org company membership for this user. Return its company_id.
+ *   3. Existing canonical company globally (another workspace import). Link
+ *      the org via org_companies upsert, then return its id.
+ *   4. Brand-new company. Insert a minimal companies stub + org_companies link,
+ *      return the new id.
  *
  * If anything errors during creation, falls back to the existing company_id
  * so the rest of the monitor still emits title/promotion signals.
@@ -275,17 +277,65 @@ async function resolveOrCreateCompanyId(
     return fallbackCompanyId;
   }
 
-  // 2. Already linked under user_companies.
-  const { data: linkedRow } = await admin
-    .from('user_companies')
-    .select('company_id, companies!inner(company_name)')
-    .eq('user_id', userId)
-    .ilike('companies.company_name', trimmed)
-    .limit(1)
-    .maybeSingle();
+  const orgId = await orgIdForUser(admin, userId);
+
+  // 2. Already linked under the org-scoped account layer.
+  const linkedQuery = orgId
+    ? admin
+        .from('org_companies')
+        .select('company_id, companies!inner(company_name)')
+        .eq('org_id', orgId)
+        .ilike('companies.company_name', trimmed)
+        .limit(1)
+        .maybeSingle()
+    : admin
+        .from('user_companies')
+        .select('company_id, companies!inner(company_name)')
+        .eq('user_id', userId)
+        .ilike('companies.company_name', trimmed)
+        .limit(1)
+        .maybeSingle();
+  const { data: linkedRow } = await linkedQuery;
   if (linkedRow && typeof linkedRow.company_id === 'string') {
     return linkedRow.company_id;
   }
+
+  const linkCompany = async (companyId: string) => {
+    const now = new Date().toISOString();
+    if (orgId) {
+      const { error: orgLinkErr } = await admin
+        .from('org_companies')
+        .upsert(
+          {
+            org_id: orgId,
+            company_id: companyId,
+            source: 'job_change_monitor',
+            created_by: userId,
+            updated_at: now,
+            archived_at: null,
+          },
+          { onConflict: 'org_id,company_id' },
+        );
+      if (orgLinkErr) {
+        console.warn(
+          `[job-change-monitor] failed to link company ${companyId} to org ${orgId}:`,
+          orgLinkErr,
+        );
+      }
+    }
+
+    await admin
+      .from('user_companies')
+      .upsert(
+        {
+          user_id: userId,
+          company_id: companyId,
+          source: 'job_change_monitor',
+          archived_at: null,
+        },
+        { onConflict: 'user_id,company_id' },
+      );
+  };
 
   // 3. Canonical company exists globally (other user's import); just link it.
   const { data: existingCompany } = await admin
@@ -295,17 +345,7 @@ async function resolveOrCreateCompanyId(
     .limit(1)
     .maybeSingle();
   if (existingCompany && typeof existingCompany.id === 'string') {
-    await admin
-      .from('user_companies')
-      .upsert(
-        {
-          user_id: userId,
-          company_id: existingCompany.id,
-          source: 'job_change_monitor',
-          archived_at: null,
-        },
-        { onConflict: 'user_id,company_id' },
-      );
+    await linkCompany(existingCompany.id);
     return existingCompany.id;
   }
 
@@ -334,17 +374,7 @@ async function resolveOrCreateCompanyId(
     return fallbackCompanyId;
   }
 
-  await admin
-    .from('user_companies')
-    .upsert(
-      {
-        user_id: userId,
-        company_id: created.id,
-        source: 'job_change_monitor',
-        archived_at: null,
-      },
-      { onConflict: 'user_id,company_id' },
-    );
+  await linkCompany(created.id);
 
   // Kick off enrichment for the freshly created stub. Inline await keeps
   // the result deterministic (cron volume is low — case 4 only fires for
@@ -383,7 +413,7 @@ async function resolveOrCreateCompanyId(
  * skips them and the CRM badge / priority cap stop applying.
  *
  * Uses the same dual-lookup (arcova_contact_id AND hubspot_contact_email)
- * as /api/leads so we catch links matched by either path.
+ * as /api/contacts so we catch links matched by either path.
  */
 async function detachClosedDealLinks(
   admin: ReturnType<typeof createAdminClient>,
@@ -836,16 +866,15 @@ export async function runJobChangeMonitor(
     // qualified person at an account worth watching, so we gate on BOTH the
     // contact's own fit and its company's fit. Resolve the good-fit company
     // set first, then intersect. Unscored (null fit) records are excluded.
-    const { data: fitCompanies, error: fitErr } = await admin
-      .from('user_companies')
-      .select('company_id')
-      .eq('user_id', input.userId)
-      .is('archived_at', null)
-      .gte('company_fit_score', SWEEP_FIT_THRESHOLD);
-    if (fitErr) throw new Error(`[job-change-monitor] fetch good-fit companies: ${fitErr.message}`);
+    const fitCompanies = await listActiveCompanyStateForUser(
+      admin,
+      input.userId,
+      'company_id, company_fit_score',
+    );
 
-    const goodFitCompanyIds = (fitCompanies ?? [])
-      .map((r) => (r as { company_id?: unknown }).company_id)
+    const goodFitCompanyIds = fitCompanies
+      .filter((row) => typeof row.company_fit_score === 'number' && row.company_fit_score >= SWEEP_FIT_THRESHOLD)
+      .map((r) => r.company_id)
       .filter((v): v is string => typeof v === 'string' && Boolean(v));
 
     // No good-fit companies → nothing to sweep. Skip the scrape entirely.

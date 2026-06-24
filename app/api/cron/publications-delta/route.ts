@@ -20,6 +20,8 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runPublicationsMonitor } from '@/lib/signals/run-publications-monitor';
+import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
+import { attributionDueForUser } from '@/lib/signals/monitor-cadence';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -30,16 +32,7 @@ function messageFromUnknown(error: unknown): string {
 }
 
 async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  const { data, error } = await admin
-    .from('user_companies')
-    .select('user_id')
-    .is('archived_at', null);
-  if (error) throw new Error(`load active users: ${error.message}`);
-  const ids = new Set<string>();
-  for (const row of (data ?? []) as Array<{ user_id?: unknown }>) {
-    if (typeof row.user_id === 'string' && row.user_id) ids.add(row.user_id);
-  }
-  return [...ids];
+  return listUserIdsWithActiveCompanyState(admin);
 }
 
 async function runCron(request: Request) {
@@ -51,15 +44,24 @@ async function runCron(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const lookbackRaw = searchParams.get('lookbackDays');
-    const lookbackDays = lookbackRaw ? Math.max(1, Math.trunc(Number(lookbackRaw) || 30)) : 30;
     const admin = createAdminClient();
 
     const userIds = await loadActiveUserIds(admin);
     let monitorOk = 0;
     let monitorFailed = 0;
+    let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
     for (const userId of userIds) {
       try {
+        const { due, lookbackDays: cadenceLookback } = await attributionDueForUser(admin, { userId, runner: 'publications' });
+        if (!due) {
+          monitorSkipped += 1;
+          continue;
+        }
+        // Manual override via ?lookbackDays wins; otherwise size to the customer's cadence.
+        const lookbackDays = lookbackRaw
+          ? Math.max(1, Math.trunc(Number(lookbackRaw) || cadenceLookback))
+          : cadenceLookback;
         const result = await runPublicationsMonitor({ userId, lookbackDays });
         monitorOk += 1;
         await persistRunHistory(admin, {
@@ -97,11 +99,11 @@ async function runCron(request: Request) {
 
     return NextResponse.json({
       success: true,
-      lookback_days: lookbackDays,
       monitor: {
         users_total: userIds.length,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
+        users_skipped: monitorSkipped,
         failures,
       },
     });

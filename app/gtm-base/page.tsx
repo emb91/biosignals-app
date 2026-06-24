@@ -578,13 +578,13 @@ export default function DashboardPage() {
           outreachStatsResponse,
           coverageCardsResponse,
         ] = await Promise.all([
-          supabase.from('user_companies').select('company_id', { count: 'exact', head: true }).eq('user_id', user.id),
+          supabase.from('accounts_view').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
           supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
           // ICPs are org-scoped: drop the user filter and let RLS return company-wide
           // ICPs + this user's own personal ones. (Other tables stay user-scoped.)
           supabase.from('icps').select('id', { count: 'exact', head: true }),
           supabase.from('icps').select('id, name'),
-          supabase.from('user_companies').select('company_id, matched_icp_id, company_fit_score').eq('user_id', user.id),
+          supabase.from('accounts_view').select('id, matched_icp_id, company_fit_score').eq('user_id', user.id),
           supabase.from('contacts').select('id, company_id, contact_fit_score').eq('user_id', user.id).not('company_id', 'is', null),
           supabase.from('contact_attribution_snapshots')
             .select('contact_id, is_arcova_sourced, is_arcova_enriched, won_after_arcova_touch, first_arcova_touch_at, latest_arcova_touch_at, latest_closed_won_at')
@@ -597,7 +597,7 @@ export default function DashboardPage() {
           supabase.from('crm_deals')
             .select('hubspot_deal_id, deal_stage, amount, close_date, hs_lastmodifieddate, synced_at')
             .eq('user_id', user.id),
-          fetch('/api/leads?page=1&pageSize=1&lifecycle=customers'),
+          fetch('/api/contacts?page=1&pageSize=1&lifecycle=customers'),
           fetch('/api/outreach/stats'),
           fetch('/api/pipeline/icp-cards'),
         ]);
@@ -636,7 +636,7 @@ export default function DashboardPage() {
         const companyFitByIcp = new Map<string, number[]>();
 
         for (const company of companies ?? []) {
-          const companyId = typeof company.company_id === 'string' ? company.company_id : null;
+          const companyId = typeof company.id === 'string' ? company.id : null;
           const icpId = typeof company.matched_icp_id === 'string' ? company.matched_icp_id : null;
           if (!companyId || !icpId) continue;
           companyIcpById.set(companyId, icpId);

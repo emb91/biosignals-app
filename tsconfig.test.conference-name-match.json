@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-conference-name-match-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/company-name-variants.ts",
+    "lib/companies/match-helpers.ts",
+    "lib/signals/conference/adapters/types.ts",
+    "lib/signals/conference/adapters/spargo.ts",
+    "lib/signals/conference/adapters/smallworldlabs.ts",
+    "lib/signals/conference/adapters/mapyourshow.ts",
+    "lib/signals/conference/conference-phase.ts",
+    "lib/signals/conference/conference-name-match.test.ts",
+    "lib/signals/conference/conference-phase.test.ts"
+  ]
+}

@@ -11,6 +11,7 @@ type Operation = {
 };
 
 class FakeSupabase {
+  readonly orgMembers: Array<{ user_id: string; org_id: string }> = [];
   readonly userCompanies: Array<{ user_id: string; company_id: string }> = [];
   readonly companies: Array<{
     id: string;
@@ -48,6 +49,11 @@ class FakeQuery {
     return this;
   }
 
+  is(column: string, value: unknown) {
+    this.filters[column] = value;
+    return this;
+  }
+
   async maybeSingle(): Promise<DbResult> {
     this.record();
     if (this.table === 'user_companies') {
@@ -57,6 +63,12 @@ class FakeQuery {
             row.user_id === this.filters.user_id &&
             row.company_id === this.filters.company_id,
         ) ?? null,
+        error: null,
+      };
+    }
+    if (this.table === 'org_members') {
+      return {
+        data: this.db.orgMembers.find((row) => row.user_id === this.filters.user_id) ?? null,
         error: null,
       };
     }
@@ -99,7 +111,7 @@ test('company enrichment cancellation does not touch companies without ownership
 
   assert.deepEqual(result, { found: false });
   assert.equal(db.companies[0].enrichment_refresh_status, 'running');
-  assert.deepEqual(db.operations.map((operation) => operation.table), ['user_companies']);
+  assert.deepEqual(db.operations.map((operation) => operation.table), ['org_members', 'user_companies']);
 });
 
 test('company enrichment cancellation updates an owned running company', async () => {
@@ -115,6 +127,7 @@ test('company enrichment cancellation updates an owned running company', async (
   assert.equal(db.companies[0].enrichment_refresh_finished_at, finishedAt.toISOString());
   assert.equal(db.companies[0].updated_at, finishedAt.toISOString());
   assert.deepEqual(db.operations.map((operation) => `${operation.table}:${operation.type}`), [
+    'org_members:select',
     'user_companies:select',
     'companies:select',
     'companies:update',

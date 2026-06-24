@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:data-acquisition && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:funding-monitor && npm run test:signal-guards && npm run test:signal-ownership && npm run test:clinical-trial-admission && npm run test:resolver-provenance-admission && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:effective-priority && npm run test:outreach-sequence && npm run test:data-screen && npm run test:billing-stripe-invoice && npm run test:company-enrichment-credits && npm run test:company-enrich-cancel",
+    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:data-acquisition && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:funding-monitor && npm run test:signal-guards && npm run test:signal-ownership && npm run test:clinical-trial-admission && npm run test:resolver-provenance-admission && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:effective-priority && npm run test:outreach-sequence && npm run test:data-screen && npm run test:billing-stripe-invoice && npm run test:company-enrichment-credits && npm run test:company-enrich-cancel && npm run test:monitor-cadence",
     "preflight:prod": "node scripts/production-preflight.mjs",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "test:smoke": "playwright test",
@@ -40,7 +40,8 @@
     "test:data-screen": "rm -rf /tmp/arcova-data-screen-tests && tsc -p tsconfig.test.data-screen.json && node --test /tmp/arcova-data-screen-tests/tests/data-acquisition/search-spec.test.js",
     "test:billing-stripe-invoice": "rm -rf /tmp/arcova-billing-stripe-invoice-tests && tsc -p tsconfig.test.billing-stripe-invoice.json && node --test /tmp/arcova-billing-stripe-invoice-tests/stripe-invoice.test.js",
     "test:company-enrichment-credits": "rm -rf /tmp/arcova-company-enrichment-credits-tests && tsc -p tsconfig.test.company-enrichment-credits.json && node --test /tmp/arcova-company-enrichment-credits-tests/company-enrichment-credits.test.js",
-    "test:company-enrich-cancel": "rm -rf /tmp/arcova-company-enrich-cancel-tests && tsc -p tsconfig.test.company-enrich-cancel.json && node --test /tmp/arcova-company-enrich-cancel-tests/company-enrichment-cancel.test.js"
+    "test:company-enrich-cancel": "rm -rf /tmp/arcova-company-enrich-cancel-tests && tsc -p tsconfig.test.company-enrich-cancel.json && node --test /tmp/arcova-company-enrich-cancel-tests/company-enrichment-cancel.test.js",
+    "test:monitor-cadence": "rm -rf /tmp/arcova-monitor-cadence-tests && tsc -p tsconfig.test.monitor-cadence.json && node --test /tmp/arcova-monitor-cadence-tests/monitor-cadence-rules.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
@@ -50,6 +51,7 @@
     "@emotion/is-prop-valid": "latest",
     "@google-cloud/bigquery": "^8.3.1",
     "@hookform/resolvers": "^3.9.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@nangohq/frontend": "^0.70.8",
     "@nangohq/node": "^0.70.8",
     "@radix-ui/react-accordion": "1.2.2",
@@ -94,6 +96,7 @@
     "i18n-iso-countries": "^7.14.0",
     "input-otp": "1.4.1",
     "lucide-react": "^0.454.0",
+    "mcp-handler": "^1.1.0",
     "motion": "^12.38.0",
     "next": "^16.2.9",
     "next-themes": "^0.4.4",
@@ -114,7 +117,7 @@
     "tailwindcss-react-aria-components": "^2.1.0",
     "three": "^0.167.1",
     "vaul": "^0.9.6",
-    "zod": "^3.24.1"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

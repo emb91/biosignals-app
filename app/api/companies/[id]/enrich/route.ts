@@ -27,7 +27,7 @@ export const maxDuration = 300;
  * immediately — the caller polls the row's `enrichment_refresh_status` to
  * see when it flips to `succeeded` / `failed`.
  *
- * This is the path the Accounts side-panel "Refresh enrichment" button
+ * This is the path the Companies side-panel "Refresh enrichment" button
  * hits, and the path that `job_change_monitor` fires when it creates a
  * new company stub from a contact's job-change event.
  */
@@ -50,11 +50,20 @@ export async function POST(
     // Use admin client to bypass RLS — this endpoint is gated by the auth
     // check above and only reads/writes the company row + dependent caches.
     const supabase = createAdminClient();
-    const { data: owned } = await supabase.from('user_companies').select('company_id')
-      .eq('user_id', user.id).eq('company_id', id).maybeSingle();
-    if (!owned) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     const { data: member } = await supabase.from('org_members').select('org_id')
       .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+    let owned = null as { company_id: string } | null;
+    if (member?.org_id) {
+      const { data } = await supabase.from('org_companies').select('company_id')
+        .eq('org_id', member.org_id).eq('company_id', id).is('archived_at', null).maybeSingle();
+      owned = data;
+    }
+    if (!owned) {
+      const { data } = await supabase.from('user_companies').select('company_id')
+        .eq('user_id', user.id).eq('company_id', id).is('archived_at', null).maybeSingle();
+      owned = data;
+    }
+    if (!owned) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
     const reservation = member?.org_id
       ? await reserveCredits({

@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { formatSignalSentence } from '@/lib/signal-activity';
+import { orgIdForUser } from '@/lib/org-context';
 
 const DEFAULT_DAYS = 30;
 const MAX_ROWS = 400;
@@ -259,6 +260,18 @@ export async function GET(req: Request) {
   const companyIds = [...new Set(rows.map((r) => r.company_id).filter((v): v is string => !!v))];
   const contactIds = [...new Set(rows.map((r) => r.contact_id).filter((v): v is string => !!v))];
   const sourceEventIds = [...new Set(rows.map((r) => r.source_event_id).filter((v): v is string => !!v))];
+  const orgId = await orgIdForUser(supabase as any, user.id);
+  const archivedCompaniesQuery = orgId
+    ? supabase
+        .from('org_companies')
+        .select('company_id')
+        .eq('org_id', orgId)
+        .not('archived_at', 'is', null)
+    : supabase
+        .from('user_companies')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .not('archived_at', 'is', null);
 
   const [companiesRes, contactsRes, archivedRes, sourceRes] = await Promise.all([
     companyIds.length
@@ -280,11 +293,7 @@ export async function GET(req: Request) {
             archived_at: string | null;
           }>,
         }),
-    supabase
-      .from('user_companies')
-      .select('company_id')
-      .eq('user_id', user.id)
-      .not('archived_at', 'is', null),
+    archivedCompaniesQuery,
     sourceEventIds.length
       ? supabase
           .from('signal_source_events')

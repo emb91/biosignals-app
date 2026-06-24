@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { insertCompanySignalEvent, insertContactSignalEvent } from '@/lib/signals/write-signal-event';
 import { listLeadEvents } from '@/lib/signals/events';
 import { mirrorSignalEventToReadiness } from '@/lib/signals/readiness-signal-events';
+import { userHasActiveCompany } from '@/lib/org-company-state';
 
 /** GET: recent user's events / or lead-scoped bundles. POST: authenticated insert (recompute readiness). */
 
@@ -102,14 +103,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'companyId required' }, { status: 400 });
       }
 
-      const { data: owned, error: ownErr } = await supabase
-        .from('user_companies')
-        .select('company_id')
-        .eq('company_id', companyId)
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (ownErr || !owned) {
+      const ownsCompany = await userHasActiveCompany(supabase as any, user.id, companyId);
+      if (!ownsCompany) {
         return NextResponse.json({ error: 'Company not found' }, { status: 404 });
       }
 

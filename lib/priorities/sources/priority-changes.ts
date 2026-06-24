@@ -146,7 +146,7 @@ export async function computeContactPriorityChanges(
     severity: 'medium',
     title: count === 1 ? 'Review priority change' : `Review ${count} priority changes`,
     detail: compactChangeDetail('contact', labels, count),
-    href: topId ? `${ROUTES.leads.contacts}?lead=${encodeURIComponent(topId)}` : ROUTES.leads.contacts,
+    href: topId ? `${ROUTES.contacts}?lead=${encodeURIComponent(topId)}` : ROUTES.contacts,
     cta: 'Review',
     count,
     meta: { contactIds: visible.map((c) => c.entityId) },
@@ -163,21 +163,14 @@ export async function computeAccountPriorityChanges(
   if (changed.length === 0) return null;
 
   const ids = [...new Set(changed.map((c) => c.entityId))];
-  // Names live on `companies`; CRM suppression is per-user on `user_companies`.
-  const [
-    { data: companies, error: companiesError },
-    { data: userCompanies, error: userCompaniesError },
-  ] = await Promise.all([
-    supabase.from('companies').select('id, company_name').in('id', ids),
-    supabase
-      .from('user_companies')
-      .select('company_id, crm_is_suppressed')
-      .eq('user_id', userId)
-      .in('company_id', ids),
-  ]);
-  // As above, fail closed if either identity or per-user suppression state
+  const { data: companies, error: companiesError } = await supabase
+    .from('accounts_view')
+    .select('id, company_name, crm_is_suppressed')
+    .eq('user_id', userId)
+    .in('id', ids);
+  // As above, fail closed if either identity or org-scoped suppression state
   // cannot be verified. A transient lookup error must not resurrect bad nudges.
-  if (companiesError || userCompaniesError) return null;
+  if (companiesError) return null;
 
   // Drop CRM-suppressed accounts (closed-won/lost in cooldown) — same reason as
   // contacts: their displayed priority is pinned low, so a raw-score move is a
@@ -186,8 +179,8 @@ export async function computeAccountPriorityChanges(
     ((companies ?? []) as Array<{ id: string; company_name: string | null }>).map((c) => c.id),
   );
   const suppressionByCompanyId = new Map(
-    ((userCompanies ?? []) as Array<{ company_id: string; crm_is_suppressed: boolean | null }>).map(
-      (c) => [c.company_id, c.crm_is_suppressed] as const,
+    ((companies ?? []) as Array<{ id: string; crm_is_suppressed: boolean | null }>).map(
+      (c) => [c.id, c.crm_is_suppressed] as const,
     ),
   );
   const visible = changed.filter(

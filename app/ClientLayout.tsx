@@ -16,9 +16,8 @@ import { useViewportHeight } from "@/lib/use-viewport-height"
 // Routes that are part of the authenticated app (no header/footer)
 const APP_ROUTES = [
   ROUTES.accounts,
+  ROUTES.legacyAccounts,
   ROUTES.contacts,
-  ROUTES.leads.accounts,
-  ROUTES.leads.contacts,
   ROUTES.data,
   ROUTES.coverage,
   ROUTES.today,

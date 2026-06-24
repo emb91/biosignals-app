@@ -2,7 +2,7 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { Send, Sparkles, RotateCcw, ArrowRight, Plus, RefreshCw } from 'lucide-react';
+import { Send, Sparkles, RotateCcw, ArrowRight, Plus, RefreshCw, Minimize2, Maximize2 } from 'lucide-react';
 import { AgentChatBar } from '@/components/AgentChatBar';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -13,6 +13,7 @@ import type { AccountQueryColumn, AccountQueryFilters, AccountSortBy, QueryAccou
 import type { QueryColumn as LeadQueryColumn, LeadQueryFilters, LeadSortBy, QueryLead } from '@/lib/leads-data';
 import { fetchIcpPriorities, clearIcpPrioritiesCache, getDismissedPriorityIds, dismissPriority, clearIcpAuditDismissals } from '@/lib/icp-priorities-client';
 import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
+import { AGENT_COLLAPSED_EVENT } from '@/hooks/use-agent-collapsed';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -250,11 +251,19 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+// Side-rail pages that open with the agent already collapsed — table-heavy
+// surfaces where the user wants the full-width table first.
+const DEFAULT_COLLAPSED_PAGES = new Set<AgentPage>(['accounts', 'leads', 'outreach']);
+
 export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Side-rail only: fold the full panel down to a compact chat bar (header collapse
+  // control ⇄ expand control). Self-contained so every side-rail page gets it.
+  // Table-heavy pages start collapsed so the table has the full width on arrival.
+  const [collapsed, setCollapsed] = useState(() => DEFAULT_COLLAPSED_PAGES.has(page));
   const [handoffFrom, setHandoffFrom] = useState<AgentPage | null>(null);
   /** Today tile: orb and "standing" surface until the user types, sends, or taps an idle chip (one-way). */
   const [briefingSurfaceEngaged, setBriefingSurfaceEngaged] = useState(false);
@@ -411,7 +420,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         onTableFilter(data.tableFilter, data.tableAccounts ?? []);
       }
 
-      // Apply leads table filter if present
+      // Apply contacts table filter if present
       if (data.leadsFilter && onLeadsFilter) {
         onLeadsFilter(data.leadsFilter, data.tableLeads ?? []);
       }
@@ -527,6 +536,22 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   /** Briefing-style / central layout: wide light chat surface. Triggered by Today (`page=today`) or the 'central' variant. */
   const todayChat = page === 'today' || variant === 'central';
   const embedGlass = Boolean(embedInBriefingBento && todayChat);
+  // The standard right-edge glass side-rail (icps/accounts/leads/coverage/signals/
+  // outreach/log/import). Excludes the central briefing + data-sourcing surfaces,
+  // which are intentionally distinct and have no collapse affordance.
+  const collapsible = !lightSetupChat && !todayChat && !wide;
+  // Broadcast the collapsed state on <body> so a page can keep its top-right
+  // toolbar clear of the floating bar (e.g. the /contacts "Actions" button).
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('arcova-agent-collapsed', collapsible && collapsed);
+    // Let tables react (claim the freed width → show more columns).
+    window.dispatchEvent(new Event(AGENT_COLLAPSED_EVENT));
+    return () => {
+      document.body.classList.remove('arcova-agent-collapsed');
+      window.dispatchEvent(new Event(AGENT_COLLAPSED_EVENT));
+    };
+  }, [collapsible, collapsed]);
   const showBriefingOrb = embedGlass && briefingWelcome && !briefingSurfaceEngaged && !isLoading;
   const showBriefingIdleWelcome = embedGlass && briefingWelcome && messages.length === 0;
   const briefingChips = briefingIdleChips ?? (briefingWelcome ? DEFAULT_BRIEFING_IDLE_CHIPS : []);
@@ -704,10 +729,51 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               embedGlass && 'h-full min-h-0 overflow-hidden',
               embedGlass || lightSetupChat ? 'px-0 py-0' : 'px-4 py-4',
             )
-          : 'hidden md:flex shrink-0 self-stretch py-3 pr-3 pl-2',
+          : collapsible && collapsed
+            // Collapsed: the column reserves no width so the page content (flex-1
+            // sibling) reflows to fill the freed space. Stays `relative` + full
+            // height so the compact bar can anchor to the top-right where the panel
+            // was. `!pl-0` kills the parent's min-[1280px]:pl-1.5 so the column is
+            // truly 0-wide (companies/contacts null their agentRect at width 0).
+            ? 'relative hidden md:flex shrink-0 self-stretch w-0 min-[1280px]:!pl-0'
+            : 'hidden md:flex shrink-0 self-stretch py-3 pr-3 pl-2',
         className,
       )}
     >
+      {collapsible && collapsed ? (
+        /* ── Collapsed: compact chat bar pinned to the top-right where the panel
+           was, floating over the now-full-width page content. Same glass treatment
+           as the full panel. Expand control restores the panel; sending a message
+           also expands so the reply is visible. */
+        <div className="absolute right-3 top-2.5 z-30 flex w-[360px] items-center gap-1.5 rounded-[1.3125rem] border border-arcova-teal/60 bg-white/65 px-3 py-2 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2),_0_2px_6px_-2px_rgba(0,164,180,0.12)] ring-1 ring-arcova-teal/10 backdrop-blur-[28px] backdrop-saturate-150">
+          <AgentChatBar
+            ref={inputRef}
+            value={input}
+            onChange={(v) => setInput(v)}
+            onSubmit={() => {
+              if (!input.trim()) return;
+              sendMessage(input);
+              setCollapsed(false);
+            }}
+            placeholder={
+              messages.length > 0
+                ? 'Ask a follow-up…'
+                : PAGE_INPUT_PLACEHOLDER[page] ?? 'Ask anything…'
+            }
+            isLoading={isLoading}
+            className="flex-1"
+          />
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[rgba(13,53,71,0.1)] bg-white/55 text-[#7d909a] shadow-[0_1px_2px_rgba(13,53,71,0.06)] transition-all hover:border-arcova-teal/40 hover:bg-white hover:text-arcova-teal"
+            aria-label="Expand agent"
+            title="Expand agent"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
       <div
         className={cn(
           'flex min-h-0 flex-1 flex-col overflow-hidden',
@@ -878,6 +944,19 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           >
             <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
           </button>
+          {/* Collapse control (top-right corner) — folds the big panel down to the
+              compact chat bar. Distinct pill so it reads as a panel control rather
+              than another flat header icon. Side-rail surface only. */}
+          {collapsible && (
+            <button
+              onClick={() => setCollapsed(true)}
+              className="ml-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[rgba(13,53,71,0.1)] bg-white/55 text-[#7d909a] shadow-[0_1px_2px_rgba(13,53,71,0.06)] transition-all hover:border-arcova-teal/40 hover:bg-white hover:text-arcova-teal"
+              aria-label="Collapse agent"
+              title="Collapse agent"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
       )}
@@ -1194,7 +1273,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             </button>
           )}
           {/* Side-panel agent (default variant) uses the shared `AgentChatBar` component
-              so other surfaces (e.g. the floating chat bar on /leads/contacts) stay
+              so other surfaces (e.g. the floating chat bar on /contacts) stay
               visually consistent. The bespoke `todayChat` and `lightSetupChat` variants
               keep their inline JSX — different shapes/sizes, intentionally distinct. */}
           {!todayChat && !lightSetupChat ? (
@@ -1300,6 +1379,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         )}
       </div>
     </div>
+      )}
   </div>
   );
 }

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { runCompanyMonitor } from '@/lib/company-monitor';
 import { getOrgContext } from '@/lib/org-context';
+import { userHasActiveCompany } from '@/lib/org-company-state';
 
 /**
  * POST /api/monitor-company
@@ -30,20 +31,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'company_id required' }, { status: 400 });
     }
 
-    const { data: userCompany, error: userCompanyError } = await supabase
-      .from('user_companies')
-      .select('company_id')
-      .eq('user_id', ctx.user.id)
-      .eq('company_id', company_id)
-      .is('archived_at', null)
-      .maybeSingle();
-
-    if (userCompanyError) {
-      console.error('[monitor-company] ownership check failed:', userCompanyError);
-      return NextResponse.json({ error: 'Could not verify company access' }, { status: 500 });
-    }
-
-    if (!userCompany) {
+    const ownsCompany = await userHasActiveCompany(supabase as any, ctx.user.id, company_id);
+    if (!ownsCompany) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     }
 

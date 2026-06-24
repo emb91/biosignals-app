@@ -21,13 +21,14 @@ import {
   registerPhoneRevealRequest,
   buildPhoneRevealWebhookUrl,
 } from '@/lib/apollo-phone-webhook';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseFrom = { from: (table: string) => any };
 
 /**
  * Threshold below which we skip phone enrichment for a contact. Stored as
- * 0–1 (normalised) because that's the canonical scale in user_companies +
+ * 0–1 (normalised) because that's the canonical scale in org company state +
  * contacts. Tune by changing this constant.
  */
 export const PHONE_ENRICHMENT_FIT_THRESHOLD = 0.7;
@@ -72,13 +73,13 @@ export async function shouldEnrichPhonesFor(
 
   let companyFit: number | null = null;
   if (contact.company_id) {
-    const { data: uc } = await supabase
-      .from('user_companies')
-      .select('company_fit_score')
-      .eq('user_id', params.userId)
-      .eq('company_id', contact.company_id)
-      .maybeSingle();
-    companyFit = (uc?.company_fit_score ?? null) as number | null;
+    const companyRows = await listActiveCompanyStateForUser(
+      supabase as any,
+      params.userId,
+      'company_id, company_fit_score',
+    );
+    const row = companyRows.find((candidate) => candidate.company_id === contact.company_id);
+    companyFit = row?.company_fit_score ?? null;
   }
 
   const allowed = shouldEnrichPhones({ contactFitScore: contactFit, companyFitScore: companyFit });

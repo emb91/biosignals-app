@@ -203,6 +203,7 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   clinical_trial_completed: ['external_company_change'],
   clinical_trial_sponsor_change: ['external_company_change'],
   phase_transition: ['external_company_change'],
+  exhibiting_at_conference: ['external_company_change'],
   trial_site_expansion: ['external_company_change'],
   indication_expansion: ['external_company_change'],
   breakthrough_designation: ['external_company_change'],

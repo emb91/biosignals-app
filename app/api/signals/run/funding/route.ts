@@ -6,6 +6,7 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runFundingMonitor } from '@/lib/signals/run-funding-monitor';
 import { syncSecDelta, type SyncSecDeltaResult } from '@/lib/signals/sync-sec-delta';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 type RunFundingBody = {
   company_ids?: string[];
@@ -43,21 +44,9 @@ async function loadUserCompanyIds(
   userId: string,
   limitValue?: number,
 ): Promise<string[]> {
-  const query = authClient
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', userId)
-    .is('archived_at', null);
-  if (typeof limitValue === 'number') {
-    query.limit(Math.max(1, limitValue));
-  }
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  const ids = new Set<string>();
-  for (const row of (data ?? []) as Array<{ company_id?: unknown }>) {
-    if (typeof row.company_id === 'string' && row.company_id) ids.add(row.company_id);
-  }
-  return [...ids];
+  const rows = await listActiveCompanyStateForUser(authClient, userId, 'company_id');
+  const ids = [...new Set(rows.map((row) => row.company_id))];
+  return typeof limitValue === 'number' ? ids.slice(0, Math.max(1, limitValue)) : ids;
 }
 
 export async function POST(request: Request) {

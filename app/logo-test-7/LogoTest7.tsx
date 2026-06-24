@@ -171,8 +171,8 @@ const CURTAIN: Icon = {
 }
 const ALL: Icon[] = [...ICONS, CURTAIN]
 
-// The side-nav trial is narrowed to the finalists; the Scope section still shows everything.
-const SHORTLIST: Icon[] = [...ICONS.filter((i) => i.id === "C5" || i.id === "C6"), CURTAIN]
+// The side-nav trial is narrowed to the two finalists; the Scope section still shows everything.
+const SHORTLIST: Icon[] = [...ICONS.filter((i) => i.id === "C6"), CURTAIN]
 
 // Brand feedback, graded on three axes from logo research:
 //  • small-size survivability (the 16-32px favicon test)
@@ -342,6 +342,29 @@ export default function LogoTest7() {
                 </div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="dir">
+          <div className="dir-h"><span className="dir-tag">f</span><h2>At favicon size</h2></div>
+          <p className="dir-note">True 48 / 32 / 16px &mdash; the real test. The browser tab on the right shows the mark where it actually lives: beside the title.</p>
+          <div className="favgrid">
+            {SHORTLIST.map((ic) => (
+              <div className="favrow" key={ic.id}>
+                <span className="favid">{ic.id}</span>
+                <div className="favsizes">
+                  {[48, 32, 16].map((px) => (
+                    <span className="favnavy" style={{ width: px, height: px }} key={px}>
+                      <svg viewBox="0 0 120 120">{ic.render()}</svg>
+                    </span>
+                  ))}
+                </div>
+                <div className="favtab">
+                  <span className="favtabico"><svg viewBox="0 0 120 120">{ic.render()}</svg></span>
+                  <span className="favtabword">arcova &mdash; Today</span>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       </div>

@@ -330,7 +330,7 @@ Use your tools proactively to give accurate, data-driven answers. Do not guess a
 - Use get_company_details for questions about a specific named company.
 - Use query_contacts for questions about individual contacts or personas.
 - Use filter_accounts_table to update the accounts table. It returns the actual filtered records. Use those to craft your response. Do NOT also call query_companies; the filter tool is the single source of truth.
-- Use filter_leads_table to update the leads table. It returns the actual filtered records. Use those to craft your response. Do NOT also call query_contacts; the filter tool is the single source of truth.
+- Use filter_leads_table to update the contacts table. It returns the actual filtered records. Use those to craft your response. Do NOT also call query_contacts; the filter tool is the single source of truth.
 - Use query_companies or query_contacts only for purely informational questions where the user is NOT asking to filter the visible table.
 - Use suggest_navigation whenever the user's next action requires going to a different page. Always call it. Never just tell the user to "go to X" in text alone.`;
 

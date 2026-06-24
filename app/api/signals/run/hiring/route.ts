@@ -18,6 +18,7 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runHiringMonitor } from '@/lib/signals/run-hiring-monitor';
 import { isCompanySweepEligible } from '@/lib/signals/sweep-fit-gate';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 type RunHiringBody = {
   company_ids?: string[];
@@ -78,19 +79,12 @@ export async function POST(request: Request) {
     let result: Awaited<ReturnType<typeof runHiringMonitor>>;
 
     if (runAll && requestedCompanyIds.length === 0) {
-      const { data: linkRows } = await authClient
-        .from('user_companies')
-        .select('company_id, company_fit_score')
-        .eq('user_id', user.id)
-        .is('archived_at', null);
       // run_all still respects the routine-sweep fit gate — good-fit
       // companies only (guardrail #2). Targeting specific company_ids
       // (the else-branch) bypasses the gate for deliberate one-offs.
-      const allIds = (linkRows ?? [])
-        .map((r) => r as { company_id?: unknown; company_fit_score?: unknown })
-        .filter((r): r is { company_id: string; company_fit_score: number | null } =>
-          typeof r.company_id === 'string' && Boolean(r.company_id))
-        .filter((r) => isCompanySweepEligible(r.company_fit_score))
+      const linkRows = await listActiveCompanyStateForUser(authClient, user.id, 'company_id, company_fit_score');
+      const allIds = linkRows
+        .filter((r) => isCompanySweepEligible(r.company_fit_score ?? null))
         .map((r) => r.company_id);
       executedCompanyIds = allIds;
 

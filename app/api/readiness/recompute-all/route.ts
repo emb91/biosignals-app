@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { orgIdForUser } from '@/lib/org-context';
 import {
   generateAccountReason,
   recomputeAccountReadiness,
@@ -19,8 +20,9 @@ export const maxDuration = 300;
  * their old scores until each entity is recomputed, which normally only happens
  * on the next signal event. This forces a full refresh.
  *
- * Side effects (per the readiness service): updates the readiness snapshots AND
- * mirrors readiness_score + priority_score onto user_companies / contacts.
+ * Side effects (per the readiness service): updates readiness snapshots and
+ * mirrors company readiness onto org_companies, with user_companies retained as
+ * a legacy compatibility mirror.
  *
  * Body (optional): { regenerateReasons?: boolean }
  *   - regenerateReasons defaults to FALSE. Reason regeneration is an LLM call
@@ -45,13 +47,21 @@ export async function POST(request: Request) {
     const regenerateReasons = body.regenerateReasons === true;
 
     const admin = createAdminClient();
+    const orgId = await orgIdForUser(admin, user.id);
 
-    // Active companies for this user.
-    const { data: companyRows, error: companyErr } = await admin
-      .from('user_companies')
-      .select('company_id')
-      .eq('user_id', user.id)
-      .is('archived_at', null);
+    const companyQuery = orgId
+      ? admin
+          .from('org_companies')
+          .select('company_id')
+          .eq('org_id', orgId)
+          .is('archived_at', null)
+      : admin
+          .from('user_companies')
+          .select('company_id')
+          .eq('user_id', user.id)
+          .is('archived_at', null);
+
+    const { data: companyRows, error: companyErr } = await companyQuery;
     if (companyErr) {
       return NextResponse.json({ error: companyErr.message }, { status: 500 });
     }

@@ -13,7 +13,7 @@
  *    open pipeline now) computed over ALL deals, attributed or not
  *
  * Deal → ICP resolution (two paths, A preferred):
- *   A. crm_deal_company_links.arcova_company_id → user_companies.matched_icp_id
+ *   A. crm_deal_company_links.arcova_company_id → org company matched_icp_id
  *   B. crm_deal_contact_links.arcova_contact_id → contacts.company_id → matched_icp_id
  *
  * Cycle length uses crm_deal_stage_history (first-stage entered_at → closedwon
@@ -23,6 +23,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { priorQuarter, quarterDateRange, quarterOf } from './period';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 /** Below this many held contacts we don't trust a measured contact→deal rate. */
 export const MIN_CONTACTS_FOR_MEASURED_CONVERSION = 5;
@@ -226,11 +227,7 @@ export async function computeCoverageRollup(
       .select('hubspot_deal_id, arcova_contact_id')
       .eq('user_id', userId)
       .not('arcova_contact_id', 'is', null),
-    supabase
-      .from('user_companies')
-      .select('company_id, matched_icp_id')
-      .eq('user_id', userId)
-      .not('matched_icp_id', 'is', null),
+    listActiveCompanyStateForUser(supabase as any, userId, 'company_id, matched_icp_id'),
     supabase
       .from('contacts')
       .select('id, company_id')
@@ -239,7 +236,8 @@ export async function computeCoverageRollup(
   ]);
 
   const companyToIcp = new Map<string, string>();
-  for (const r of (userCompaniesRes.data ?? []) as Array<{ company_id: string; matched_icp_id: string }>) {
+  for (const r of (userCompaniesRes ?? []) as Array<{ company_id: string; matched_icp_id: string | null }>) {
+    if (!r.matched_icp_id) continue;
     companyToIcp.set(r.company_id, r.matched_icp_id);
   }
 

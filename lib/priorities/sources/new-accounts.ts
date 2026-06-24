@@ -1,7 +1,7 @@
 /**
  * "New accounts" priority source.
  *
- * Surfaces accounts recently added to the user's workspace — `user_companies.added_at`
+ * Surfaces accounts recently added to the user's workspace — `org_companies.added_at`
  * within a rolling window, excluding archived ones. This covers both ways a new account
  * appears: a contact import that brought a new company, and a contact job-change that
  * re-resolved to (and imported) a different company. Either can arrive with fresh signals.
@@ -37,35 +37,20 @@ export async function computeNewAccountsPriority(
   const cutoffIso = new Date(nowMs - WINDOW_DAYS * 86_400_000).toISOString();
 
   const { data: links } = await supabase
-    .from('user_companies')
-    .select('company_id, added_at')
+    .from('accounts_view')
+    .select('id, company_name, added_at')
     .eq('user_id', userId)
     .is('archived_at', null)
     .gte('added_at', cutoffIso)
     .order('added_at', { ascending: false });
 
-  const linkRows = (links ?? []) as Array<{ company_id: string; added_at: string | null }>;
+  const linkRows = (links ?? []) as Array<{ id: string; company_name: string | null; added_at: string | null }>;
   const count = linkRows.length;
   if (count === 0) return null;
 
-  // Resolve company names in a second query (the canonical `companies` table is shared).
-  const companyIds = [...new Set(linkRows.map((r) => r.company_id).filter(Boolean))];
-  let nameById = new Map<string, string>();
-  if (companyIds.length > 0) {
-    const { data: companies } = await supabase
-      .from('companies')
-      .select('id, company_name')
-      .in('id', companyIds);
-    nameById = new Map(
-      ((companies ?? []) as Array<{ id: string; company_name: string | null }>)
-        .filter((c) => c.company_name?.trim())
-        .map((c) => [c.id, c.company_name!.trim()]),
-    );
-  }
-
   // Preserve added_at-desc order (newest first) when listing names.
   const labels = linkRows
-    .map((r) => nameById.get(r.company_id))
+    .map((r) => r.company_name?.trim() || null)
     .filter((v): v is string => Boolean(v));
 
   const preview = namePreview(labels);

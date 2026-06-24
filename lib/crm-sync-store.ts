@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 export type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -442,14 +443,10 @@ export async function findArcovaCompaniesByDomains(
   const candidateIds = (candidates ?? []).map((r) => (r as { id?: unknown }).id).filter((v): v is string => typeof v === 'string');
   if (!candidateIds.length) return [];
 
-  const { data: owned, error: ownedError } = await supabase
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', userId)
-    .is('archived_at', null)
-    .in('company_id', candidateIds);
-  if (ownedError) throw ownedError;
-  const ownedIds = new Set((owned ?? []).map((r) => (r as { company_id?: unknown }).company_id).filter((v): v is string => typeof v === 'string'));
+  const activeIds = new Set(
+    (await listActiveCompanyStateForUser(supabase, userId, 'company_id')).map((row) => row.company_id),
+  );
+  const ownedIds = new Set(candidateIds.filter((id) => activeIds.has(id)));
 
   return (candidates ?? []).filter((r) => ownedIds.has((r as { id: string }).id)) as ArcovaCompanyRecord[];
 }
@@ -478,14 +475,10 @@ export async function findArcovaCompaniesByIds(
 ): Promise<ArcovaCompanyRecord[]> {
   if (!ids.length) return [];
   // Restrict to companies this user tracks.
-  const { data: owned, error: ownedError } = await supabase
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', userId)
-    .is('archived_at', null)
-    .in('company_id', ids);
-  if (ownedError) throw ownedError;
-  const ownedIds = (owned ?? []).map((r) => (r as { company_id?: unknown }).company_id).filter((v): v is string => typeof v === 'string');
+  const activeIds = new Set(
+    (await listActiveCompanyStateForUser(supabase, userId, 'company_id')).map((row) => row.company_id),
+  );
+  const ownedIds = ids.filter((id) => activeIds.has(id));
   if (!ownedIds.length) return [];
 
   const { data, error } = await supabase

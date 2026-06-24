@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { orgIdForUser } from '@/lib/org-context';
 import {
   buildPersistedAccountReadinessContext,
   generateAccountReason,
@@ -36,13 +37,25 @@ export async function POST(request: Request) {
     }
 
     const supabase = createAdminClient();
+    const orgId = await orgIdForUser(supabase, user.id);
 
-    const { data: company, error: companyError } = await supabase
-      .from('user_companies')
-      .select('company_id')
-      .eq('company_id', companyId)
-      .eq('user_id', user.id)
-      .maybeSingle();
+    const companyQuery = orgId
+      ? supabase
+          .from('org_companies')
+          .select('company_id')
+          .eq('company_id', companyId)
+          .eq('org_id', orgId)
+          .is('archived_at', null)
+          .maybeSingle()
+      : supabase
+          .from('user_companies')
+          .select('company_id')
+          .eq('company_id', companyId)
+          .eq('user_id', user.id)
+          .is('archived_at', null)
+          .maybeSingle();
+
+    const { data: company, error: companyError } = await companyQuery;
 
     if (companyError || !company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 });
@@ -74,4 +87,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
-

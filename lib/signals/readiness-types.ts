@@ -108,7 +108,8 @@ export type SignalKey =
   | 'prior_pipeline_relationship'
   | 'key_contact_departed'
   | 'terminated_deal'
-  | 'principal_investigator_new_trial';
+  | 'principal_investigator_new_trial'
+  | 'exhibiting_at_conference';
 
 export type SignalCatalogEntry = {
   signalKey: SignalKey;

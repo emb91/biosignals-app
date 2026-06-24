@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { effectiveReadiness } from '@/lib/lead-action';
 import { computeIntrinsicPriority } from '@/lib/effective-priority';
+import { orgIdForUser } from '@/lib/org-context';
 import { buildAccountReadinessContext } from '@/lib/signals/readiness-context';
 import { normalizeReadinessEvent } from '@/lib/signals/readiness-normalize';
 import { buildAccountReason } from '@/lib/signals/readiness-reason';
@@ -28,6 +29,53 @@ import type {
 } from '@/lib/signals/readiness-types';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
+
+async function updateOrgCompanyReadinessMirror(
+  supabase: DatabaseClient,
+  userId: string,
+  companyId: string,
+  readinessScore: number,
+): Promise<void> {
+  const orgId = await orgIdForUser(supabase, userId);
+  if (!orgId) return;
+
+  const { error } = await supabase
+    .from('org_companies')
+    .update({ readiness_score: readinessScore, updated_at: new Date().toISOString() })
+    .eq('org_id', orgId)
+    .eq('company_id', companyId);
+
+  if (error) {
+    console.warn('Company readiness org mirror write failed:', error.message);
+  }
+}
+
+async function getCompanyFitReadinessState(
+  supabase: DatabaseClient,
+  userId: string,
+  companyId: string,
+): Promise<{ company_fit_score: number | null; readiness_score: number | null } | null> {
+  const orgId = await orgIdForUser(supabase, userId);
+  if (orgId) {
+    const { data, error } = await supabase
+      .from('org_companies')
+      .select('company_fit_score, readiness_score')
+      .eq('org_id', orgId)
+      .eq('company_id', companyId)
+      .maybeSingle();
+    if (!error && data) {
+      return data as { company_fit_score: number | null; readiness_score: number | null };
+    }
+  }
+
+  const { data } = await supabase
+    .from('user_companies')
+    .select('company_fit_score, readiness_score')
+    .eq('user_id', userId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  return (data as { company_fit_score: number | null; readiness_score: number | null } | null) ?? null;
+}
 
 export type IngestSignalSourceEventInput = {
   userId: string;
@@ -172,13 +220,11 @@ export async function recomputeAccountReadiness(
 
   await replaceReadinessSnapshotEvidence(supabase, snapshot.id, score.contributions);
 
-  // Mirror readiness_score onto user_companies so accounts_view (which exposes
-  // uc.readiness_score) stays accurate without joining the snapshot.
-  // readiness_score is the canonical signal score (formerly "intent"),
-  // = snapshot overall_score. NOTE: user_companies.priority_score is a STORED
-  // GENERATED column (company_fit_score × (0.5 + 0.5 × readiness_score)) — do
-  // NOT write it here; Postgres recomputes it automatically when readiness_score
-  // changes. (Writing it errors: "can only be updated to DEFAULT".)
+  // Keep org_companies as the company-readiness truth. user_companies is still
+  // mirrored below only for legacy/background compatibility while old code is
+  // being retired.
+  await updateOrgCompanyReadinessMirror(supabase, input.userId, input.companyId, score.overallScore);
+
   {
     const { error: mirrorErr } = await supabase
       .from('user_companies')
@@ -204,9 +250,9 @@ export async function recomputeContactReadiness(
 ): Promise<RecomputeContactReadinessResult> {
   const [signals, contactFitRow] = await Promise.all([
     listNormalizedSignalsForContact(supabase, input.userId, input.contactId),
-    // Pull contact fit + the contact's company_id so we can look up company fit
-    // from user_companies (where it actually lives — contacts.company_fit_score
-    // does NOT exist). Priority = company_fit × contact_fit × (0.5 + 0.5 × r).
+    // Pull contact fit + the contact's company_id so we can look up org-scoped
+    // company fit. contacts.company_fit_score does NOT exist. Priority =
+    // company_fit × contact_fit × (0.5 + 0.5 × r).
     // Best-effort: a missing row leaves priority null and the snapshot still writes.
     supabase
       .from('contacts')
@@ -221,20 +267,14 @@ export async function recomputeContactReadiness(
       ),
   ]);
 
-  // Resolve company fit + company readiness via user_companies (per-user scores
-  // on the contact's account). Company readiness feeds EFFECTIVE readiness below.
+  // Resolve company fit + company readiness via org_companies. Company
+  // readiness feeds EFFECTIVE readiness below.
   let companyFitScore: number | null = null;
   let companyReadinessScore: number | null = null;
   if (contactFitRow?.company_id) {
-    const { data: ucRow } = await supabase
-      .from('user_companies')
-      .select('company_fit_score, readiness_score')
-      .eq('user_id', input.userId)
-      .eq('company_id', contactFitRow.company_id)
-      .maybeSingle();
-    const uc = ucRow as { company_fit_score: number | null; readiness_score: number | null } | null;
-    companyFitScore = uc?.company_fit_score ?? null;
-    companyReadinessScore = uc?.readiness_score ?? null;
+    const companyState = await getCompanyFitReadinessState(supabase, input.userId, contactFitRow.company_id);
+    companyFitScore = companyState?.company_fit_score ?? null;
+    companyReadinessScore = companyState?.readiness_score ?? null;
   }
 
   const score = scoreAccountReadiness(signals, {
@@ -260,7 +300,7 @@ export async function recomputeContactReadiness(
   });
 
   // Mirror readiness_score (always) + priority_score (when fit is known) onto
-  // contacts so /api/leads can read/ORDER BY without joining the snapshot.
+  // contacts so /api/contacts can read/ORDER BY without joining the snapshot.
   // readiness_score is the canonical signal score (formerly "intent"),
   // = snapshot overall_score (CONTACT-level). priority_score folds in company
   // momentum via effReadiness. Best-effort: a mirror failure doesn't fail the

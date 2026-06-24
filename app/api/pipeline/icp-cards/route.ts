@@ -12,6 +12,7 @@ import {
 } from '@/lib/pipeline-icp-health';
 import { computeCoverageRollup } from '@/lib/coverage/icp-performance';
 import { quarterOf } from '@/lib/coverage/period';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 export async function GET() {
   try {
@@ -37,15 +38,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Failed to load ICPs' }, { status: 500 });
     }
 
-    const { data: companyRows, error: coErr } = await supabase
-      .from('user_companies')
-      .select('company_id, matched_icp_id, company_fit_score')
-      .eq('user_id', user.id);
-
-    if (coErr) {
-      console.error('[pipeline/icp-cards] companies', coErr);
-      return NextResponse.json({ error: 'Failed to load companies' }, { status: 500 });
-    }
+    const companyRows = (await listActiveCompanyStateForUser(
+      supabase,
+      user.id,
+      'company_id, matched_icp_id, company_fit_score',
+    )) as Array<{ company_id: string; matched_icp_id?: string | null; company_fit_score?: number | null }>;
 
     const { data: contactRows, error: ctErr } = await supabase
       .from('contacts')

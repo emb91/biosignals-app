@@ -208,8 +208,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     setupItems.some((item) => isActive(item.href)) ||
     pathname === ROUTES.setup.arcova;
 
-  const contactsActive = isActive(ROUTES.contacts) || isActive(ROUTES.leads.contacts);
-  const accountsActive = isActive(ROUTES.accounts) || isActive(ROUTES.leads.accounts);
+  const contactsActive = isActive(ROUTES.contacts);
+  const accountsActive = isActive(ROUTES.accounts) || isActive(ROUTES.legacyAccounts);
 
   const closeAccountMenu = () => {
     setAccountMenuOpen(false);
@@ -560,7 +560,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         {railIconButton('accounts', NavIconAccount, {
           onClick: () => guardedNavigate(ROUTES.accounts),
           active: accountsActive,
-          title: 'Accounts',
+          title: 'Companies',
           dot: showAccountsDot || showSignalsDot,
         })}
         {topNavigation.slice(3).map((item) =>
@@ -898,7 +898,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderSectionLabel('Go-to-market')}
                   <div className="space-y-0.5">
                     {renderNavItem({ name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact })}
-                    {renderNavItem({ name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount })}
+                    {renderNavItem({ name: 'Companies', href: ROUTES.accounts, icon: NavIconAccount })}
                     {renderNavItem({ name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth })}
                     {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
                     {renderNavItem({ name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach })}

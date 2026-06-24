@@ -20,6 +20,7 @@ import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { estimateIcpSupply, ICP_SUPPLY_SELECT } from '@/lib/coverage/supply';
 import type { AcquisitionIcp } from '@/lib/data-acquisition/search-spec';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -45,18 +46,15 @@ export async function POST(req: Request) {
   const icps = (icpRows ?? []) as AcquisitionIcp[];
   if (!icps.length) return NextResponse.json({ supply: [] });
 
-  // Held company counts per ICP (RLS-scoped) — the dedupe subtrahend.
-  const { data: companyRows, error: coErr } = await supabase
-    .from('user_companies')
-    .select('company_id, matched_icp_id')
-    .eq('user_id', user.id)
-    .not('matched_icp_id', 'is', null);
-  if (coErr) {
-    return NextResponse.json({ error: 'Failed to load companies', detail: coErr.message }, { status: 500 });
-  }
+  // Held company counts per ICP (org-scoped) — the dedupe subtrahend.
+  const companyRows = (await listActiveCompanyStateForUser(
+    supabase,
+    user.id,
+    'company_id, matched_icp_id',
+  )) as Array<{ company_id: string; matched_icp_id?: string | null }>;
   const heldByIcp = new Map<string, number>();
   for (const row of companyRows ?? []) {
-    const icpId = row.matched_icp_id as string | null;
+    const icpId = row.matched_icp_id ?? null;
     if (!icpId) continue;
     heldByIcp.set(icpId, (heldByIcp.get(icpId) ?? 0) + 1);
   }

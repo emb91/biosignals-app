@@ -9,7 +9,9 @@ export const ROUTES = {
   gtmBase: '/gtm-base',
   import: '/import',
   contacts: '/contacts',
-  accounts: '/accounts',
+  companies: '/companies',
+  accounts: '/companies',
+  legacyAccounts: '/accounts',
   customers: '/customers',
   signals: '/signals',
   settings: '/settings',
@@ -25,8 +27,8 @@ export const ROUTES = {
     newIcp: '/icps/new',
   },
   leads: {
-    contacts: '/leads/contacts',
-    accounts: '/leads/accounts',
+    contacts: '/contacts',
+    accounts: '/companies',
   },
   /** Same-origin REST paths used by fetch(). */
   api: {

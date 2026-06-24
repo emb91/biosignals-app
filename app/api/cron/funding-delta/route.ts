@@ -18,6 +18,8 @@ import { ensureTrackedCompanyCiks } from '@/lib/signals/company-cik';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runFundingMonitor } from '@/lib/signals/run-funding-monitor';
 import { syncSecDelta } from '@/lib/signals/sync-sec-delta';
+import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
+import { attributionDueForUser } from '@/lib/signals/monitor-cadence';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -28,16 +30,7 @@ function messageFromUnknown(error: unknown): string {
 }
 
 async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  const { data, error } = await admin
-    .from('user_companies')
-    .select('user_id')
-    .is('archived_at', null);
-  if (error) throw new Error(`load active users: ${error.message}`);
-  const ids = new Set<string>();
-  for (const row of (data ?? []) as Array<{ user_id?: unknown }>) {
-    if (typeof row.user_id === 'string' && row.user_id) ids.add(row.user_id);
-  }
-  return [...ids];
+  return listUserIdsWithActiveCompanyState(admin);
 }
 
 async function runCron(request: Request) {
@@ -57,10 +50,16 @@ async function runCron(request: Request) {
     const userIds = await loadActiveUserIds(admin);
     let monitorOk = 0;
     let monitorFailed = 0;
+    let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
     for (const userId of userIds) {
       try {
-        const result = await runFundingMonitor({ userId });
+        const { due, lookbackDays } = await attributionDueForUser(admin, { userId, runner: 'funding' });
+        if (!due) {
+          monitorSkipped += 1;
+          continue;
+        }
+        const result = await runFundingMonitor({ userId, lookbackDays });
         monitorOk += 1;
         await persistRunHistory(admin, {
           userId,
@@ -104,6 +103,7 @@ async function runCron(request: Request) {
         users_total: userIds.length,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
+        users_skipped: monitorSkipped,
         failures,
       },
     });

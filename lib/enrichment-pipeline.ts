@@ -28,6 +28,7 @@ import { ensureCompanyCik } from '@/lib/signals/company-cik';
 import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncContactCompanyLink } from '@/lib/contact-company-link';
+import { orgIdForUser } from '@/lib/org-context';
 import { runApifyActor } from '@/lib/apify';
 
 type MinimalSupabase = {
@@ -783,6 +784,46 @@ async function upsertResolvedCompany(
     last_enriched_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
+  const linkCompanyToWorkspace = async (companyId: string, archivedAt: string | null = null) => {
+    const now = new Date().toISOString();
+    const orgId = await orgIdForUser(supabase as any, userId);
+    if (orgId) {
+      const upsertOrgLink = await supabase
+        .from('org_companies')
+        .upsert(
+          {
+            org_id: orgId,
+            company_id: companyId,
+            source: input.source,
+            created_by: userId,
+            archived_at: archivedAt,
+            updated_at: now,
+          },
+          { onConflict: 'org_id,company_id' },
+        );
+      const orgLinkError = formatSupabaseErrorMessage(upsertOrgLink?.error);
+      if (orgLinkError) {
+        console.error(`[org_companies] link failed for ${companyId} (${context}): ${orgLinkError}`);
+      }
+    }
+
+    const upsertLegacyLink = await supabase
+      .from('user_companies')
+      .upsert(
+        {
+          user_id: userId,
+          company_id: companyId,
+          source: input.source,
+          archived_at: archivedAt,
+          updated_at: now,
+        },
+        { onConflict: 'user_id,company_id' },
+      );
+    const legacyLinkError = formatSupabaseErrorMessage(upsertLegacyLink?.error);
+    if (legacyLinkError) {
+      console.error(`[user_companies] legacy mirror failed for ${companyId} (${context}): ${legacyLinkError}`);
+    }
+  };
 
   if (existingId) {
     // Update the existing row
@@ -793,25 +834,7 @@ async function upsertResolvedCompany(
         `[companies] Failed to update canonical company row (${context} id=${existingId}): ${updateError}`
       );
     }
-    // Dual-write: ensure the user_companies link exists for this user. Upsert
-    // so re-enrichment doesn't create dupes; the backfill should have already
-    // populated this row, but newly-resolved users on existing companies need
-    // it created.
-    const upsertLink = await supabase
-      .from('user_companies')
-      .upsert(
-        {
-          user_id: userId,
-          company_id: existingId,
-          source: input.source,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id,company_id' },
-      );
-    const linkError = formatSupabaseErrorMessage(upsertLink?.error);
-    if (linkError) {
-      console.error(`[user_companies] dual-write (update path) failed for ${existingId} (${context}): ${linkError}`);
-    }
+    await linkCompanyToWorkspace(existingId);
     return existingId;
   }
 
@@ -832,27 +855,7 @@ async function upsertResolvedCompany(
     throw new Error(`[companies] Company upsert returned no id (${context})`);
   }
 
-  // Dual-write: also create the per-user link in user_companies. This keeps
-  // archived_at/source/added_at scoped per user, so a future refactor that
-  // drops the per-user columns from companies has zero data loss to migrate.
-  // For now both the old companies.user_id row and the user_companies link
-  // exist — readers can use either source while we migrate read paths.
-  const upsertLink = await supabase
-    .from('user_companies')
-    .upsert(
-      {
-        user_id: userId,
-        company_id: insertedId,
-        source: input.source,
-        archived_at: null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id,company_id' },
-    );
-  const linkError = formatSupabaseErrorMessage(upsertLink?.error);
-  if (linkError) {
-    console.error(`[user_companies] dual-write failed for ${insertedId} (${context}): ${linkError}`);
-  }
+  await linkCompanyToWorkspace(insertedId, null);
 
   // Eager: populate company aliases via Haiku in the background. Don't await —
   // alias generation takes ~1-2s and we don't want to block the insert path.

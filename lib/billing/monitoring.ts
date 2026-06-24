@@ -38,11 +38,12 @@ export async function refreshMonitoringUniverse(orgId: string): Promise<{
     .not('person_id', 'is', null)
     .order('priority_score', { ascending: false, nullsFirst: false });
   if (error) throw new Error(`monitoring candidates failed: ${error.message}`);
-  const { data: companyLinks } = await admin.from('user_companies')
-    .select('company_id, company_fit_score, priority_score')
-    .in('user_id', userIds).is('archived_at', null)
+  const { data: companyLinks } = await admin.from('accounts_view')
+    .select('id, company_fit_score, priority_score')
+    .eq('user_id', userIds[0])
+    .is('archived_at', null)
     .gte('company_fit_score', SWEEP_FIT_THRESHOLD);
-  const highFitCompanyIds = new Set((companyLinks ?? []).map((row) => row.company_id as string));
+  const highFitCompanyIds = new Set((companyLinks ?? []).map((row) => row.id as string));
 
   const byPerson = new Map<string, ContactCandidate>();
   for (const row of (rows ?? []) as ContactCandidate[]) {
@@ -87,7 +88,7 @@ export async function refreshMonitoringUniverse(orgId: string): Promise<{
   }
   const accountOnly = new Map<string, number>();
   for (const row of companyLinks ?? []) {
-    const companyId = row.company_id as string;
+    const companyId = row.id as string;
     if (representedCompanies.has(companyId)) continue;
     accountOnly.set(
       companyId,
@@ -200,18 +201,10 @@ export async function monitoringRepresentativeAccounts(orgId: string, limit: num
   const { data: members } = await admin.from('org_members').select('user_id').eq('org_id', orgId);
   const userIds = (members ?? []).map((row) => row.user_id as string);
   const companyIds = due.map((row) => row.company_id as string);
-  const { data: links } = await admin.from('user_companies').select('user_id, company_id')
-    .in('user_id', userIds).in('company_id', companyIds).is('archived_at', null);
-  const representative = new Map<string, string>();
-  for (const row of links ?? []) {
-    if (!representative.has(row.company_id as string)) {
-      representative.set(row.company_id as string, row.user_id as string);
-    }
-  }
+  const representativeUserId = userIds[0] ?? null;
   return due.flatMap((row) => {
-    const userId = representative.get(row.company_id as string);
-    return userId ? [{
-      userId,
+    return representativeUserId && companyIds.includes(row.company_id as string) ? [{
+      userId: representativeUserId,
       companyId: row.company_id as string,
       monitorId: row.id as string,
       cadenceDays: Number(row.cadence_days),

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { userHasActiveCompany } from '../org-company-state';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -17,14 +18,8 @@ export async function assertUserOwnsSignalEntity(
   },
 ): Promise<SignalOwnershipCheck> {
   if (input.companyId) {
-    const { data, error } = await supabase
-      .from('user_companies')
-      .select('company_id')
-      .eq('user_id', input.userId)
-      .eq('company_id', input.companyId)
-      .is('archived_at', null)
-      .maybeSingle();
-    if (error || !data) {
+    const hasCompany = await userHasActiveCompany(supabase, input.userId, input.companyId);
+    if (!hasCompany) {
       return { ok: false, reason: 'company is not an active tracked company for this user' };
     }
   }

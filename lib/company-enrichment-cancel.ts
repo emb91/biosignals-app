@@ -1,3 +1,5 @@
+import { userHasActiveCompany } from './org-company-state';
+
 type SupabaseLike = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   from: (table: string) => any;
@@ -14,17 +16,8 @@ export async function cancelCompanyEnrichmentForUser(
   companyId: string,
   now: () => Date = () => new Date(),
 ): Promise<CompanyEnrichmentCancelResult> {
-  const { data: owned, error: ownershipError } = await supabase
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', userId)
-    .eq('company_id', companyId)
-    .maybeSingle();
-
-  if (ownershipError) {
-    throw new Error(`company ownership check failed: ${ownershipError.message ?? 'unknown error'}`);
-  }
-  if (!owned) return { found: false };
+  const ownsCompany = await userHasActiveCompany(supabase as any, userId, companyId);
+  if (!ownsCompany) return { found: false };
 
   const { data: row, error: rowError } = await supabase
     .from('companies')

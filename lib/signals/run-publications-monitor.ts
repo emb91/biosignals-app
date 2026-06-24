@@ -26,6 +26,7 @@
 
 import { createAdminClient } from '@/lib/supabase-admin';
 import { distinctiveTokens } from '@/lib/companies/match-helpers';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
@@ -475,16 +476,8 @@ export async function runPublicationsMonitor(
   const intervalMs = pubmedIntervalMs();
 
   // ── Load user's active companies ────────────────────────────────────────────
-  const { data: linkRows, error: linkError } = await admin
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', input.userId)
-    .is('archived_at', null);
-  if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
-
-  let ownedCompanyIds = (linkRows ?? [])
-    .map((r) => (r as { company_id?: unknown }).company_id)
-    .filter((v): v is string => typeof v === 'string' && Boolean(v));
+  let ownedCompanyIds = (await listActiveCompanyStateForUser(admin, input.userId))
+    .map((r) => r.company_id);
 
   if (Array.isArray(input.companyIds) && input.companyIds.length > 0) {
     const allowed = new Set(input.companyIds.filter(Boolean));

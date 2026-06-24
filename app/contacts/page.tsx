@@ -1,6 +1,6 @@
 'use client';
 
-import { ContactsWorkspace } from '@/app/leads/contacts/page';
+import { ContactsWorkspace } from '@/app/contacts/ContactsWorkspace';
 
 export default function ContactsPage() {
   return <ContactsWorkspace />;
