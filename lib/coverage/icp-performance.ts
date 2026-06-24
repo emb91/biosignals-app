@@ -23,7 +23,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { priorQuarter, quarterDateRange, quarterOf } from './period';
-import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
+import { listActiveCompanyStateForUser } from '../org-company-state';
 
 /** Below this many held contacts we don't trust a measured contact→deal rate. */
 export const MIN_CONTACTS_FOR_MEASURED_CONVERSION = 5;

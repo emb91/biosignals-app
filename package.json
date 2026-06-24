@@ -24,7 +24,7 @@
     "test:company-merge": "rm -rf /tmp/arcova-company-merge-tests && tsc -p tsconfig.test.company-merge.json && node --test /tmp/arcova-company-merge-tests/company-merge.test.js",
     "test:data-acquisition": "rm -rf /tmp/arcova-data-acquisition-tests && tsc -p tsconfig.test.data-acquisition.json && node --test /tmp/arcova-data-acquisition-tests/domain-utils.test.js",
     "test:contact-location": "rm -rf /tmp/arcova-contact-location-tests && tsc -p tsconfig.test.contact-location.json && node --test /tmp/arcova-contact-location-tests/contact-profile-display.test.js",
-    "test:coverage-allocation": "rm -rf /tmp/arcova-coverage-allocation-tests && tsc -p tsconfig.test.coverage-allocation.json && node --test /tmp/arcova-coverage-allocation-tests/allocation.test.js",
+    "test:coverage-allocation": "rm -rf /tmp/arcova-coverage-allocation-tests && tsc -p tsconfig.test.coverage-allocation.json && node --test /tmp/arcova-coverage-allocation-tests/coverage/allocation.test.js",
     "test:patent-surge": "rm -rf /tmp/arcova-patent-surge-tests && tsc -p tsconfig.test.patent-surge.json && node --test /tmp/arcova-patent-surge-tests/patent-surge.test.js",
     "test:funding-monitor": "rm -rf /tmp/arcova-funding-monitor-tests && tsc -p tsconfig.test.funding-monitor.json && node --test /tmp/arcova-funding-monitor-tests/signals/sec-form-d-filters.test.js /tmp/arcova-funding-monitor-tests/signals/sec-form-d-screener.test.js",
     "test:signal-guards": "rm -rf /tmp/arcova-signal-guards-tests && tsc -p tsconfig.test.signal-guards.json && node --test /tmp/arcova-signal-guards-tests/signals/signal-entity-guards.test.js",
