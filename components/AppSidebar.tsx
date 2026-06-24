@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Logo } from '@/components/logo';
 import { usePathname } from 'next/navigation';
 import {
@@ -456,9 +457,15 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
 
   const renderNavItem = (item: NavItem) => (
     <div key={item.name}>
-      <button
-        type="button"
-        onClick={() => item.onClick?.() ?? guardedNavigate(item.href)}
+      <Link
+        href={item.href}
+        onClick={(e) => {
+          // Let the browser handle new-tab / new-window intents natively
+          // (cmd/ctrl/shift/alt-click, middle-click) so links open in a new tab.
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
+          e.preventDefault();
+          item.onClick?.() ?? guardedNavigate(item.href);
+        }}
         className={cn(
           'w-full flex items-center space-x-3 rounded-xl px-3.5 py-2.5 text-[0.9375rem] font-medium font-manrope leading-snug transition-colors text-left',
           (item.active ?? isActive(item.href))
@@ -487,7 +494,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             {dataJobCount}
           </span>
         )}
-      </button>
+      </Link>
     </div>
   );
 
