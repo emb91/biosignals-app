@@ -7,6 +7,7 @@ export const ROUTES = {
   log: '/log',
   gtmBase: '/gtm-base',
   import: '/import',
+  triage: '/triage',
   contacts: '/contacts',
   companies: '/companies',
   accounts: '/companies',

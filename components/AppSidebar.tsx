@@ -62,6 +62,7 @@ const topNavigation: NavItem[] = [
   { name: 'Today', href: ROUTES.today, icon: NavIconToday },
   { name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase },
   { name: 'Import', href: ROUTES.import, icon: NavIconImport },
+  { name: 'Triage', href: ROUTES.triage, icon: NavIconContact },
   { name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth },
   { name: 'Data', href: ROUTES.data, icon: NavIconData },
   { name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach },
@@ -435,6 +436,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     if (itemName === 'Today') return showTodayDot;
     if (itemName === 'GTM base') return false;
     if (itemName === 'Import') return showImportDot;
+    if (itemName === 'Triage') return showContactsDot;
     if (itemName === 'Contacts') return showContactsDot || showSignalsDot;
     if (itemName === 'Accounts') return showAccountsDot || showSignalsDot;
     if (itemName === 'Outreach') return false;

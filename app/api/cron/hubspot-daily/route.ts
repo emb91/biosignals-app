@@ -31,6 +31,7 @@ import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspo
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 import { denormalizeCrmSuppressionState } from '@/lib/crm-suppression-denormalize';
 import { ensureBaselineSnapshot } from '@/lib/backup/hubspot-snapshot';
+import { orgIdForUser } from '@/lib/org-context';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -334,12 +335,14 @@ async function pullNewFromHubSpot(
 
   const batchId = batch.id as string;
 
+  const orgId = await orgIdForUser(admin, userId);
   const insertPayload = contacts.map((c) => {
     const p = c.properties;
     const location = [p.city, p.country].filter(Boolean).join(', ');
     const fullName = [p.firstname, p.lastname].filter(Boolean).join(' ').trim();
     return {
       user_id: userId,
+      org_id: orgId,
       batch_id: batchId,
       full_name: fullName || null,
       email: p.email || null,

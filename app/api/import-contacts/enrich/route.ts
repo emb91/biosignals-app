@@ -28,11 +28,23 @@ export async function POST(request: Request) {
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
   if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
-  const { data: rows, error } = await admin.from('raw_uploads')
-    .select('id, batch_id, full_name, email, linkedin_url, company_name, raw_data, status, triage_group')
-    .eq('user_id', user.id).in('id', rawUploadIds).eq('status', 'awaiting_enrichment')
-    .in('triage_group', ['high', 'medium']);
+  const { data: orgMembers, error: membersError } = await admin
+    .from('org_members')
+    .select('user_id')
+    .eq('org_id', member.org_id);
+  if (membersError) return NextResponse.json({ error: membersError.message }, { status: 500 });
+  const orgUserIds = (orgMembers || [])
+    .map((row) => row.user_id as string | null)
+    .filter((id): id is string => Boolean(id));
+  if (!orgUserIds.length) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
+  const { data: candidateRows, error } = await admin.from('raw_uploads')
+    .select('id, user_id, batch_id, full_name, email, linkedin_url, company_name, raw_data, status, triage_group, triage_override_group')
+    .in('user_id', orgUserIds).in('id', rawUploadIds).eq('status', 'awaiting_enrichment');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const rows = (candidateRows || []).filter((row) => {
+    const effectiveTriage = (row.triage_override_group || row.triage_group) as string | null;
+    return effectiveTriage === 'high' || effectiveTriage === 'medium';
+  });
   if (!rows?.length) return NextResponse.json({ error: 'No eligible records found' }, { status: 404 });
 
   const estimate = {
@@ -63,13 +75,15 @@ export async function POST(request: Request) {
 
   const batchGroups = new Map<string, typeof rows>();
   for (const row of rows) {
-    const list = batchGroups.get(row.batch_id as string) ?? [];
+    const key = `${row.user_id as string}:${row.batch_id as string}`;
+    const list = batchGroups.get(key) ?? [];
     list.push(row);
-    batchGroups.set(row.batch_id as string, list);
+    batchGroups.set(key, list);
   }
   after(async () => {
     try {
-      for (const [batchId, batchRows] of batchGroups) {
+      for (const [key, batchRows] of batchGroups) {
+        const [ownerUserId, batchId] = key.split(':');
         await processQueuedRowsInBackground({
           queuedRows: batchRows.map((row) => ({
             id: row.id as string,
@@ -80,7 +94,7 @@ export async function POST(request: Request) {
             raw_data: row.raw_data as Record<string, unknown>,
           })),
           batchId,
-          userId: user.id,
+          userId: ownerUserId,
           autoEnrich: true,
         });
       }
