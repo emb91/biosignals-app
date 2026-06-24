@@ -38,6 +38,12 @@ of the normal monthly rhythm, but should not block solely because of pace.
 - Idempotent webhook grants and purchases.
 - Seven-day failed-payment grace period.
 - Read/export access remains available after grace; new paid actions and monitoring pause.
+- Stripe subscription, payment-failure, recovery, and cancellation webhooks trigger a
+  best-effort monitoring-universe reconciliation so plan changes update cadence without
+  waiting for the next cron sweep. The cron refresh remains the safety net.
+- Shared monitoring cadence scaffold is in place: org-scoped account/contact subscribers
+  populate source-specific sweep targets, with effective acquisition cadence set to the
+  fastest active subscriber for each canonical entity.
 - Workspaces owned by an exact `@arcova.bio` email are automatically complimentary:
   unlimited entitlements, no customer-credit debits, and no Stripe checkout. Inviting an
   Arcova user into a customer-owned workspace does not exempt that customer workspace.
@@ -97,6 +103,14 @@ Vercel. Stripe subscription quantity must remain `1` because the subscription re
 - Annual customers see pace warnings before unusually large burns of their annual included credits.
 - Payment failure enters grace, then pauses paid actions without hiding customer data.
 - Webhook replay does not duplicate subscription or credit grants.
+- Self-serve upgrade, downgrade, cancellation, failed-payment grace expiry, and recovery
+  recompute monitored account/contact subscriber rows and source sweep targets.
+- If one Growth workspace and one Starter workspace monitor the same canonical company,
+  the company/source acquisition target becomes weekly once, while Starter attribution
+  remains monthly.
+- If the last Growth subscriber leaves an entity, the shared target falls back to the
+  fastest remaining active subscriber cadence; if no active subscribers remain, it is
+  marked `no_subscribers`.
 - Customer interfaces never expose provider names or backend enrichment sequencing.
 
 ## Operational reporting
@@ -116,3 +130,6 @@ Use `/api/admin/billing-operations` for the internal workspace view:
 - Postpaid Stripe usage billing.
 - More credit-pack sizes.
 - Dynamic plan recommendations based on observed usage.
+- Dispatcher cutover from per-org Apify/PubMed sweeps to shared entity/source sweep
+  targets with fan-out. The cadence tables are ready first; the expensive scrape
+  dedupe cutover should ship behind a measured before/after cost report.

@@ -19,6 +19,7 @@
 import { NextResponse } from 'next/server';
 import type Stripe from 'stripe';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { reconcileMonitoringAfterBillingChange } from '@/lib/billing/monitoring';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { orgIdForStripeCustomer } from '@/lib/billing/customer';
 import { invoiceSubscriptionId } from '@/lib/billing/stripe-invoice';
@@ -82,6 +83,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    let monitoringOrgId: string | null = null;
     switch (event.type) {
       case 'checkout.session.completed':
         await handleCheckoutCompleted(event.data.object);
@@ -89,16 +91,19 @@ export async function POST(request: Request) {
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
-        await syncSubscription(event.data.object);
+        monitoringOrgId = await syncSubscription(event.data.object);
         break;
       case 'invoice.payment_failed':
-        await handleInvoice(event.data.object, 'failed');
+        monitoringOrgId = await handleInvoice(event.data.object, 'failed');
         break;
       case 'invoice.paid':
-        await handleInvoice(event.data.object, 'paid');
+        monitoringOrgId = await handleInvoice(event.data.object, 'paid');
         break;
       default:
         break;
+    }
+    if (monitoringOrgId) {
+      await reconcileMonitoringAfterBillingChange(monitoringOrgId, event.type);
     }
   } catch (error) {
     console.error(`[stripe-webhook] handler failed for ${event.type} (${event.id}):`, error);
@@ -177,12 +182,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   if (error) throw new Error(`credit pack fulfillment failed: ${error.message}`);
 }
 
-async function syncSubscription(sub: Stripe.Subscription) {
+async function syncSubscription(sub: Stripe.Subscription): Promise<string | null> {
   const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
   const orgId = sub.metadata?.org_id || (await orgIdForStripeCustomer(customerId));
   if (!orgId) {
     console.error('[stripe-webhook] could not resolve org for subscription:', sub.id);
-    return;
+    return null;
   }
 
   // Find the workspace plan item. Subscription quantity is always one; paid
@@ -244,16 +249,17 @@ async function syncSubscription(sub: Stripe.Subscription) {
       .eq('billing_exempt', true);
     if (orgError) throw new Error(`billing exemption update failed: ${orgError.message}`);
   }
+  return orgId;
 }
 
-async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed') {
+async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'): Promise<string | null> {
   const subscriptionId = invoiceSubscriptionId(invoice);
-  if (!subscriptionId) return;
+  if (!subscriptionId) return null;
 
   const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
-  if (!customerId) return;
+  if (!customerId) return null;
   const orgId = await orgIdForStripeCustomer(customerId);
-  if (!orgId) return;
+  if (!orgId) return null;
 
   const admin = createAdminClient();
   if (outcome === 'failed') {
@@ -265,7 +271,7 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
       .eq('stripe_subscription_id', subscriptionId)
       .is('grace_until', null); // don't extend an already-running grace window
     if (error) throw new Error(`past_due update failed: ${error.message}`);
-    return;
+    return orgId;
   }
 
   // Recovery: a paid invoice on a past_due org restores access. The
@@ -290,7 +296,7 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
       current_period_end: string | null;
       stripe_subscription_id: string | null;
     }>();
-  if (!subscription || !isPlanKey(subscription.plan_key)) return;
+  if (!subscription || !isPlanKey(subscription.plan_key)) return orgId;
   const plan = PLANS[subscription.plan_key];
   const annual = subscription.billing_interval === 'annual';
   const linePeriod = invoice.lines?.data?.[0]?.period;
@@ -317,4 +323,5 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
     },
   });
   if (grantError) throw new Error(`invoice credit grant failed: ${grantError.message}`);
+  return orgId;
 }
