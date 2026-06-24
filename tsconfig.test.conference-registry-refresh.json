@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-conference-registry-refresh-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/conference/adapters/types.ts",
+    "lib/signals/conference/registry-refresh-helpers.ts",
+    "lib/signals/conference/registry-refresh.test.ts"
+  ]
+}
