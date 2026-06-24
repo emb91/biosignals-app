@@ -41,20 +41,24 @@ function norm01Score(value: unknown): number | null {
  * client's contactPriorityScore:
  *   priority = company_fit × contact_fit × (0.5 + 0.5 × effectiveReadiness)
  * Mirrors the live-priority fix applied to the accounts RPC (list_user_accounts).
- * Contacts without a contact_fit keep their stored value (no fresh inputs).
+ * Contacts without a contact/company fit get a null live priority so the
+ * Priority gauge cannot drift high while the Action gate correctly refuses to
+ * engage them.
  */
 function recomputeContactPriorityLive(
   rows: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
   return rows.map((row) => {
     const contactFit = norm01Score(row.contact_fit_score);
-    if (contactFit == null) return row;
-    const companyFit = norm01Score(row.company_fit_score) ?? 1;
+    const companyFit = norm01Score(row.company_fit_score);
     const eff = effectiveReadiness(
       row.company_readiness_score as number | null,
       row.contact_readiness_score as number | null,
     ) ?? 0;
-    const live = Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * eff)));
+    const live =
+      companyFit == null || contactFit == null
+        ? null
+        : Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * eff)));
     const priorityPolicy = resolveEffectivePriority({
       intrinsicPriority: live,
       companyFit,
@@ -578,13 +582,16 @@ async function attachLatestSequenceStatusBestEffort(
 }
 
 /**
- * Surface the org-scoped company fit + readiness so the
- * action gate has all three axes it needs (company fit, contact fit, effective
- * readiness). These fields moved off the canonical companies table in Phase 1d
- * — without this attach, the lean company select carries no fit and every row
- * gates to Deprioritise regardless of priority. company_fit_score is also
- * written as the top-level row field so resolveCompanyFitForLeadAction picks
- * it up directly. Best-effort: a missing row leaves both null.
+ * Surface the org-scoped company fit + readiness so the action gate has all
+ * three axes it needs (company fit, contact fit, effective readiness). These
+ * fields moved off the canonical companies table in Phase 1d — without this
+ * attach, the lean company select carries no fit and every row gates to
+ * Deprioritise. company_fit_score is also written as the top-level row field so
+ * resolveCompanyFitForLeadAction picks it up directly.
+ *
+ * Read through accounts_view first because that is the compatibility surface
+ * shared by /companies. Fall back to the lower-level org-company helper for
+ * older local DBs where the view might not yet expose the same shape.
  */
 async function attachUserCompanyScoresBestEffort(
   supabase: SupabaseClientLike,
@@ -600,18 +607,46 @@ async function attachUserCompanyScoresBestEffort(
     return rows.map((row) => ({ ...row, company_readiness_score: null }));
   }
   try {
-    const companyIdSet = new Set(companyIds);
-    const data = (await listActiveCompanyStateForUser(
-      supabase as any,
-      userId,
-      'company_id, company_fit_score, readiness_score',
-    )).filter((row) => companyIdSet.has(row.company_id));
-    const scoreMap = new Map<string, { fit: number | null; readiness: number | null }>(
-      (data as Array<{
-        company_id: string;
+    type CompanyScoreRow = {
+      company_id: string;
+      company_fit_score: number | null;
+      readiness_score: number | null;
+    };
+    let data: CompanyScoreRow[] = [];
+
+    const viewResult = await supabase
+      .from('accounts_view')
+      .select('id, company_fit_score, readiness_score')
+      .eq('user_id', userId)
+      .in('id', companyIds)
+      .is('archived_at', null);
+
+    if (!viewResult.error) {
+      data = ((viewResult.data ?? []) as Array<{
+        id: string;
         company_fit_score: number | null;
         readiness_score: number | null;
-      }>).map((r) => [
+      }>).map((row) => ({
+        company_id: row.id,
+        company_fit_score: row.company_fit_score,
+        readiness_score: row.readiness_score,
+      }));
+    }
+
+    const idsLoadedFromView = new Set(data.map((row) => row.company_id));
+    const missingCompanyIds = companyIds.filter((companyId) => !idsLoadedFromView.has(companyId));
+
+    if (missingCompanyIds.length > 0) {
+      const fallbackRows = (await listActiveCompanyStateForUser(
+        supabase as any,
+        userId,
+        'company_id, company_fit_score, readiness_score',
+      )).filter((row) => missingCompanyIds.includes(row.company_id)) as CompanyScoreRow[];
+      data = [...data, ...fallbackRows];
+    }
+
+    const scoreMap = new Map<string, { fit: number | null; readiness: number | null }>(
+      data.map((r) => [
         r.company_id,
         {
           fit: typeof r.company_fit_score === 'number' ? r.company_fit_score : null,
@@ -1221,14 +1256,15 @@ export async function GET(request: Request) {
       ...readinessRows[idx],
       ...attributionRows[idx],
       ...sequenceStatusRows[idx],
+      ...orgOverrideRows[idx],
       // Must come after most attach* helpers: each helper spreads the original baseRow, which
       // carries company_fit_score = null (it lives in org company state, not on
       // the contacts row). If we spread anything after this helper, that null
       // base value clobbers the fit we just attached and the action gate
-      // re-collapses to Deprioritise. Org overrides are safe after it because
-      // they only carry edited identity/detail fields.
+      // re-collapses to Deprioritise. Org overrides must stay before this
+      // attach for the same reason: the override helper applies edits onto a
+      // full base row, so it also carries the base null company_fit_score.
       ...companyReadinessRows[idx],
-      ...orgOverrideRows[idx],
     }));
 
     // Synchronous post-processing: provenance label + LIVE priority recompute.

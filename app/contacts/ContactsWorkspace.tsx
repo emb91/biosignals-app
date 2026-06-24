@@ -677,7 +677,7 @@ function displayEffectiveReadiness(lead: CrmSuppressibleLead): number | null {
   );
   return resolveEffectivePriority({
     intrinsicPriority: lead.intrinsic_priority_score ?? lead.priority_score ?? null,
-    companyFit: lead.company_fit_score ?? lead.companies?.company_fit_score ?? 1,
+    companyFit: lead.company_fit_score ?? lead.companies?.company_fit_score ?? null,
     contactFit: lead.contact_fit_score,
     intrinsicReadiness,
     crmState: lead.hubspot_lead_state ?? null,
@@ -701,7 +701,7 @@ function displayContactPriority(lead: CrmSuppressibleLead): number | null {
   );
   return resolveEffectivePriority({
     intrinsicPriority: lead.intrinsic_priority_score ?? lead.priority_score ?? null,
-    companyFit: companyFit ?? 1,
+    companyFit,
     contactFit: lead.contact_fit_score,
     intrinsicReadiness,
     crmState: lead.hubspot_lead_state ?? null,
