@@ -39,6 +39,8 @@ export type ConferencePlatform =
   | 'mapyourshow'
   | 'conference_harvester'
   | 'spargo'
+  | 'a2z'
+  | 'informa'
   | 'smallworldlabs'
   | 'terrapinn'
   | 'swapcard';

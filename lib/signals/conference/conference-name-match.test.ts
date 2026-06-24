@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { normalizeCompanyForMatching } from '../company-name-variants';
 import { verifyNormalizedCompanyEvidence } from '../../companies/match-helpers';
 import { parseSpargoExhibitors } from './adapters/spargo';
+import { parseA2zExhibitors, a2zEventMapUrl } from './adapters/a2z';
 import { parseSmallWorldLabsExhibitors } from './adapters/smallworldlabs';
 import {
   calibrateMysOffset,
@@ -85,6 +86,51 @@ test('smallworldlabs parser extracts company anchors + absolute profile url', ()
   const rows = parseSmallWorldLabsExhibitors(html, 'https://asgct2026.smallworldlabs.com');
   assert.deepEqual(rows.map((r) => r.name), ['AGC Biologics', 'ACROBiosystems']);
   assert.equal(rows[0].sourceUrl, 'https://asgct2026.smallworldlabs.com/co/agc-biologics');
+});
+
+test('a2z EventMap parser pairs exhibitorName with the row booth + decodes entities', () => {
+  // Mirrors the real EventMap.aspx markup: a companyName cell with an
+  // exhibitorName anchor, followed by a boothLabel anchor in the same row.
+  const html = `
+    <tr data-boothid="111140">
+      <td class="companyName"><a class="exhibitorName" href="eBooth.aspx?BoothID=111140">Bruker Nano Inc.</a></td>
+      <td class="boothLabel aa-mapIt"><a class="boothLabel" href="#" data-boothlabels="1917">1917</a></td>
+    </tr>
+    <tr data-boothid="110001">
+      <td class="companyName"><a class="exhibitorName" href="eBooth.aspx?BoothID=110001">Bristol &amp; Myers</a></td>
+      <td class="boothLabel aa-mapIt"><a class="boothLabel" href="#" data-boothlabels="BS 44">BS 44</a></td>
+    </tr>
+  `;
+  const src = 'https://s19.a2zinc.net/clients/sfn/sfn26/Public/EventMap.aspx?shMode=E';
+  const rows = parseA2zExhibitors(html, src);
+  assert.deepEqual(rows, [
+    { name: 'Bruker Nano Inc.', booth: '1917', sourceUrl: src },
+    { name: 'Bristol & Myers', booth: 'BS 44', sourceUrl: src },
+  ]);
+});
+
+test('a2z parser dedupes on name+booth (multi-booth exhibitors kept distinct)', () => {
+  const html = `
+    <td class="companyName"><a class="exhibitorName" href="#">Abbott Diabetes Care</a></td>
+    <td class="boothLabel"><a class="boothLabel" href="#">1418</a></td>
+    <td class="companyName"><a class="exhibitorName" href="#">Abbott Diabetes Care</a></td>
+    <td class="boothLabel"><a class="boothLabel" href="#">BS 19</a></td>
+    <td class="companyName"><a class="exhibitorName" href="#">Abbott Diabetes Care</a></td>
+    <td class="boothLabel"><a class="boothLabel" href="#">1418</a></td>
+  `;
+  const rows = parseA2zExhibitors(html, 'x');
+  // Two distinct booths survive; the exact-duplicate (1418) is collapsed.
+  assert.deepEqual(rows.map((r) => r.booth), ['1418', 'BS 19']);
+});
+
+test('a2z url normaliser rewrites Exhibitors.aspx to the EventMap data view', () => {
+  assert.equal(
+    a2zEventMapUrl('https://s19.a2zinc.net/clients/sfn/sfn26/Public/Exhibitors.aspx'),
+    'https://s19.a2zinc.net/clients/sfn/sfn26/Public/EventMap.aspx?shMode=E',
+  );
+  // An existing EventMap URL is passed through untouched (query preserved).
+  const em = 'https://www.expo.acc.org/ACC26/Public/EventMap.aspx?shMode=E';
+  assert.equal(a2zEventMapUrl(em), em);
 });
 
 // ── Map Your Show font offset + row split ────────────────────────────────────
