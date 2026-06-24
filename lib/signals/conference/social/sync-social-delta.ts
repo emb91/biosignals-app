@@ -63,10 +63,15 @@ function messageFromUnknown(error: unknown): string {
   return String(error);
 }
 
+/** Max conferences swept per cron run (bounds runtime + Apify spend; schedule rotates). */
+const SOCIAL_SYNC_BATCH = 5;
+
 export async function syncConferenceSocialDelta(params: {
   admin: Admin;
-  /** Restrict to specific conferences (else all registry rows with social_tags). */
+  /** Restrict to specific conferences (else a rotating batch with social_tags). */
   conferenceIds?: string[];
+  /** Override the per-run batch size. */
+  limit?: number;
   now?: Date;
 }): Promise<SocialSyncResult> {
   const { admin } = params;
@@ -82,7 +87,18 @@ export async function syncConferenceSocialDelta(params: {
   let query = admin
     .from('conferences')
     .select('id,name,social_tags,start_date,end_date');
-  if (params.conferenceIds?.length) query = query.in('id', params.conferenceIds);
+  if (params.conferenceIds?.length) {
+    query = query.in('id', params.conferenceIds);
+  } else {
+    // Bound per-run work AND Apify spend: only shows with hashtags, skip clearly-
+    // expired, least-recently-polled first, capped per run (schedule rotates).
+    const expiryCutoff = new Date(now.getTime() - 21 * 86_400_000).toISOString().slice(0, 10);
+    query = query
+      .not('social_tags', 'eq', '{}')
+      .or(`end_date.is.null,end_date.gte.${expiryCutoff}`)
+      .order('last_polled_at', { ascending: true, nullsFirst: true })
+      .limit(params.limit ?? SOCIAL_SYNC_BATCH);
+  }
   const { data: confs, error } = await query;
   if (error) throw new Error(`conferences query: ${error.message}`);
 

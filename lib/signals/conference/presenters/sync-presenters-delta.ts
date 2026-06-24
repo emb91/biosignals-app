@@ -157,10 +157,15 @@ async function buildPersonTokenIndex(
   return index;
 }
 
+/** Max conferences polled per cron run (bounds runtime; the schedule rotates). */
+const PRESENTER_SYNC_BATCH = 5;
+
 export async function syncPresentersDelta(params: {
   admin: Admin;
-  /** Restrict to specific conferences (else all registry rows). */
+  /** Restrict to specific conferences (else a rotating batch with an agenda URL). */
   conferenceIds?: string[];
+  /** Override the per-run batch size. */
+  limit?: number;
 }): Promise<PresenterSyncResult> {
   const { admin } = params;
 
@@ -183,7 +188,18 @@ export async function syncPresentersDelta(params: {
   let query = admin
     .from('conferences')
     .select('id,name,agenda_platform,agenda_source_url,platform_params,start_date,end_date');
-  if (params.conferenceIds?.length) query = query.in('id', params.conferenceIds);
+  if (params.conferenceIds?.length) {
+    query = query.in('id', params.conferenceIds);
+  } else {
+    // Bound per-run work (see sync-conference-delta.ts): only shows with an agenda
+    // URL, skip clearly-expired, least-recently-polled first, capped per run.
+    const expiryCutoff = new Date(Date.now() - 21 * 86_400_000).toISOString().slice(0, 10);
+    query = query
+      .not('agenda_source_url', 'is', null)
+      .or(`end_date.is.null,end_date.gte.${expiryCutoff}`)
+      .order('last_polled_at', { ascending: true, nullsFirst: true })
+      .limit(params.limit ?? PRESENTER_SYNC_BATCH);
+  }
   const { data: confs, error } = await query;
   if (error) throw new Error(`conferences query: ${error.message}`);
 
