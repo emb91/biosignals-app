@@ -43,13 +43,14 @@ export async function GET() {
   const memberIds = (members ?? []).map((m) => (m as { user_id: string }).user_id);
   const ids = memberIds.length > 0 ? memberIds : [ctx.user.id];
 
-  const [companyRes, icpRes] = await Promise.all([
+  const [companyRes, orgIcpRes, userIcpRes] = await Promise.all([
     admin.from('user_company').select('id').in('user_id', ids).limit(1).maybeSingle(),
+    admin.from('icps').select('id').eq('org_id', ctx.orgId).limit(1).maybeSingle(),
     admin.from('icps').select('id').in('user_id', ids).limit(1).maybeSingle(),
   ]);
 
   const step1Complete = !!companyRes.data;
-  const step2Complete = !!icpRes.data;
+  const step2Complete = !!orgIcpRes.data || !!userIcpRes.data;
 
   return NextResponse.json({
     step1Complete,

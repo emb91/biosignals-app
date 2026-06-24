@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgContext } from '@/lib/org-context';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import { FREE_TIER, PLANS, isPlanKey } from '@/lib/billing/config';
 
 type TriageGroup = 'high' | 'medium' | 'low';
 
 type RawTriageRow = {
   id: string;
   user_id: string;
-  org_id: string | null;
   batch_id: string | null;
   full_name: string | null;
   email: string | null;
@@ -97,22 +97,39 @@ function expectedEnrichmentDate(highFitIndex: number | null, monthlyThroughput: 
   return addMonths(new Date(), monthOffset).toISOString();
 }
 
+async function getOrgUserIds(admin: ReturnType<typeof createAdminClient>, orgId: string): Promise<string[]> {
+  const { data, error } = await admin
+    .from('org_members')
+    .select('user_id')
+    .eq('org_id', orgId);
+
+  if (error) throw error;
+  return ((data ?? []) as Array<{ user_id: string | null }>)
+    .map((row) => row.user_id)
+    .filter((id): id is string => Boolean(id));
+}
+
 export async function GET() {
   const context = await getOrgContext();
   if (!context) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     const admin = createAdminClient();
-    const entitlements = await getOrgEntitlements(context.orgId).catch(() => null);
-    const monthlyThroughput =
-      entitlements?.caps.importedEnrichmentsIncludedMonthly ?? MONTHLY_HIGH_FIT_THROUGHPUT;
+    const monthlyThroughput = await resolveMonthlyThroughput(admin, context.orgId);
+    const userIds = await getOrgUserIds(admin, context.orgId);
+    if (userIds.length === 0) {
+      return NextResponse.json({
+        data: [],
+        summary: { total: 0, high: 0, medium: 0, low: 0, untriaged: 0, scheduledHighFit: 0, monthlyThroughput },
+      });
+    }
 
     const { data, error } = await admin
       .from('raw_uploads')
       .select(
-        'id, user_id, org_id, batch_id, full_name, email, linkedin_url, company_name, status, raw_data, uploaded_at, triage_group, triage_override_group, triage_version, triage_scored_at, triage_overridden_by, triage_overridden_at, pinned_at, pinned_by',
+        'id, user_id, batch_id, full_name, email, linkedin_url, company_name, status, raw_data, uploaded_at, triage_group, triage_override_group, triage_version, triage_scored_at, triage_overridden_by, triage_overridden_at, pinned_at, pinned_by',
       )
-      .eq('org_id', context.orgId)
+      .in('user_id', userIds)
       .in('status', ['awaiting_triage', 'awaiting_enrichment'])
       .limit(1000);
 
@@ -189,6 +206,27 @@ export async function GET() {
   }
 }
 
+async function resolveMonthlyThroughput(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string,
+): Promise<number> {
+  const entitlements = await getOrgEntitlements(orgId).catch(() => null);
+  if (entitlements) return entitlements.caps.importedEnrichmentsIncludedMonthly;
+
+  const { data: subscription } = await admin
+    .from('org_subscriptions')
+    .select('status, plan_key')
+    .eq('org_id', orgId)
+    .maybeSingle<{ status: string | null; plan_key: string | null }>();
+  const planKey = subscription?.plan_key;
+  const live =
+    subscription &&
+    ['active', 'trialing', 'past_due'].includes(subscription.status ?? '') &&
+    isPlanKey(planKey);
+  if (live && isPlanKey(planKey)) return PLANS[planKey].caps.importedEnrichmentsIncludedMonthly;
+  return FREE_TIER.caps.importedEnrichmentsIncludedMonthly;
+}
+
 export async function PATCH(request: Request) {
   const context = await getOrgContext();
   if (!context) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -199,12 +237,15 @@ export async function PATCH(request: Request) {
 
   try {
     const admin = createAdminClient();
+    const userIds = await getOrgUserIds(admin, context.orgId);
+    if (userIds.length === 0) return NextResponse.json({ error: 'Triage row not found' }, { status: 404 });
+
     const { data: row, error: lookupError } = await admin
       .from('raw_uploads')
-      .select('id, user_id, org_id')
+      .select('id, user_id')
       .eq('id', id)
-      .eq('org_id', context.orgId)
-      .maybeSingle<{ id: string; user_id: string; org_id: string | null }>();
+      .in('user_id', userIds)
+      .maybeSingle<{ id: string; user_id: string }>();
 
     if (lookupError) return NextResponse.json({ error: lookupError.message }, { status: 500 });
     if (!row) return NextResponse.json({ error: 'Triage row not found' }, { status: 404 });
@@ -231,8 +272,7 @@ export async function PATCH(request: Request) {
     const { error } = await admin
       .from('raw_uploads')
       .update(patch)
-      .eq('id', id)
-      .eq('org_id', context.orgId);
+      .eq('id', id);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });

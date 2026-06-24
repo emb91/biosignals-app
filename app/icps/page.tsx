@@ -1666,7 +1666,7 @@ export default function ICPManagerPage() {
               eyebrow="About you · ICPs"
               title="My ICPs"
               subtitle={icps.length > 0
-                ? `The types of accounts you sell to, and who buys within them. ${icps.length} ${icps.length === 1 ? 'ICP' : 'ICPs'} defined${icpAllowance ? ` · ${icpAllowance.used}/${icpAllowance.limit} active ICP slots used` : ''} — click any to inspect or edit.`
+                ? `The types of accounts you sell to, and who buys within them. ${icps.length} ${icps.length === 1 ? 'ICP' : 'ICPs'} defined — click any to inspect or edit.`
                 : 'The types of accounts you sell to, and who buys within them.'}
               action={
                 <button

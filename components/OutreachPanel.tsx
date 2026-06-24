@@ -628,11 +628,7 @@ function ContactedNotice({
     allowAnother = false;
     openLabel = 'Open in Outreach';
   } else if (status === 'draft') {
-    headline = (
-      <>
-        Outreach drafted for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
-      </>
-    );
+    headline = <>Outreach Drafted</>;
     body = (
       <>
         Click <span className="font-medium text-gray-900">&lsquo;Open draft&rsquo;</span> below to

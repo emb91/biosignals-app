@@ -231,12 +231,13 @@ function AreaChart({
   gradientId?: string;
   axisLabels?: string[];
 }) {
+  const safeData = data.length >= 2 ? data : [0, 0];
   const P = { l: 4, r: 4, t: 8, b: 20 };
-  const max = Math.max(...data) * 1.08 || 1;
+  const max = Math.max(...safeData) * 1.08 || 1;
   const iW = width - P.l - P.r;
   const iH = height - P.t - P.b;
-  const pts: [number, number][] = data.map((v, i) => [
-    P.l + (i * iW) / (data.length - 1),
+  const pts: [number, number][] = safeData.map((v, i) => [
+    P.l + (i * iW) / (safeData.length - 1),
     P.t + iH - (v / max) * iH,
   ]);
   const line = smoothPath(pts);
@@ -300,15 +301,19 @@ type SankeyStage = {
 };
 
 function SankeyFlow({ stages }: { stages: SankeyStage[] }) {
+  const safeStages = stages.length > 0
+    ? stages
+    : [{ key: 'empty', label: 'Uploaded', value: 1 }];
   const W = 1280, H = 500;
   const padL = 40, padR = 180, padT = 80;
   const innerW = W - padL - padR;
   const nodeW = 16;
-  const MAX = Math.max(...stages.map(s => s.value), 1);
+  const stageDivisor = Math.max(safeStages.length - 1, 1);
+  const MAX = Math.max(...safeStages.map(s => s.value), 1);
   const scale = 200 / MAX;
 
-  const xs = stages.map((_, i) => padL + (i * innerW / (stages.length - 1)));
-  const hs = stages.map(s => s.value * scale);
+  const xs = safeStages.map((_, i) => padL + (i * innerW / stageDivisor));
+  const hs = safeStages.map(s => s.value * scale);
 
   // Centre every bar on a shared midline — smaller bars sit lower symmetrically,
   // so the main ribbon visibly narrows toward the right and drops peel off the bottom.
@@ -322,7 +327,7 @@ function SankeyFlow({ stages }: { stages: SankeyStage[] }) {
   const dropLabels: React.ReactNode[] = [];
 
   // Main ribbons — taper from source top/bottom-of-continuing to dest top/bottom
-  for (let i = 0; i < stages.length - 1; i++) {
+  for (let i = 0; i < safeStages.length - 1; i++) {
     const x1 = xs[i] + nodeW;
     const x2 = xs[i + 1];
     const cpx = (x1 + x2) / 2;
@@ -341,10 +346,10 @@ function SankeyFlow({ stages }: { stages: SankeyStage[] }) {
   }
 
   // Intermediate drop ribbons — smooth alluvial curve landing on a thin vertical bar
-  for (let i = 1; i < stages.length - 1; i++) {
-    const stage = stages[i];
+  for (let i = 1; i < safeStages.length - 1; i++) {
+    const stage = safeStages[i];
     if (!stage.drop) continue;
-    const dropCount = stages[i - 1].value - stages[i].value;
+    const dropCount = safeStages[i - 1].value - safeStages[i].value;
     if (dropCount <= 0) continue;
 
     const xPrev = xs[i - 1] + nodeW;
@@ -392,8 +397,8 @@ function SankeyFlow({ stages }: { stages: SankeyStage[] }) {
   }
 
   // Last-stage multi-drop — each drop gets its own ribbon + destination bar, stacked
-  const lastI = stages.length - 1;
-  const lastStage = stages[lastI];
+  const lastI = safeStages.length - 1;
+  const lastStage = safeStages[lastI];
   if (lastStage.drops && lastStage.drops.length) {
     const xPrev = xs[lastI - 1] + nodeW;
     const xThis = xs[lastI];
@@ -453,9 +458,9 @@ function SankeyFlow({ stages }: { stages: SankeyStage[] }) {
   }
 
   // Nodes — centred bars with stage labels above
-  const nodes = stages.map((s, i) => {
-    const isFinal = i === stages.length - 1;
-    const pct = i === 0 ? null : Math.round((s.value / stages[0].value) * 1000) / 10;
+  const nodes = safeStages.map((s, i) => {
+    const isFinal = i === safeStages.length - 1;
+    const pct = i === 0 || safeStages[0].value <= 0 ? null : Math.round((s.value / safeStages[0].value) * 1000) / 10;
     return (
       <g key={s.key}>
         <clipPath id={`barClip${i}`}>

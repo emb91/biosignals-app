@@ -788,3 +788,79 @@ Phase rule:
 
 - In this phase, readiness scoring should be driven by `P1/P2/P3` precursor signals only.
 - `OUT` and `CS-LATER` may be stored for context/reporting, but should not increase account readiness.
+
+---
+
+## Company-first import ("companies I'm interested in")
+
+**Status: BUILT 2026-06-25** (branch `codex/filter-sec-form-d-funds`). **Two-phase architecture** so any list size finishes cleanly:
+
+*Phase 1 — import (fast, bulk, never times out):*
+- `lib/apollo.ts` — `bulkEnrichOrganizationsWithApollo()` uses Apollo `organizations/bulk_enrich` (10 domains/call) for a fast firmographic pass; shared `mapApolloOrganization` mapper.
+- `lib/company-import.ts` — normalize/dedup rows, contactless find-or-create + workspace link, then: bulk-enrich domains → seed firmographics → preliminary (firmographic) fit → mark each company `enrichment_refresh_status='requested'`. Lands the whole list in one pass.
+- `app/api/import-companies/route.ts` — `preview:true` returns cost + dedup breakdown with zero spend; real call creates an `upload_batches`+`raw_uploads` batch and fires phase 1.
+
+*Phase 2 — deep enrichment (cron-drained, billed per success):*
+- `app/api/cron/company-enrichment-queue/route.ts` — every 5 min, drains companies in `requested` state through the full `runCompanyEnrichmentById` (Apollo identity + Apify + taxonomy + narrative), reserves/settles `company_enrichment` credits per company (refund on failure), upgrades each linked user's fit, reclaims stale `running` rows. Registered in `vercel.json`. Mirrors `contact-enrichment-queue`.
+- `supabase/migrations/20260624115336_companies_enrichment_status_allow_requested.sql` — adds `'requested'` to the companies status CHECK constraint (applied via MCP).
+
+*Shared / UI:*
+- `lib/data-acquisition/job-runner.ts` — fit gate at `runContactsAtCompanyJob` flipped block → warn (`lowCompanyFitPurchaseWarning`).
+- `app/companies/CompaniesWorkspace.tsx` — 0-contact copy de-assumes a departure ("No contacts yet" / "Find contacts"); `'requested'` treated as in-progress so queued companies show the enrichment banner + keep polling.
+- `app/import/page.tsx` — "Upload companies" card + company mapping + cost-confirm dialog + completion copy ("first-pass fit now, deeper fit over the next few minutes").
+
+Why two-phase: `bulk_enrich` only collapses the (cheap, fast) Apollo step; the real bottleneck is the per-company Apify scrape + web-search taxonomy (the biotech fit moat — does NOT come from Apollo). So phase 1 lands everyone instantly with a firmographic fit; phase 2 deepens to the real fit in the background without a timeout at any list size.
+
+**VERIFIED LIVE END-TO-END 2026-06-25** on the `emma+biopharmtest2` workspace (org `BioReach Partners`). Imported 10 real US biotech drug developers (Arcus, Denali, Kymera, Arcellx, Nuvation, Tango, Annexon, Immunome, Neurocrine, CARGO):
+- Phase 1: Apollo `bulk_enrich` returned real firmographics for all 10 (employees/HQ/founded/industry) — **the live bulk format (`domains[]` → `organizations` array, index-aligned) is confirmed**. All landed `requested` with 0 contacts.
+- Phase 2: cron drained all 10 to `succeeded` with real taxonomy (company_type Biotech/Biopharma; TAs Oncology/Neuro/Immuno; modalities Cell Therapy/CAR-T, Small Molecule, Antibody, ADC; dev stages) and fit upgraded to **0.72–0.88 (all high-fit)**. Confirmed in the Companies UI: all 10 show "Biotech / Biopharma · 0 contacts · Source" CTA.
+- **Bug the real test caught that preview could not:** the canonical `companies` table has NO `source` column (it moved to the org_companies/user_companies link rows). The stub insert included `source` and failed all 10 rows with a PostgREST schema-cache error. Fixed: dropped `source` from the `companies` insert in `findOrCreateCompany` (kept on the link rows). This is exactly why a real import was worth running.
+
+Earlier preview checks also passed: preview cost math (1×3=3), owned-dedup, in-file dedup, invalid-row detection, cron auth-guard (401); typecheck clean.
+
+**Follow-ups:**
+- *Preliminary-fit coverage:* after phase 1, only 1/10 had a preliminary (firmographic) fit — ICP matching without taxonomy is weak, so most stay null until phase 2 scores them (minutes later). The "eager" benefit is therefore thin in practice; consider a lightweight firmographic-only ICP match so more rows show a provisional fit immediately. Phase 2 fills all of them regardless.
+- *Very large lists:* phase 1 bulk-enriches in one `after()` pass — fine for hundreds (~30 Apollo calls for 300). For thousands, chunk phase 1 too (un-processed `pending` raw_uploads currently wouldn't get drained).
+- *Test-harness note (not a prod bug):* draining the cron via `curl -m 290` sometimes cut the client off mid-batch, leaving a row `running`; the route still completed server-side, and the 15-min stale-`running` reclaim covers true crashes. On Vercel the function runs to its 300s ceiling without a client disconnect.
+
+**Problem.** The import page is contact-first: every row needs a person identifier *and* a company, and both feed Apollo `people/match` enrichment. A user who has a strong list of *companies* but no known contacts there has no way in. Companies today are only ever created as a side-effect of a contact import (the ingestion RPC hard-requires a `linkedin_url` on the contact), so a contactless company is not a creatable state.
+
+**Goal.** Let a user paste/CSV a list of companies, enrich + fit-score them, and land them in `/companies` (= `/accounts`, the CompaniesWorkspace) as records with `0 contacts`. Buying contacts stays a separate, user-initiated action via the existing `/data` flow.
+
+**Agreed design (decisions locked with Emma):**
+
+1. **One-stage import with cost shown upfront.** Upload immediately enriches + fit-scores, but a confirm dialog previews the spend first ("412 companies → 412 credits. Proceed?"). Company enrichment is Apollo org enrich at **1 credit/company** (`lib/data-acquisition-metering.ts` → `apollo_company_enrichment: 1`) — it is *not* free, so the cost must be explicit before it runs.
+2. **Land in `/companies` with `0 contacts`, not triage.** Triage is contact-readiness; a 0-contact company has nothing to triage. `list_user_accounts` already returns `contact_count = 0` cleanly, so the read side supports it.
+3. **Contact buying is opt-in, never auto.** The contact column shows "0 contacts"; the user clicks through to the existing `/data` window (`mode=contacts_at_company`) to buy. No auto-sourcing.
+4. **Dedup/merge on import.** A pasted company may already be an account (born from a past contact import). Route the upsert through `stickyIdentity` in `lib/company-merge.ts` — merge, never duplicate.
+5. **Insufficient-info rows fail in preview.** Same pattern as contact import: a row without enough to resolve a company (no usable name/domain) is surfaced as a failed row in the import preview, not silently enriched against the wrong org. Name-only rows need an Apollo org lookup to resolve a domain; ambiguous ones surface for review.
+6. **Never block a purchase — warn only.** This is a general rule, and it *changes existing behavior*: the `/data` acquisition flow currently HARD-blocks contact buys below 0.5 company fit (`lowCompanyFitPurchaseNote` + `SOURCE_COMPANY_MIN` in `lib/data-acquisition/job-runner.ts:175`). Convert that refusal into an overridable warning. Nothing is ever blocked from buying; a low-fit company shows a caution and the user can still proceed.
+
+**Build pieces:**
+- *New:* company-only import UI (paste/CSV) + cost-preview confirm dialog.
+- *New:* contactless-company write path — a company upsert that skips the contact half of `ingestEnrichedRecords` (today's RPC throws without a contact `linkedin_url`).
+- *New:* "0 contacts → find contacts" affordance in the contact column, wired to `openContactAcquisition` / `/data`.
+- *Reuse:* Apollo org enrich + ICP fit match; `list_user_accounts` (`contact_count = 0`); `stickyIdentity` merge; the `/data` `contacts_at_company` flow (already credit-gated).
+- *Change:* `job-runner.ts` fit gate from block → warn (item 6 above).
+
+**Watch:** contactless companies won't ride the monthly contact-driven re-enrich until they have a contact (expected). Keep UI copy customer-facing — "0 contacts", "Find contacts" — never "Apollo"/"org enrich".
+
+---
+
+## Apollo API — further opportunities (researched 2026-06-25)
+
+Context from building the company-first import: we already use Apollo `people/match` (single contact enrich), `mixed_people/api_search` (people search for `contacts_at_company`), `organizations/enrich` (single) + now `organizations/bulk_enrich` (10/call), `mixed_companies/search` (expand_companies), and phone reveal. Email verification is ZeroBounce, not Apollo. Ranked by value/effort:
+
+1. **Bulk people enrichment — `POST /people/bulk_match` (10 records/call).** *High value, medium effort.* Direct mirror of the org `bulk_enrich` we just shipped. Today contact import + `contacts_at_company` enrich people one at a time through `people/match`; batching to 10/call cuts round-trips ~10× and speeds the queue. Build a `bulkMatchPeopleWithApollo()` alongside `bulkEnrichOrganizationsWithApollo` and feed it from `processQueuedRowsInBackground`. Note: waterfall/contact-detail fields can return async via webhook — start synchronous (demographics) and only add the webhook path if needed.
+
+2. **Headcount-growth signal — already returned, currently unused.** *High value, LOW effort (near-free).* `organizations/enrich` already returns `organization_headcount_six_/twelve_/twenty_four_month_growth` (see `ApolloOrganization` in `lib/apollo.ts`) but we don't map or use them. Surface them as a "company expanding / scaling" readiness/expansion signal — zero extra API cost (the data rides on enrich calls we already make) and complements the biotech moat. Lowest-effort win here.
+
+3. **Use `bulk_enrich` on the existing single-company paths.** *Medium.* `job_change_monitor` stub creation and `expand_companies` screening still enrich companies one at a time. Route high-volume screening through `bulkEnrichOrganizationsWithApollo` to cut provider cost on sourcing sweeps.
+
+4. **Apollo funding fields to fill PRIVATE biotechs.** *Medium, low-ish effort.* Our funding signal is SEC-based (only covers SEC filers / public co's). Apollo returns `latest_funding_stage / total_funding / latest_funding_round_date / funding_events` for private companies SEC misses. Use Apollo as a *complement* (SEC authoritative when present, Apollo fills the gap for private/pre-IPO biotechs — a big slice of the early-stage ICP).
+
+**Evaluated, low fit (skip unless cheap):**
+- *Apollo buying-intent / news topics* — generic (web-visit intent, leadership/hiring news). Arcova's moat is biotech-specific signals (SEC/FDA/CT.gov/patents/grants/conferences); generic intent is unlikely to beat it.
+- *Technographics (`technology_names`)* — captures web/SaaS stack, not lab/scientific tooling; low relevance for biotech fit.
+
+Quickest two to ship: **#2 (headcount growth, near-free)** and **#1 (bulk people match, mirrors today's work)**.

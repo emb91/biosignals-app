@@ -173,12 +173,18 @@ async function loadCompanyFitForPurchase(
   return normalizeFitScore01(row?.company_fit_score);
 }
 
-function lowCompanyFitPurchaseNote(companyName: string | null, companyFit: number | null): string {
+/**
+ * Low company-fit no longer BLOCKS a purchase — the user picked this account
+ * deliberately, so we source contacts anyway and surface a heads-up. (See
+ * memory/feedback_never_block_purchase_warn_only.md: nothing is ever blocked
+ * from buying; a guardrail warns, it does not refuse.)
+ */
+function lowCompanyFitPurchaseWarning(companyName: string | null, companyFit: number | null): string {
   const label = companyName?.trim() || 'this account';
   if (companyFit == null) {
-    return `We did not source contacts at ${label} because it does not have a high company-fit score yet.`;
+    return `Heads up: ${label} does not have a strong company-fit score yet, but we sourced contacts as you asked.`;
   }
-  return `We did not source contacts at ${label} because its company fit is ${Math.round(companyFit * 100)}%, below the ${Math.round(SOURCE_COMPANY_MIN * 100)}% purchase threshold.`;
+  return `Heads up: ${label}'s company fit is ${Math.round(companyFit * 100)}%, below the usual ${Math.round(SOURCE_COMPANY_MIN * 100)}% threshold — we sourced contacts anyway as you asked.`;
 }
 
 async function loadPrioritizedCompaniesForIcpAccounts(
@@ -1575,15 +1581,15 @@ async function runContactsAtCompanyJob(
     throw new Error('contacts_at_company job is missing company context');
   }
 
+  // Company fit is a WARNING, not a gate — a user who explicitly asked to source
+  // contacts at this account gets them regardless of fit (the warning rides along
+  // on the completion note). A missing domain is still a hard stop below: that's
+  // a "can't", not a "won't".
   const companyFit = await loadCompanyFitForPurchase(admin, job.user_id, companyContext.id, job.icp_id);
-  if (companyFit == null || companyFit < SOURCE_COMPANY_MIN) {
-    await completeJobWithoutPurchase(
-      admin,
-      job,
-      lowCompanyFitPurchaseNote(companyContext.company_name, companyFit),
-    );
-    return;
-  }
+  const lowFitWarning =
+    companyFit == null || companyFit < SOURCE_COMPANY_MIN
+      ? lowCompanyFitPurchaseWarning(companyContext.company_name, companyFit)
+      : null;
 
   // `target_contact_count` is NET-NEW for this path: the agent asks "how many
   // MORE contacts to add" and the confirm dialog shows the number as net-new
@@ -1651,10 +1657,11 @@ async function runContactsAtCompanyJob(
   });
 
   const capKind = stoppedByGuard ? guard.capReached() : null;
-  const note =
+  const baseNote =
     capKind
       ? shortfallNote(capKind, personaScreen.people.length, gap, 'contacts')
       : personaScreenNote(uniquePeople.length, personaScreen.people.length, personaScreen.rejected);
+  const note = [lowFitWarning, baseNote].filter(Boolean).join(' ');
 
   await updateJob(job.id, { status: 'processing' });
   await ingestPeopleAndRunImportPipeline(admin, job, personaScreen.people, { companyId: companyContext.id }, meter, note);

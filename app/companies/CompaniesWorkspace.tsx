@@ -104,7 +104,7 @@ type AccountRow = {
   // Dedicated company-enrichment job state — drives the side panel banner.
   // null/idle ≈ never run; running ≈ "Enrichment in progress" (real, not a lie);
   // failed ≈ "Enrichment failed, retry" (with last_error); succeeded ≈ no banner.
-  enrichment_refresh_status?: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null;
+  enrichment_refresh_status?: 'idle' | 'running' | 'requested' | 'succeeded' | 'failed' | 'cancelled' | null;
   enrichment_refresh_last_error?: string | null;
   enrichment_refresh_started_at?: string | null;
   enrichment_refresh_finished_at?: string | null;
@@ -938,10 +938,13 @@ export default function CompaniesPage() {
   const selectedDetailStatus = selectedAccountId
     ? selectedAccountDetailById[selectedAccountId]?.enrichment_refresh_status ?? null
     : null;
+  // 'requested' = queued for the deep-enrichment cron (company-first import);
+  // treat it as in-progress so the list keeps polling until the fit upgrades.
+  const inProgressStatus = (s: string | null | undefined) => s === 'running' || s === 'requested';
   const anyCompanyEnrichmentRunning =
     refreshingCompanyId != null ||
-    selectedDetailStatus === 'running' ||
-    accounts.some((a) => a.enrichment_refresh_status === 'running');
+    inProgressStatus(selectedDetailStatus) ||
+    accounts.some((a) => inProgressStatus(a.enrichment_refresh_status));
   useEffect(() => {
     if (!anyCompanyEnrichmentRunning) return;
     const interval = setInterval(() => {
@@ -1670,7 +1673,9 @@ export default function CompaniesPage() {
                         // identity so you can see WHICH company is enriching; the bar
                         // spans the remaining columns. The 5s poll flips the row to
                         // succeeded/failed, returning it to the normal cells.
-                        const enriching = account.enrichment_refresh_status === 'running';
+                        const enriching =
+                          account.enrichment_refresh_status === 'running' ||
+                          account.enrichment_refresh_status === 'requested';
 
                         return (
                           <div
@@ -1957,13 +1962,13 @@ export default function CompaniesPage() {
                                 {selectedAccount.contact_count === 0 ? (
                                   <>
                                     <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
-                                      <strong>{companyLabel}</strong> has no contacts on file. Your last known contact
-                                      at this company has moved on — find a replacement to keep this company warm.
+                                      <strong>{companyLabel}</strong> has no contacts on file yet. Source contacts to
+                                      start working this company.
                                     </p>
                                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
                                       <p className="text-[12.5px] leading-[1.5] text-amber-800">
-                                        Arcova detected a contact departure at this company. Sourcing a new contact
-                                        here lets you re-establish coverage without losing the company entirely.
+                                        Open the Data page to source contacts here. This company and ICP context are
+                                        passed through, and you confirm any credit spend before it runs.
                                       </p>
                                     </div>
                                   </>
@@ -1988,7 +1993,7 @@ export default function CompaniesPage() {
                                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                   >
                                     <Users className="h-4 w-4" />
-                                    Find replacement contact
+                                    Find contacts
                                   </button>
                                 </div>
                               </div>
@@ -2072,7 +2077,7 @@ export default function CompaniesPage() {
                         // poll's `anyCompanyEnrichmentRunning` (also status==='running').
                         const enrichmentStatus = selectedAccount.enrichment_refresh_status ?? null;
                         const enrichmentFailed = enrichmentStatus === 'failed';
-                        const enrichmentRunning = enrichmentStatus === 'running';
+                        const enrichmentRunning = enrichmentStatus === 'running' || enrichmentStatus === 'requested';
                         const neverEnriched =
                           !enrichmentRunning &&
                           !enrichmentFailed &&
@@ -2502,10 +2507,10 @@ export default function CompaniesPage() {
                               {selectedAccount.contact_count === 0 ? (
                                 <>
                                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
-                                    <p className="text-[13px] font-semibold text-amber-900 mb-1">Contact departed</p>
+                                    <p className="text-[13px] font-semibold text-amber-900 mb-1">No contacts yet</p>
                                     <p className="text-[12.5px] leading-[1.5] text-amber-800">
-                                      Your last known contact at this company has moved on. Source a replacement
-                                      contact to keep this company warm and maintain coverage.
+                                      This company has no contacts on file. Source contacts to start working it —
+                                      you choose when to spend credits.
                                     </p>
                                   </div>
                                   <button
@@ -2514,7 +2519,7 @@ export default function CompaniesPage() {
                                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2.5 text-sm font-semibold text-arcova-teal hover:bg-arcova-teal/5 transition-colors"
                                   >
                                     <Users className="h-3.5 w-3.5" />
-                                    Find replacement contact
+                                    Find contacts
                                   </button>
                                 </>
                               ) : (

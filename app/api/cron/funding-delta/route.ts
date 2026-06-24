@@ -53,6 +53,7 @@ async function runCron(request: Request) {
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
+  const requestStartedAt = Date.now();
   try {
     const { searchParams } = new URL(request.url);
     const overlapDaysRaw = searchParams.get('overlapDays');
@@ -76,7 +77,16 @@ async function runCron(request: Request) {
     //  - otherwise pull the standard overlap window.
     // A soft deadline keeps each invocation under the serverless timeout.
     const reuseSeconds = nonNegFromEnv('FUNDING_SYNC_REUSE_SECONDS', 6 * 24 * 60 * 60);
-    const softDeadlineMs = Math.max(30_000, Number(process.env.FUNDING_SYNC_DEADLINE_MS) || 240_000);
+    // Budget the sync against time ALREADY spent this request (refreshAll + CIK
+    // priming) and reserve headroom for the per-user monitor that runs after it,
+    // so the whole handler stays under the serverless function limit (300s).
+    const requestBudgetMs = Math.max(60_000, Number(process.env.FUNDING_REQUEST_BUDGET_MS) || 270_000);
+    const monitorReserveMs = Math.max(0, Number(process.env.FUNDING_MONITOR_RESERVE_MS) || 30_000);
+    const hardCapMs = Number(process.env.FUNDING_SYNC_DEADLINE_MS) || Infinity;
+    const softDeadlineMs = Math.max(
+      30_000,
+      Math.min(hardCapMs, requestBudgetMs - (Date.now() - requestStartedAt) - monitorReserveMs),
+    );
     let syncResult: FundingSyncOutcome;
     if (subscribers.length === 0) {
       syncResult = { skipped: true, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };

@@ -41,6 +41,10 @@
       "schedule": "*/10 * * * *"
     },
     {
+      "path": "/api/cron/company-enrichment-queue",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/launch-readiness",
       "schedule": "5 * * * *"
     },

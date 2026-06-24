@@ -26,6 +26,7 @@ export default function LoginPage() {
   // Cloudflare Turnstile token — required only when a site key is configured.
   const [captchaToken, setCaptchaToken] = useState('');
   const turnstileRef = useRef<TurnstileHandle>(null);
+  const turnstileRequired = Boolean(TURNSTILE_SITE_KEY && process.env.NODE_ENV === 'production');
 
   const { login, signup, loginWithGoogle } = useAuth();
   const router = useRouter();
@@ -46,7 +47,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
 
-    if (TURNSTILE_SITE_KEY && !captchaToken) {
+    if (turnstileRequired && !captchaToken) {
       setError('Please complete the verification below.');
       return;
     }

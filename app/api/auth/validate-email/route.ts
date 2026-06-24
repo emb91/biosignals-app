@@ -21,6 +21,9 @@ export async function POST(request: Request) {
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return NextResponse.json({ allow: false, reason: 'Please enter a valid email address.' });
   }
+  if (process.env.NODE_ENV !== 'production') {
+    return NextResponse.json({ allow: true, status: null });
+  }
 
   const { allowed } = await checkRateLimit(`validate-email:${clientIp(request)}`, MAX_PER_IP_PER_HOUR, 3600);
   if (!allowed) return NextResponse.json({ allow: true, status: null }); // skip the paid check, don't block signup

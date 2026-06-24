@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getOrgContext, canEditOrgSetup } from '@/lib/org-context';
+import { HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 export async function POST(req: Request) {
   // Connecting the CRM is org-level setup (one per org) — owner/admin only.
@@ -18,9 +19,9 @@ export async function POST(req: Request) {
 
   // For HubSpot, capture the portal id so inbound webhooks (no session) can map
   // back to this connection. Best-effort — never block the connect on it.
-  if (integrationId === 'hubspot') {
+  if (integrationId === HUBSPOT_INTEGRATION_ID) {
     try {
-      const { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } = await import('@/lib/nango');
+      const { getNangoAccessToken } = await import('@/lib/nango');
       const { fetchHubSpotPortalId } = await import('@/lib/hubspot');
       const token = await getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
       const portalId = token ? await fetchHubSpotPortalId(token) : null;

@@ -84,6 +84,9 @@ export async function ensureCurrentCreditGrant(params: {
     ?? `${source}:${params.orgId}:${start.slice(0, 10)}`;
 
   const admin = createAdminClient();
+  if (params.planKey !== 'free') {
+    await expireActiveFreeCreditBuckets(admin, params.orgId, start);
+  }
   const { count: existingActive } = await admin.from('org_credit_buckets')
     .select('id', { count: 'exact', head: true })
     .eq('org_id', params.orgId)
@@ -103,6 +106,13 @@ export async function ensureCurrentCreditGrant(params: {
   if (error && !isMissingRpc(error)) {
     throw new Error(`credit grant failed: ${error.message}`);
   }
+}
+
+export async function expireFreeCreditBucketsForPaidPlan(
+  orgId: string,
+  expiresAt = new Date().toISOString(),
+): Promise<void> {
+  await expireActiveFreeCreditBuckets(createAdminClient(), orgId, expiresAt);
 }
 
 export async function reserveCredits(params: {
@@ -468,6 +478,28 @@ function emptyCreditBalance(): CreditBalanceBySource {
     adjustment: { granted: 0, available: 0 },
     total: { granted: 0, available: 0 },
   };
+}
+
+async function expireActiveFreeCreditBuckets(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  expiresAt: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const effectiveExpiresAt = new Date(expiresAt).getTime() > Date.now() ? now : expiresAt;
+  const { error } = await admin
+    .from('org_credit_buckets')
+    .update({
+      expires_at: effectiveExpiresAt,
+      credits_remaining: 0,
+      updated_at: now,
+    })
+    .eq('org_id', orgId)
+    .eq('source', 'free_monthly')
+    .gt('expires_at', now);
+  if (error && !isMissingRpc(error)) {
+    throw new Error(`free credit expiration failed: ${error.message}`);
+  }
 }
 
 function isMissingRpc(error: { code?: string }): boolean {

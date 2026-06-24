@@ -6,7 +6,7 @@ import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/lib/routes';
-import { CalendarClock, ChevronRight, ListChecks, Pin, Sparkles, X } from 'lucide-react';
+import { CalendarClock, ChevronRight, ListChecks, Pin, X } from 'lucide-react';
 
 const HubSpotLogo = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
@@ -71,14 +71,16 @@ function formatDate(value: string | null): string {
 function friendlyError(message: string | null): string | null {
   if (!message) return null;
   const trimmed = message.trim();
-  // Hide raw backend/database errors (SQL column/table/relation messages, stack-trace
-  // shaped text) behind a plain-language message customers can act on.
+  // Swallow raw backend/database errors (SQL column/table/relation messages, stack-trace
+  // shaped text). An empty or failed-to-load triage list isn't something the customer needs
+  // to act on — usually it just means they've worked through the queue — so we show nothing
+  // rather than a scary banner.
   const looksTechnical =
     /(column|relation|table|constraint|syntax error|does not exist|null value|violates|undefined|cannot read|\bat\s+\/|\.[tj]sx?:\d)/i.test(
       trimmed,
     );
   if (looksTechnical) {
-    return 'Something went wrong loading your triage list. Please refresh and try again.';
+    return null;
   }
   return trimmed;
 }
@@ -124,7 +126,6 @@ export default function TriagePage() {
   const [error, setError] = useState<string | null>(null);
 
   const selected = selectedId ? rows.find((row) => row.id === selectedId) ?? null : null;
-
   const loadTriage = async () => {
     setLoading(true);
     setError(null);
@@ -219,7 +220,7 @@ export default function TriagePage() {
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                   {(summary?.total ?? 0) > 0
                     ? `${(summary?.total ?? 0).toLocaleString()} lead${summary?.total === 1 ? '' : 's'} waiting for enrichment. High-fit leads are scheduled first; click a row to inspect or change its category.`
-                    : 'Imported leads waiting for enrichment will appear here after triage.'}
+                    : `Imported leads waiting for enrichment will appear here after triage. You can enrich ${(summary?.monthlyThroughput ?? 300).toLocaleString()} leads per month.`}
                 </p>
 
                 <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -234,22 +235,13 @@ export default function TriagePage() {
               </div>
             </div>
 
-            {error && (
+            {error && friendlyError(error) && (
               <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
                 {friendlyError(error)}
               </div>
             )}
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-2.5">
-                <p className="flex min-w-0 items-center gap-2 truncate text-xs font-medium text-arcova-teal">
-                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">
-                    {(summary?.total ?? 0).toLocaleString()} waiting · {(summary?.high ?? 0).toLocaleString()} high-fit · enriching {(summary?.monthlyThroughput ?? 300).toLocaleString()}/month
-                  </span>
-                </p>
-              </div>
-
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.16),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-2xl backdrop-saturate-150">
                 <div
                   className={`${TRIAGE_TABLE_GRID} shrink-0 items-start border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] py-3 pl-9 pr-4 text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
@@ -328,6 +320,7 @@ export default function TriagePage() {
             className="min-[1280px]:pl-1.5"
             page="leads"
             pageContext={{ leadsView: 'contacts' }}
+            inputPlaceholder="Ask anything about your triaged leads…"
           />
         )}
 
@@ -363,6 +356,7 @@ export default function TriagePage() {
                   onChange={(event) => void updateRow(selected.id, { triageGroup: event.target.value as TriageGroup })}
                   className="mt-2 h-10 w-full rounded-lg border border-[rgba(13,53,71,0.12)] bg-white px-3 text-sm font-semibold text-arcova-navy outline-none"
                 >
+                  {!selected.effective_triage_group && <option value="" disabled>Untriaged</option>}
                   {TRIAGE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
