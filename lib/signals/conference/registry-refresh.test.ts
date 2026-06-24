@@ -17,9 +17,12 @@ import assert from 'node:assert/strict';
 import {
   bumpYearToken,
   extractEditionDates,
+  harvesterEventKey,
+  harvesterIndexUrl,
   looksLikeLiveEdition,
   mapYourShowProbeUrl,
   nextEditionSourceKey,
+  parseHarvesterEventIds,
   refreshStrategyForPlatform,
   smallWorldLabsProbeUrl,
 } from './registry-refresh-helpers';
@@ -56,11 +59,39 @@ test('refreshStrategyForPlatform classifies each platform', () => {
   assert.equal(refreshStrategyForPlatform('smallworldlabs'), 'templated');
   assert.equal(refreshStrategyForPlatform('terrapinn'), 'stable');
   assert.equal(refreshStrategyForPlatform('informa'), 'stable');
+  // Conference Harvester re-scrapes its index page for the row's EventKey.
+  assert.equal(refreshStrategyForPlatform('conference_harvester'), 'harvester');
   // Opaque-eventId + uncracked platforms are manual (left for human seeding).
   assert.equal(refreshStrategyForPlatform('abstractsonline'), 'manual');
   assert.equal(refreshStrategyForPlatform('a2z'), 'manual');
   assert.equal(refreshStrategyForPlatform('spargo'), 'manual');
-  assert.equal(refreshStrategyForPlatform('conference_harvester'), 'manual');
+});
+
+// ── conference harvester helpers ─────────────────────────────────────────────
+test('harvesterEventKey reads the key from a full index URL or a bare key', () => {
+  assert.equal(
+    harvesterEventKey('https://www.conferenceharvester.com/floorplan/v2/index.asp?EventKey=NAKXYFLC'),
+    'NAKXYFLC',
+  );
+  assert.equal(harvesterEventKey('ANXMFLVZ'), 'ANXMFLVZ');
+  assert.equal(harvesterEventKey(null), null);
+  assert.equal(harvesterEventKey('https://example.com/no-key-here'), null);
+});
+
+test('harvesterIndexUrl builds the floorplan index URL', () => {
+  assert.equal(
+    harvesterIndexUrl('NAKXYFLC'),
+    'https://www.conferenceharvester.com/floorplan/v2/index.asp?EventKey=NAKXYFLC',
+  );
+});
+
+test('parseHarvesterEventIds scrapes EventID + EventClientID from inline JS', () => {
+  const html = "ajax({ data: { EventID : 25702, EventClientID : 272, EventKey: 'NAKXYFLC' } })";
+  assert.deepEqual(parseHarvesterEventIds(html), { eventId: '25702', eventClientId: '272' });
+  assert.deepEqual(parseHarvesterEventIds('<html>no ids</html>'), {
+    eventId: null,
+    eventClientId: null,
+  });
 });
 
 // ── next-edition source-key derivation ───────────────────────────────────────
