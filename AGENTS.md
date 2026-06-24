@@ -1,5 +1,18 @@
 # Repository instructions
 
+## Agent git workflow
+
+- For every task, branch from the latest `main`: `git switch main`, `git pull`,
+  then `git switch -c codex/<task>`.
+- Commit work regularly to the task branch as private checkpoints. Do not open a
+  PR until the work is complete.
+- When the work is done and verified with `tsc` and the relevant tests green,
+  run `git fetch` and `git rebase origin/main` on the task branch. Resolve any
+  conflicts on that branch.
+- Open exactly one PR, and only at the end.
+- Squash-merge after approval/completion, then delete the branch. Never reuse a
+  branch unless absolutely necessary.
+
 ## Supabase migrations
 
 - Create new migration files with `supabase migration new <descriptive_name>`.
@@ -17,4 +30,3 @@
   SQL again.
 - Do not delete or rewrite an applied migration to change production state.
   Add a new forward migration instead.
-
