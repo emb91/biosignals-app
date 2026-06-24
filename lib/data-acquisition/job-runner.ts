@@ -31,6 +31,7 @@ import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { personaFunctionNames } from '@/lib/persona-functions';
 import { SOURCE_COMPANY_MIN } from '@/lib/lead-action';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 type DataAcquisitionJob = {
   id: string;
@@ -162,16 +163,13 @@ async function loadCompanyFitForPurchase(
   companyId: string,
   icpId: string,
 ): Promise<number | null> {
-  const { data, error } = await admin
-    .from('user_companies')
-    .select('company_fit_score')
-    .eq('user_id', userId)
-    .eq('company_id', companyId)
-    .eq('matched_icp_id', icpId)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return normalizeFitScore01((data as { company_fit_score?: unknown } | null)?.company_fit_score);
+  const rows = (await listActiveCompanyStateForUser(
+    admin,
+    userId,
+    'company_id, matched_icp_id, company_fit_score',
+  )) as Array<{ company_id: string; matched_icp_id?: string | null; company_fit_score?: unknown }>;
+  const row = rows.find((candidate) => candidate.company_id === companyId && candidate.matched_icp_id === icpId);
+  return normalizeFitScore01(row?.company_fit_score);
 }
 
 function lowCompanyFitPurchaseNote(companyName: string | null, companyFit: number | null): string {
@@ -189,13 +187,13 @@ async function loadPrioritizedCompaniesForIcpAccounts(
   requestType: 'better_contacts' | 'more_contacts_at_accounts',
   limit: number,
 ): Promise<DbCompanyRow[]> {
-  const { data: ownedRows, error: ownedError } = await admin
-    .from('user_companies')
-    .select('company_id, company_fit_score')
-    .eq('user_id', userId)
-    .eq('matched_icp_id', icpId);
-  if (ownedError) throw new Error(ownedError.message);
-  const ownedIds = ((ownedRows ?? []) as UserCompanyFitRow[])
+  const ownedRows = (await listActiveCompanyStateForUser(
+    admin,
+    userId,
+    'company_id, matched_icp_id, company_fit_score',
+  )) as Array<UserCompanyFitRow & { matched_icp_id?: string | null }>;
+  const ownedIds = ownedRows
+    .filter((row) => row.matched_icp_id === icpId)
     .filter((row) => {
       const fit = normalizeFitScore01(row.company_fit_score);
       return typeof row.company_id === 'string' && fit != null && fit >= SOURCE_COMPANY_MIN;
@@ -1108,20 +1106,17 @@ async function buildCoverageWritebackMetadata(
   // meaningful to snapshot (an unscoped query would just record zeros).
   if (!job.icp_id) return job.metadata ?? {};
 
-  const [{ data: currentJob }, { data: companies }] = await Promise.all([
+  const [{ data: currentJob }, companies] = await Promise.all([
     admin
       .from('data_acquisition_jobs')
       .select('metadata, imported_company_count, imported_contact_count, skipped_existing_count, skipped_duplicate_count')
       .eq('id', job.id)
       .maybeSingle(),
-    admin
-      .from('user_companies')
-      .select('company_id')
-      .eq('user_id', job.user_id)
-      .eq('matched_icp_id', job.icp_id),
+    listActiveCompanyStateForUser(admin, job.user_id, 'company_id, matched_icp_id'),
   ]);
 
-  const companyIds = ((companies ?? []) as Array<{ company_id?: unknown }>)
+  const companyIds = ((companies ?? []) as Array<{ company_id?: unknown; matched_icp_id?: string | null }>)
+    .filter((row) => row.matched_icp_id === job.icp_id)
     .map((row) => row.company_id)
     .filter((value): value is string => typeof value === 'string');
 
@@ -1787,13 +1782,8 @@ async function runExpandCompaniesJob(
   // Owned-company keys, loaded once. 10k+ entries are fine in memory; checking
   // this set is the FIRST step for every Apollo result so duplicates cost
   // nothing (no keyword screen, no metered screening event).
-  const { data: existingOwned } = await admin
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', job.user_id);
-  const existingOwnedIds = (existingOwned ?? [])
-    .map((r) => (r as { company_id?: unknown }).company_id)
-    .filter((v): v is string => typeof v === 'string');
+  const existingOwnedIds = (await listActiveCompanyStateForUser(admin, job.user_id, 'company_id'))
+    .map((r) => r.company_id);
   const { data: existingCompanies } = existingOwnedIds.length > 0
     ? await admin
         .from('companies')

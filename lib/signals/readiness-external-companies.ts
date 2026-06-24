@@ -413,7 +413,7 @@ export async function emitExternalCompanySignalsFromMonitor(
           matchType: 'owned_external_company_monitor',
           metadata: {
             role_gate: 'passed',
-            role_gate_reason: 'external company monitor ran from active user_companies row',
+            role_gate_reason: 'external company monitor ran from active org company row',
           },
         }),
         ...decision.metadata,
@@ -446,7 +446,7 @@ export async function emitExternalCompanySignalsFromMonitor(
           matchType: 'owned_external_company_monitor',
           metadata: {
             role_gate: 'passed',
-            role_gate_reason: 'external company monitor ran from active user_companies row',
+            role_gate_reason: 'external company monitor ran from active org company row',
           },
         }),
         ...decision.metadata,

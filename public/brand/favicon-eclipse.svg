@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Arcova">
+  <defs>
+    <linearGradient id="eclStroke" gradientUnits="userSpaceOnUse" x1="26" y1="94" x2="94" y2="26">
+      <stop offset="0" stop-color="#00a4b4"/>
+      <stop offset="0.44" stop-color="#46cabf"/>
+      <stop offset="0.74" stop-color="#b9acd9"/>
+      <stop offset="1" stop-color="#f3a9c2"/>
+    </linearGradient>
+    <radialGradient id="eclOrb" cx="38%" cy="32%" r="75%">
+      <stop offset="0%" stop-color="#f1fbf8"/>
+      <stop offset="22%" stop-color="#9fe1d3"/>
+      <stop offset="60%" stop-color="#00a4b4"/>
+      <stop offset="100%" stop-color="#00788a"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="114" fill="#003344"/>
+  <g transform="translate(-8 -8) scale(4.4)">
+    <circle cx="60" cy="60" r="34" fill="none" stroke="url(#eclStroke)" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="60" cy="60" r="16" fill="url(#eclOrb)"/>
+    <circle cx="54.56" cy="53.6" r="3.84" fill="#fff" opacity="0.9"/>
+    <circle cx="60" cy="60" r="34" fill="none" stroke="url(#eclStroke)" stroke-width="6" stroke-dasharray="40 200" stroke-linecap="round" transform="rotate(-35 60 60)"/>
+  </g>
+</svg>

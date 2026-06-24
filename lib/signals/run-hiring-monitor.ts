@@ -36,6 +36,7 @@ import { verifySourceCompanyNameAgainstCandidates } from '@/lib/signals/signal-e
 import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 import { isCompanySweepEligible } from '@/lib/signals/sweep-fit-gate';
 import { runApifyActor } from '@/lib/apify';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -644,15 +645,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
     .eq('user_id', input.userId).maybeSingle<{ org_id: string }>();
 
   // 1. Resolve which companies to process
-  const { data: linkRows, error: linkError } = await admin
-    .from('user_companies')
-    .select('company_id, company_fit_score')
-    .eq('user_id', input.userId)
-    .is('archived_at', null);
-  if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
-
-  const ownedRows = (linkRows ?? [])
-    .map((r) => r as { company_id?: unknown; company_fit_score?: unknown })
+  const ownedRows = (await listActiveCompanyStateForUser(admin, input.userId, 'company_id, company_fit_score'))
     .filter((r): r is { company_id: string; company_fit_score: number | null } =>
       typeof r.company_id === 'string' && Boolean(r.company_id));
 

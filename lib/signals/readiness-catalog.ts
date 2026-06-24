@@ -120,6 +120,18 @@ const RAW_READINESS_SIGNAL_CATALOG: readonly RawSignalCatalogEntry[] = [
     notes: 'Useful for non-dilutive life sciences funding.',
   },
   {
+    signalKey: 'exhibiting_at_conference',
+    scope: 'company',
+    dimensions: ['new_needs', 'new_strategy'],
+    // Lifecycle is phase-based (upcoming/live/recent), with a hard expiry 21d
+    // post-event enforced in the monitor (conference-phase.ts). decayDays is the
+    // scoring backstop so an emitted signal fades over ~the same window.
+    decayDays: 30,
+    buyerFunctions: ['business_development', 'commercial', 'partnerships'],
+    intentMechanisms: ['commercial_interest'],
+    notes: 'Company exhibiting at a relevant industry conference — in-market activity; phase drives the outreach angle.',
+  },
+  {
     signalKey: 'ipo_or_follow_on',
     scope: 'company',
     dimensions: ['new_budget'],

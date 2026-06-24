@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:data-acquisition && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:funding-monitor && npm run test:signal-guards && npm run test:signal-ownership && npm run test:clinical-trial-admission && npm run test:resolver-provenance-admission && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:effective-priority && npm run test:outreach-sequence && npm run test:data-screen && npm run test:billing-stripe-invoice && npm run test:company-enrichment-credits && npm run test:company-enrich-cancel",
+    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:data-acquisition && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:funding-monitor && npm run test:signal-guards && npm run test:signal-ownership && npm run test:clinical-trial-admission && npm run test:resolver-provenance-admission && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:effective-priority && npm run test:outreach-sequence && npm run test:data-screen && npm run test:billing-stripe-invoice && npm run test:company-enrichment-credits && npm run test:company-enrich-cancel && npm run test:monitor-cadence",
     "preflight:prod": "node scripts/production-preflight.mjs",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "test:smoke": "playwright test",
@@ -24,11 +24,11 @@
     "test:company-merge": "rm -rf /tmp/arcova-company-merge-tests && tsc -p tsconfig.test.company-merge.json && node --test /tmp/arcova-company-merge-tests/company-merge.test.js",
     "test:data-acquisition": "rm -rf /tmp/arcova-data-acquisition-tests && tsc -p tsconfig.test.data-acquisition.json && node --test /tmp/arcova-data-acquisition-tests/domain-utils.test.js",
     "test:contact-location": "rm -rf /tmp/arcova-contact-location-tests && tsc -p tsconfig.test.contact-location.json && node --test /tmp/arcova-contact-location-tests/contact-profile-display.test.js",
-    "test:coverage-allocation": "rm -rf /tmp/arcova-coverage-allocation-tests && tsc -p tsconfig.test.coverage-allocation.json && node --test /tmp/arcova-coverage-allocation-tests/allocation.test.js",
+    "test:coverage-allocation": "rm -rf /tmp/arcova-coverage-allocation-tests && tsc -p tsconfig.test.coverage-allocation.json && node --test /tmp/arcova-coverage-allocation-tests/coverage/allocation.test.js",
     "test:patent-surge": "rm -rf /tmp/arcova-patent-surge-tests && tsc -p tsconfig.test.patent-surge.json && node --test /tmp/arcova-patent-surge-tests/patent-surge.test.js",
     "test:funding-monitor": "rm -rf /tmp/arcova-funding-monitor-tests && tsc -p tsconfig.test.funding-monitor.json && node --test /tmp/arcova-funding-monitor-tests/signals/sec-form-d-filters.test.js /tmp/arcova-funding-monitor-tests/signals/sec-form-d-screener.test.js",
     "test:signal-guards": "rm -rf /tmp/arcova-signal-guards-tests && tsc -p tsconfig.test.signal-guards.json && node --test /tmp/arcova-signal-guards-tests/signals/signal-entity-guards.test.js",
-    "test:signal-ownership": "rm -rf /tmp/arcova-signal-ownership-tests && tsc -p tsconfig.test.signal-ownership.json && node --test /tmp/arcova-signal-ownership-tests/signal-ownership.test.js",
+    "test:signal-ownership": "rm -rf /tmp/arcova-signal-ownership-tests && tsc -p tsconfig.test.signal-ownership.json && node --test /tmp/arcova-signal-ownership-tests/signals/signal-ownership.test.js",
     "test:clinical-trial-admission": "rm -rf /tmp/arcova-clinical-trial-admission-tests && tsc -p tsconfig.test.clinical-trial-admission.json && node --test /tmp/arcova-clinical-trial-admission-tests/signals/clinical-trial-admission.test.js",
     "test:resolver-provenance-admission": "rm -rf /tmp/arcova-resolver-provenance-admission-tests && tsc -p tsconfig.test.resolver-provenance-admission.json && node --test /tmp/arcova-resolver-provenance-admission-tests/signals/resolver-provenance-admission.test.js",
     "gen-sitemap": "node generate-sitemap.js",
@@ -40,7 +40,8 @@
     "test:data-screen": "rm -rf /tmp/arcova-data-screen-tests && tsc -p tsconfig.test.data-screen.json && node --test /tmp/arcova-data-screen-tests/tests/data-acquisition/search-spec.test.js",
     "test:billing-stripe-invoice": "rm -rf /tmp/arcova-billing-stripe-invoice-tests && tsc -p tsconfig.test.billing-stripe-invoice.json && node --test /tmp/arcova-billing-stripe-invoice-tests/stripe-invoice.test.js",
     "test:company-enrichment-credits": "rm -rf /tmp/arcova-company-enrichment-credits-tests && tsc -p tsconfig.test.company-enrichment-credits.json && node --test /tmp/arcova-company-enrichment-credits-tests/company-enrichment-credits.test.js",
-    "test:company-enrich-cancel": "rm -rf /tmp/arcova-company-enrich-cancel-tests && tsc -p tsconfig.test.company-enrich-cancel.json && node --test /tmp/arcova-company-enrich-cancel-tests/company-enrichment-cancel.test.js"
+    "test:company-enrich-cancel": "rm -rf /tmp/arcova-company-enrich-cancel-tests && tsc -p tsconfig.test.company-enrich-cancel.json && node --test /tmp/arcova-company-enrich-cancel-tests/company-enrichment-cancel.test.js",
+    "test:monitor-cadence": "rm -rf /tmp/arcova-monitor-cadence-tests && tsc -p tsconfig.test.monitor-cadence.json && node --test /tmp/arcova-monitor-cadence-tests/monitor-cadence-rules.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
@@ -50,6 +51,7 @@
     "@emotion/is-prop-valid": "latest",
     "@google-cloud/bigquery": "^8.3.1",
     "@hookform/resolvers": "^3.9.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@nangohq/frontend": "^0.70.8",
     "@nangohq/node": "^0.70.8",
     "@radix-ui/react-accordion": "1.2.2",
@@ -94,6 +96,7 @@
     "i18n-iso-countries": "^7.14.0",
     "input-otp": "1.4.1",
     "lucide-react": "^0.454.0",
+    "mcp-handler": "^1.1.0",
     "motion": "^12.38.0",
     "next": "^16.2.9",
     "next-themes": "^0.4.4",
@@ -114,7 +117,7 @@
     "tailwindcss-react-aria-components": "^2.1.0",
     "three": "^0.167.1",
     "vaul": "^0.9.6",
-    "zod": "^3.24.1"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

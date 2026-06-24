@@ -77,17 +77,22 @@ const nextConfig = {
       },
       {
         source: '/results',
-        destination: '/leads/contacts',
+        destination: '/contacts',
         permanent: false,
       },
       {
-        source: '/contacts',
-        destination: '/leads/contacts',
+        source: '/leads/contacts',
+        destination: '/contacts',
         permanent: false,
       },
       {
         source: '/accounts',
-        destination: '/leads/accounts',
+        destination: '/companies',
+        permanent: false,
+      },
+      {
+        source: '/leads/accounts',
+        destination: '/companies',
         permanent: false,
       },
       {

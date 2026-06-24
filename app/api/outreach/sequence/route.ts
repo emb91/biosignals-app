@@ -37,6 +37,7 @@ import {
   withLinkedInInvite,
   type OutreachSequenceMessage,
 } from '@/lib/outreach-sequence';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 export const maxDuration = 300;
 
@@ -200,18 +201,19 @@ export async function POST(request: Request) {
       let companyFit: number | null = null;
       let companyReadiness: number | null = null;
       if (c.company_id) {
-        const { data: uc } = await supabase
-          .from('user_companies')
-          .select('company_fit_score, readiness_score, matched_icp_id')
-          .eq('user_id', user.id)
-          .eq('company_id', c.company_id)
-          .maybeSingle();
-        if (uc) {
-          const ucRow = uc as {
-            company_fit_score?: number | null;
-            readiness_score?: number | null;
-            matched_icp_id?: string | null;
-          };
+        const companyState = await listActiveCompanyStateForUser(
+          supabase as any,
+          user.id,
+          'company_id, company_fit_score, readiness_score, matched_icp_id',
+        );
+        const ucRow = companyState.find((row) => row.company_id === c.company_id) as
+          | {
+              company_fit_score?: number | null;
+              readiness_score?: number | null;
+              matched_icp_id?: string | null;
+            }
+          | undefined;
+        if (ucRow) {
           companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
           companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
           matchedIcpId = ucRow.matched_icp_id ?? null;

@@ -1,8 +1,8 @@
 /**
  * Shared HubSpot lead-state resolution.
  *
- * Used by both /api/leads (per-contact) and /api/accounts (aggregated per company).
- * The accounts route feeds all contacts on the page through this and then picks
+ * Used by both /api/contacts (per-contact) and /api/companies (aggregated per company).
+ * The companies route feeds all contacts on the page through this and then picks
  * the highest-priority state per company.
  */
 
@@ -76,7 +76,7 @@ export function hubSpotLeadStateForStage(
  * Given a list of contacts (id + email), resolve the HubSpot lead state for
  * each one.  Uses the same dual-lookup (arcova_contact_id AND hubspot_contact_email)
  * and "most-recently-modified deal wins" logic as attachHubSpotLeadStateBestEffort
- * in /api/leads.
+ * in /api/contacts.
  *
  * Returns a Map<contactId, ResolvedContactState>.  Contacts with no deal link
  * are omitted from the map (callers can default to 'none').

@@ -378,7 +378,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'filter_leads_table',
     description:
-      "Update the leads/contacts table visible on screen to show filtered/sorted results. Call this when the user asks to filter, sort, or reshape the leads table. Also call query_contacts alongside this to get data for your answer.",
+      "Update the contacts table visible on screen to show filtered/sorted results. Call this when the user asks to filter, sort, or reshape the contacts table. Also call query_contacts alongside this to get data for your answer.",
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -392,7 +392,7 @@ const TOOLS: Anthropic.Tool[] = [
         },
         filters: {
           type: 'object',
-          description: 'Structured filters to apply to the leads table.',
+          description: 'Structured filters to apply to the contacts table.',
           properties: {
             actions: {
               type: 'array',
@@ -1289,7 +1289,7 @@ async function toolGetAccountDetail(
 
 /**
  * Returns the full contact record for a specific lead id, including the
- * complete companies(...) nested data. Same shape as GET /api/leads/[id].
+ * complete companies(...) nested data. Same shape as GET /api/contacts/[id].
  */
 async function toolGetContactDetail(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -1302,7 +1302,8 @@ async function toolGetContactDetail(
   const { data, error } = await supabase
     .from('contacts')
     .select(
-      // matched_icp_id + company_fit_score moved to user_companies in Phase 1d.
+      // matched_icp_id + company_fit_score are org-scoped, not canonical
+      // companies fields.
       'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, linkedin_url, profile_photo_url, company_name, company_domain, location, city, country, contact_bio, contact_panel_summary, contact_fit_summary, fit_score, readiness_score, overall_fit_score, contact_fit_score, priority_score, resolved_current_company_name, resolved_current_job_title, resolved_employment_history, source, created_at, updated_at, company_id, companies(id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, products_services, services, technologies, company_type, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)'
     )
     .eq('user_id', userId)

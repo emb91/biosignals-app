@@ -4400,7 +4400,7 @@ export default function SetupFlow({
     };
 
     const personaRes = await fetch(
-      personaIdRef.current ? `/api/contacts/${personaIdRef.current}` : '/api/contacts',
+      personaIdRef.current ? `/api/buyer-personas/${personaIdRef.current}` : '/api/buyer-personas',
       {
         method: personaIdRef.current ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -5521,7 +5521,7 @@ export default function SetupFlow({
   const handleDeletePersona = useCallback(async () => {
     const id = personaIdRef.current;
     if (id) {
-      try { await fetch(`/api/contacts?id=${id}`, { method: 'DELETE' }); } catch {}
+      try { await fetch(`/api/buyer-personas?id=${id}`, { method: 'DELETE' }); } catch {}
       personaIdRef.current = null;
     }
     setPanelPersona({ functions: [], seniority: [], jobTitles: [], signals: [] });
@@ -5762,7 +5762,7 @@ export default function SetupFlow({
         const [analysesRes, icpRes, personaRes] = await Promise.all([
           fetch('/api/user-company'),
           fetch(ROUTES.api.icps),
-          fetch('/api/contacts'),
+          fetch('/api/buyer-personas'),
         ]);
         const existingAnalysis = analysesRes.ok ? ((await analysesRes.json())?.analyses?.[0] ?? null) : null;
         const existingIcps: TargetCompanyProfile[] = icpRes.ok ? ((await icpRes.json())?.data ?? []) : [];

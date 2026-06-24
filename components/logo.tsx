@@ -1,7 +1,10 @@
 import Link from "next/link"
 import { ArcovaMark, type ArcovaVariant } from "@/components/brand/ArcovaMark"
+import { ArcovaOrb } from "@/components/brand/ArcovaOrb"
+import { ArcovaEclipse } from "@/components/brand/ArcovaEclipse"
 
 type BadgeBg = "navy" | "white" | "none"
+type MarkShape = "bars" | "orb" | "eclipse"
 // the mark's art bounding box, centred — avoids the bars sitting low in the squircle
 const MARK_BOX = "12 17 96 96"
 
@@ -14,10 +17,12 @@ interface LogoProps {
   mark?: ArcovaVariant
   /** Squircle background. Navy is the default app icon; white is the lighter landing treatment. */
   badge?: BadgeBg
+  /** Mark artwork: the five bars (default) or the live orb. */
+  shape?: MarkShape
 }
 
 /** The Arcova app-icon badge: teal-to-pink mark on a navy or white squircle. */
-function Badge({ size, mark = "teal-pink", bg = "navy" }: { size: number; mark?: ArcovaVariant; bg?: BadgeBg }) {
+function Badge({ size, mark = "teal-pink", bg = "navy", shape = "bars" }: { size: number; mark?: ArcovaVariant; bg?: BadgeBg; shape?: MarkShape }) {
   const white = bg === "white"
   return (
     <span
@@ -34,7 +39,13 @@ function Badge({ size, mark = "teal-pink", bg = "navy" }: { size: number; mark?:
         flex: "none",
       }}
     >
-      <ArcovaMark variant={mark} size={Math.round(size * 0.66)} viewBox={MARK_BOX} />
+      {shape === "orb" ? (
+        <ArcovaOrb size={Math.round(size * 0.92)} />
+      ) : shape === "eclipse" ? (
+        <ArcovaEclipse size={Math.round(size * 0.82)} />
+      ) : (
+        <ArcovaMark variant={mark} size={Math.round(size * 0.66)} viewBox={MARK_BOX} />
+      )}
     </span>
   )
 }
@@ -43,12 +54,18 @@ function Badge({ size, mark = "teal-pink", bg = "navy" }: { size: number; mark?:
  * Arcova logo. `full` = badge + "arcova" wordmark (Quicksand, inherits text
  * colour via currentColor). `icon` = the navy badge alone.
  */
-export function Logo({ variant = "full", size = 36, className = "", mark = "teal-pink", badge = "navy" }: LogoProps) {
+export function Logo({ variant = "full", size = 36, className = "", mark = "teal-pink", badge = "navy", shape = "bars" }: LogoProps) {
   const markEl =
     badge === "none" ? (
-      <ArcovaMark variant={mark} size={Math.round(size * 1.04)} viewBox={MARK_BOX} />
+      shape === "orb" ? (
+        <ArcovaOrb size={Math.round(size * 1.04)} />
+      ) : shape === "eclipse" ? (
+        <ArcovaEclipse size={Math.round(size * 1.04)} />
+      ) : (
+        <ArcovaMark variant={mark} size={Math.round(size * 1.04)} viewBox={MARK_BOX} />
+      )
     ) : (
-      <Badge size={size} mark={mark} bg={badge} />
+      <Badge size={size} mark={mark} bg={badge} shape={shape} />
     )
 
   if (variant === "icon") {
@@ -77,10 +94,10 @@ export function Logo({ variant = "full", size = 36, className = "", mark = "teal
   )
 }
 
-export function LogoLink({ variant = "full", size, className = "", mark, badge }: LogoProps) {
+export function LogoLink({ variant = "full", size, className = "", mark, badge, shape }: LogoProps) {
   return (
     <Link href="/" className={className} aria-label="Arcova home" style={{ color: "inherit", textDecoration: "none" }}>
-      <Logo variant={variant} size={size} mark={mark} badge={badge} />
+      <Logo variant={variant} size={size} mark={mark} badge={badge} shape={shape} />
     </Link>
   )
 }

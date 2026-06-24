@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 
-import { createClient } from '@/lib/supabase-server';
 import { isMissingColumnError } from '@/lib/supabase-column-compat';
-import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { getOrgContext, scopeIcpsToUser } from '@/lib/org-context';
 
 function isMissingRelationError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -41,30 +40,38 @@ type ScoreRow = {
   breakdown: Record<string, unknown> | null;
 };
 
+type CompanyFitStateRow = Record<string, unknown> & {
+  matched_icp_id?: string | null;
+  company_fit_score?: number | null;
+  company_fit_breakdown?: Record<string, unknown> | null;
+  company_fit_coverage?: number | null;
+  company_fit_scored_at?: string | null;
+  company_fit_version?: string | null;
+  company_fit_summary?: string | null;
+};
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
+    const ctx = await getOrgContext();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const companyResult = await supabase
-      .from('user_companies')
+    const { supabase, user, orgId } = ctx;
+
+    let companyResult = await supabase
+      .from('org_companies')
       .select(
         'company_id, matched_icp_id, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version, company_fit_summary',
       )
       .eq('company_id', id)
-      .eq('user_id', user.id)
+      .eq('org_id', orgId)
+      .is('archived_at', null)
       .maybeSingle();
 
     if (companyResult.error && isSchemaUnavailableError(companyResult.error)) {
@@ -81,10 +88,27 @@ export async function GET(
     }
 
     if (!companyResult.data) {
+      companyResult = await supabase
+        .from('user_companies')
+        .select(
+          'company_id, matched_icp_id, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version, company_fit_summary',
+        )
+        .eq('company_id', id)
+        .eq('user_id', user.id)
+        .is('archived_at', null)
+        .maybeSingle();
+
+      if (companyResult.error) {
+        console.error('Error fetching legacy company fit summary:', companyResult.error);
+        return NextResponse.json({ error: 'Failed to load company fit summary.' }, { status: 500 });
+      }
+    }
+
+    if (!companyResult.data) {
       return NextResponse.json({ error: 'Company not found.' }, { status: 404 });
     }
 
-    const company = companyResult.data as Record<string, unknown>;
+    const company = companyResult.data as CompanyFitStateRow;
 
     const scoreResult = await supabase
       .from('company_icp_scores')
@@ -116,10 +140,9 @@ export async function GET(
     let namesById = new Map<string, string | null>();
     let indexById = new Map<string, number>();
 
-    const fitOrgId = await orgIdForUser(supabase, user.id);
     const icpResult = await scopeIcpsToUser(
       supabase.from('icps').select('id, name, created_at'),
-      fitOrgId,
+      orgId,
       user.id,
     ).order('created_at', { ascending: false });
 

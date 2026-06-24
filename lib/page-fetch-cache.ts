@@ -1,7 +1,7 @@
 /**
  * Module-level fetch cache for list-page data (accounts, contacts).
  *
- * Problem solved: pages like /leads/accounts and /leads/contacts re-fetch
+ * Problem solved: pages like /companies and /contacts re-fetch
  * their entire data set on every mount. Switching tabs and coming back
  * forces a full network round-trip even when the data hasn't changed.
  *
@@ -56,8 +56,8 @@ export async function cachedJson<T>(
  * (edit, archive, etc.) to ensure the next page load shows fresh data.
  *
  * Examples:
- *   invalidateCache('/api/accounts')   // all accounts list responses
- *   invalidateCache('/api/leads')      // all leads list responses
+ *   invalidateCache('/api/companies')   // all company list responses
+ *   invalidateCache('/api/contacts')    // all contact list responses
  *   invalidateCache()                  // everything
  */
 export function invalidateCache(prefix?: string): void {

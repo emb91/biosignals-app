@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-monitor-cadence-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/monitor-cadence-rules.ts",
+    "lib/signals/monitor-cadence-rules.test.ts"
+  ]
+}

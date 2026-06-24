@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser } from '@/lib/org-context';
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
     }
 
     let companyIdToRestore: string | null = null;
+    const orgId = await orgIdForUser(supabase as any, user.id);
 
     if (body.type === 'account') {
       companyIdToRestore = body.id;
@@ -74,12 +76,20 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, restored: { type: 'contact', id: body.id } });
       }
 
-      const { data: company, error: companyLookupError } = await supabase
-        .from('user_companies')
-        .select('company_id, archived_at')
-        .eq('user_id', user.id)
-        .eq('company_id', companyIdToRestore)
-        .maybeSingle();
+      const companyQuery = orgId
+        ? supabase
+            .from('org_companies')
+            .select('company_id, archived_at')
+            .eq('org_id', orgId)
+            .eq('company_id', companyIdToRestore)
+            .maybeSingle()
+        : supabase
+            .from('user_companies')
+            .select('company_id, archived_at')
+            .eq('user_id', user.id)
+            .eq('company_id', companyIdToRestore)
+            .maybeSingle();
+      const { data: company, error: companyLookupError } = await companyQuery;
 
       if (companyLookupError) {
         return NextResponse.json({ error: companyLookupError.message }, { status: 500 });
@@ -120,19 +130,35 @@ export async function POST(request: Request) {
 
     const now = new Date().toISOString();
 
-    const { error: companyError } = await supabase
-      .from('user_companies')
-      .update({
-        archived_at: null,
-        archived_by: null,
-        archived_reason: null,
-        updated_at: now,
-      })
-      .eq('user_id', user.id)
-      .eq('company_id', companyIdToRestore);
+    const restorePayload = {
+      archived_at: null,
+      archived_by: null,
+      archived_reason: null,
+      updated_at: now,
+    };
+    const restoreQuery = orgId
+      ? supabase
+          .from('org_companies')
+          .update(restorePayload)
+          .eq('org_id', orgId)
+          .eq('company_id', companyIdToRestore)
+      : supabase
+          .from('user_companies')
+          .update(restorePayload)
+          .eq('user_id', user.id)
+          .eq('company_id', companyIdToRestore);
+    const { error: companyError } = await restoreQuery;
 
     if (companyError) {
       return NextResponse.json({ error: companyError.message }, { status: 500 });
+    }
+
+    if (orgId) {
+      await supabase
+        .from('user_companies')
+        .update(restorePayload)
+        .eq('user_id', user.id)
+        .eq('company_id', companyIdToRestore);
     }
 
     const { data: archivedContacts, error: archivedContactsError } = await supabase

@@ -171,6 +171,8 @@ type SignalGroupRow = {
   label: string;
   count: number;
   ago: string;
+  /** Explains when a source names a related/parent/alias entity, not the displayed account. */
+  matchNotes?: string[];
   /** Inline count shown next to the label (e.g. "54 open roles"). Never in pills. */
   countLabel?: string;
   /** Category breakdown pills — shown only in the expanded area. */
@@ -528,6 +530,52 @@ const metaStr = (v: unknown): string | null =>
 const metaNum = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
 
+function normalizeForSourceMatchNote(value: string | null | undefined): string {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/\b(ltd|limited|inc|incorporated|corp|corporation|co|company|llc|plc|ag|gmbh|sa|sas|bv|nv)\b/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function isRegulatorySourceMetadata(signalKey: string, meta: Record<string, unknown>): boolean {
+  return (
+    signalKey.includes('fda') ||
+    signalKey === 'indication_expansion' ||
+    meta.fda_dataset != null ||
+    meta.application_number != null ||
+    meta.k_number != null ||
+    meta.pma_number != null
+  );
+}
+
+function sourceMatchNote(
+  signalKey: string,
+  meta: Record<string, unknown>,
+  displayCompany: string,
+): string | null {
+  if (!isRegulatorySourceMetadata(signalKey, meta)) return null;
+
+  const sourceName =
+    metaStr(meta.matched_source_text) ??
+    metaStr(meta.sponsor_name) ??
+    metaStr(meta.applicant) ??
+    null;
+  if (!sourceName) return null;
+
+  const sourceNorm = normalizeForSourceMatchNote(sourceName);
+  const displayNorm = normalizeForSourceMatchNote(displayCompany);
+  if (!sourceNorm || !displayNorm || sourceNorm === displayNorm) return null;
+
+  return `This FDA source lists ${sourceName}, which Arcova connects to ${displayCompany}.`;
+}
+
+function addUniqueMatchNote(row: SignalGroupRow, note: string | null) {
+  if (!note) return;
+  row.matchNotes ??= [];
+  if (!row.matchNotes.includes(note)) row.matchNotes.push(note);
+}
+
 /** Compact USD: 1399878 → "$1.4M", 850000 → "$850K". */
 function formatUsdShort(n: number): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -729,9 +777,9 @@ export default function BriefingPage() {
           supabase.from('personas').select('id').limit(1).maybeSingle(),
           fetch(ROUTES.api.icps),
           // Over-fetch so teammate-worked leads can be excluded and still leave a top 5.
-          fetch('/api/leads?pageSize=15&page=1'),
+          fetch('/api/contacts?pageSize=15&page=1'),
           fetch('/api/hubspot/sync-log'),
-          fetch('/api/accounts/icp-coverage'),
+          fetch('/api/companies/icp-coverage'),
           fetch('/api/pipeline/icp-cards'),
           fetch('/api/import-ready'),
           fetch('/api/outreach/replied'),
@@ -960,6 +1008,7 @@ export default function BriefingPage() {
       if (now - sigDate > maxAgeMs) continue;
 
       const company = s.companyName ?? s.companyDomain ?? 'Unknown';
+      const matchNote = sourceMatchNote(s.signalKey, meta, company);
 
       // ── PATENTS → one "Patents" row per company, deduped by patent id ──
       if (PATENT_FAMILY_KEYS.has(s.signalKey)) {
@@ -1077,6 +1126,7 @@ export default function BriefingPage() {
           label: signalLabel(groupKey),
           count: 1,
           ago: relativeTime(s.eventAt ?? s.observedAt),
+          matchNotes: matchNote ? [matchNote] : undefined,
           countLabel,
           pills,
           items: [subItem],
@@ -1085,6 +1135,7 @@ export default function BriefingPage() {
         const row = family.get(rowKey)!;
         row.count++;
         row.items.push(subItem);
+        addUniqueMatchNote(row, matchNote);
       }
     }
 
@@ -1199,6 +1250,13 @@ export default function BriefingPage() {
                         <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
                       )}
                     </span>
+                    {row.matchNotes && row.matchNotes.length > 0 && (
+                      <span className="bt-sig-what">
+                        {row.matchNotes.length === 1
+                          ? row.matchNotes[0]
+                          : `${row.matchNotes[0]} + ${row.matchNotes.length - 1} more source match${row.matchNotes.length === 2 ? '' : 'es'}.`}
+                      </span>
+                    )}
                   </span>
                   <span className="bt-sig-ago">{row.ago}</span>
                   {isExpandable && (

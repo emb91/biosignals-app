@@ -13,6 +13,12 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runPatentsMonitor } from '@/lib/signals/run-patents-monitor';
 import { syncPatentsDelta } from '@/lib/signals/sync-patents-delta';
 import { observeCron } from '@/lib/cron-observability';
+import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
+import {
+  attributionDueForUser,
+  dueForCadence,
+  fastestActiveAcquisitionCadence,
+} from '@/lib/signals/monitor-cadence';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -23,19 +29,7 @@ function messageFromUnknown(error: unknown): string {
 }
 
 async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  // Read from user_companies — the per-user ownership/archive source of truth.
-  // Falls back gracefully via the dual-write pattern: companies.user_id stays
-  // in sync until reads everywhere are migrated.
-  const { data, error } = await admin
-    .from('user_companies')
-    .select('user_id')
-    .is('archived_at', null);
-  if (error) throw new Error(`load active users: ${error.message}`);
-  const ids = new Set<string>();
-  for (const row of (data ?? []) as Array<{ user_id?: unknown }>) {
-    if (typeof row.user_id === 'string' && row.user_id) ids.add(row.user_id);
-  }
-  return [...ids];
+  return listUserIdsWithActiveCompanyState(admin);
 }
 
 async function runCron(request: Request) {
@@ -46,15 +40,30 @@ async function runCron(request: Request) {
   }
   try {
     const admin = createAdminClient();
-    const syncResult = await syncPatentsDelta({ admin });
-
     const userIds = await loadActiveUserIds(admin);
+
+    // Acquisition gate: the BigQuery scrape is a real per-query cost shared by
+    // all customers, so only refresh the mirror at the fastest cadence any
+    // active customer demands (weekly if a growth customer is active, else
+    // monthly). The 45-day default window covers either cadence.
+    const acquisitionCadence = await fastestActiveAcquisitionCadence(admin, userIds);
+    const syncDue = dueForCadence(acquisitionCadence);
+    const syncResult = syncDue
+      ? await syncPatentsDelta({ admin })
+      : { skipped: true as const, reason: 'cadence', acquisition_cadence_days: acquisitionCadence };
+
     let monitorOk = 0;
     let monitorFailed = 0;
+    let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
     for (const userId of userIds) {
       try {
-        const result = await runPatentsMonitor({ userId });
+        const { due, lookbackDays } = await attributionDueForUser(admin, { userId, runner: 'patents' });
+        if (!due) {
+          monitorSkipped += 1;
+          continue;
+        }
+        const result = await runPatentsMonitor({ userId, lookbackDays });
         monitorOk += 1;
         await persistRunHistory(admin, {
           userId,
@@ -96,6 +105,7 @@ async function runCron(request: Request) {
         users_total: userIds.length,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
+        users_skipped: monitorSkipped,
         failures,
       },
     });

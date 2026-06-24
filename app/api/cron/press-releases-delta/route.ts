@@ -21,6 +21,12 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { syncPressReleaseDelta } from '@/lib/signals/sync-press-release-delta';
 import { runPressReleaseMonitor } from '@/lib/signals/run-press-release-monitor';
 import { persistRunHistory } from '@/lib/signals/run-history';
+import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
+import {
+  attributionDueForUser,
+  dueForCadence,
+  fastestActiveAcquisitionCadence,
+} from '@/lib/signals/monitor-cadence';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -31,16 +37,7 @@ function messageFromUnknown(error: unknown): string {
 }
 
 async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  const { data, error } = await admin
-    .from('user_companies')
-    .select('user_id')
-    .is('archived_at', null);
-  if (error) throw new Error(`load active users: ${error.message}`);
-  const ids = new Set<string>();
-  for (const row of (data ?? []) as Array<{ user_id?: unknown }>) {
-    if (typeof row.user_id === 'string' && row.user_id) ids.add(row.user_id);
-  }
-  return [...ids];
+  return listUserIdsWithActiveCompanyState(admin);
 }
 
 async function runCron(request: Request) {
@@ -53,34 +50,48 @@ async function runCron(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
 
-    // How many days back to pull from RSS feeds. Default 3 — overlaps safely
-    // with the prior cron run even if a run is delayed or skipped.
     const cutoffDaysRaw = searchParams.get('cutoffDays');
-    const cutoffDays = cutoffDaysRaw
-      ? Math.max(1, Math.trunc(Number(cutoffDaysRaw) || 3))
-      : 3;
-
-    // How many days back the per-user monitor looks for matching articles.
-    // Slightly longer than the feed window so freshly-classified articles
-    // from the previous run are still eligible.
     const lookbackDaysRaw = searchParams.get('lookbackDays');
-    const lookbackDays = lookbackDaysRaw
-      ? Math.max(1, Math.trunc(Number(lookbackDaysRaw) || 7))
-      : 7;
 
     const admin = createAdminClient();
+    const userIds = await loadActiveUserIds(admin);
+
+    // ── Acquisition gate ──────────────────────────────────────────────────────
+    // RSS pull + Haiku classification is a shared cost, so refresh the mirror at
+    // the fastest cadence any active customer demands (weekly if a growth
+    // customer is active, else monthly). The pull window scales with the gap so
+    // a monthly refresh doesn't miss the weeks in between.
+    const acquisitionCadence = await fastestActiveAcquisitionCadence(admin, userIds);
+    const syncDue = dueForCadence(acquisitionCadence);
+    // Default pull window: weekly gap + buffer, or a full month when monthly.
+    const cutoffDays = cutoffDaysRaw
+      ? Math.max(1, Math.trunc(Number(cutoffDaysRaw) || 9))
+      : acquisitionCadence <= 7
+        ? 9
+        : 33;
 
     // ── Step 1: Sync press release delta ──────────────────────────────────────
-    const syncResult = await syncPressReleaseDelta({ admin, cutoffDays });
+    const syncResult = syncDue
+      ? await syncPressReleaseDelta({ admin, cutoffDays })
+      : { skipped: true as const, reason: 'cadence', acquisition_cadence_days: acquisitionCadence };
 
     // ── Step 2: Per-user monitor ──────────────────────────────────────────────
-    const userIds = await loadActiveUserIds(admin);
     let monitorOk = 0;
     let monitorFailed = 0;
+    let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
 
     for (const userId of userIds) {
       try {
+        const { due, lookbackDays: cadenceLookback } = await attributionDueForUser(admin, { userId, runner: 'press_releases' });
+        if (!due) {
+          monitorSkipped += 1;
+          continue;
+        }
+        // Manual override via ?lookbackDays wins; otherwise size to the customer's cadence.
+        const lookbackDays = lookbackDaysRaw
+          ? Math.max(1, Math.trunc(Number(lookbackDaysRaw) || cadenceLookback))
+          : cadenceLookback;
         const result = await runPressReleaseMonitor({ userId, lookbackDays });
         monitorOk += 1;
         await persistRunHistory(admin, {
@@ -120,12 +131,13 @@ async function runCron(request: Request) {
     return NextResponse.json({
       success: true,
       cutoff_days: cutoffDays,
-      lookback_days: lookbackDays,
+      acquisition_cadence_days: acquisitionCadence,
       sync: syncResult,
       monitor: {
         users_total: userIds.length,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
+        users_skipped: monitorSkipped,
         failures,
       },
     });

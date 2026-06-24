@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -25,7 +26,9 @@ type PatentsMonitorInput = {
 };
 
 const DEFAULT_LOOKBACK_DAYS = 14;
-const MAX_LOOKBACK_DAYS = 30;
+// 40 so a monthly-tier customer (first-weekday spacing up to ~35 days) gets a
+// lookback that fully covers the gap. source_event_id dedup keeps it idempotent.
+const MAX_LOOKBACK_DAYS = 40;
 
 function clampLookback(value: number | undefined): number {
   const v = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_LOOKBACK_DAYS;
@@ -292,18 +295,8 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
   const lookbackDays = clampLookback(input.lookbackDays);
   const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
-  // Ownership + archive state live in user_companies (the per-user link table).
-  // First find the active company ids for this user, then load shared metadata
-  // from companies. Both lookups are indexed.
-  const { data: linkRows, error: linkError } = await admin
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', input.userId)
-    .is('archived_at', null);
-  if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
-  let ownedIds = (linkRows ?? [])
-    .map((r) => (r as { company_id?: unknown }).company_id)
-    .filter((v): v is string => typeof v === 'string' && Boolean(v));
+  let ownedIds = (await listActiveCompanyStateForUser(admin, input.userId))
+    .map((r) => r.company_id);
 
   const companyIds = Array.isArray(input.companyIds)
     ? input.companyIds.filter((value): value is string => typeof value === 'string' && Boolean(value))

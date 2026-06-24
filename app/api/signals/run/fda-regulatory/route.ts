@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { runFdaRegulatoryMonitor } from '@/lib/signals/run-fda-regulatory-monitor';
 import { syncFdaDelta, type SyncFdaDeltaResult } from '@/lib/signals/sync-fda-delta';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 type RunFdaRegulatoryBody = {
   company_ids?: string[];
@@ -119,20 +120,12 @@ export async function POST(request: Request) {
     let result: Awaited<ReturnType<typeof runFdaRegulatoryMonitor>>;
     let executedCompanyIds: string[] = requestedCompanyIds;
     if (runAll && requestedCompanyIds.length === 0) {
-      const companyQuery = authClient
-        .from('user_companies')
-        .select('company_id')
-        .eq('user_id', user.id)
-        .is('archived_at', null)
-        .order('company_id', { ascending: true });
-      if (typeof body.limit === 'number' && Number.isFinite(body.limit)) {
-        companyQuery.limit(Math.max(1, body.limit));
-      }
-      const { data: allCompanies, error: allCompaniesError } = await companyQuery;
-      if (allCompaniesError) throw new Error(allCompaniesError.message);
-      const allIds = (allCompanies ?? [])
-        .map((row: { company_id?: unknown }) => (typeof row.company_id === 'string' ? row.company_id : null))
-        .filter((value): value is string => Boolean(value));
+      const companyRows = await listActiveCompanyStateForUser(authClient, user.id, 'company_id');
+      const ids = companyRows.map((row) => row.company_id).sort();
+      const allIds =
+        typeof body.limit === 'number' && Number.isFinite(body.limit)
+          ? ids.slice(0, Math.max(1, body.limit))
+          : ids;
       executedCompanyIds = allIds;
 
       let totalProcessed = 0;

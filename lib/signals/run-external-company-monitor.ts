@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-admin';
 import { runCompanyMonitor } from '@/lib/company-monitor';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 import { emitExternalCompanySignalsFromMonitor } from '@/lib/signals/readiness-external-companies';
 
 type CompanyRow = {
@@ -39,17 +40,8 @@ export async function runExternalCompanyMonitor(
   const admin = createAdminClient();
 
   // Resolve which company IDs this user actively tracks.
-  const { data: ownedRows, error: ownedError } = await admin
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', input.userId)
-    .is('archived_at', null);
-  if (ownedError) {
-    throw new Error(`user_companies query: ${ownedError.message}`);
-  }
-  let ownedIds = (ownedRows ?? [])
-    .map((r) => (r as { company_id?: unknown }).company_id)
-    .filter((v): v is string => typeof v === 'string' && Boolean(v));
+  let ownedIds = (await listActiveCompanyStateForUser(admin, input.userId))
+    .map((r) => r.company_id);
 
   const companyIds = Array.isArray(input.companyIds)
     ? input.companyIds.filter((value): value is string => typeof value === 'string' && Boolean(value))

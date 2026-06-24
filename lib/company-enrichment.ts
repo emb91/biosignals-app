@@ -26,7 +26,7 @@
  *   6. Flip to `succeeded` (or `failed` with the error string)
  *
  * Used by:
- *   - POST /api/companies/[id]/enrich (Refresh button on Accounts side panel)
+ *   - POST /api/companies/[id]/enrich (Refresh button on Companies side panel)
  *   - lib/signals/run-job-change-monitor (auto-enrich newly created stubs)
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -465,14 +465,34 @@ async function loadContactContext(
     const trimmedName = (companyName ?? '').trim();
     if (!trimmedName) return null;
 
-    const { data: userLink } = await supabase
-      .from('user_companies')
-      .select('user_id')
+    let userId: string | null = null;
+    const { data: orgLink } = await supabase
+      .from('org_companies')
+      .select('org_id')
       .eq('company_id', companyId)
+      .is('archived_at', null)
       .limit(1)
       .maybeSingle();
+    const orgId = (orgLink as { org_id?: string } | null)?.org_id ?? null;
+    if (orgId) {
+      const { data: member } = await supabase
+        .from('org_members')
+        .select('user_id')
+        .eq('org_id', orgId)
+        .limit(1)
+        .maybeSingle();
+      userId = (member as { user_id?: string } | null)?.user_id ?? null;
+    }
 
-    const userId = (userLink as { user_id?: string } | null)?.user_id;
+    if (!userId) {
+      const { data: userLink } = await supabase
+        .from('user_companies')
+        .select('user_id')
+        .eq('company_id', companyId)
+        .limit(1)
+        .maybeSingle();
+      userId = (userLink as { user_id?: string } | null)?.user_id ?? null;
+    }
     if (!userId) return null;
 
     const { data: byResolvedName } = await supabase

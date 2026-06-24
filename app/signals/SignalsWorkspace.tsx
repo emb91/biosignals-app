@@ -17,7 +17,7 @@ import { getSignalBaseImpactScore } from '@/lib/signals/readiness-catalog';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { cn } from '@/lib/utils';
-import '@/app/leads/contacts-layout.css';
+import '@/app/contacts/contacts-layout.css';
 import {
   Activity,
   ArrowUpRight,

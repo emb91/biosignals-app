@@ -3,7 +3,7 @@
 /**
  * /outreach — sequence editor + dispatch surface.
  *
- * Page shell mirrors /leads/contacts exactly so the side panel + agent
+ * Page shell mirrors /contacts exactly so the side panel + agent
  * behaviour are identical: parent flex row with `p-3.5`, main content as a
  * rounded-glass card, agent column inset by the parent's padding, side panels
  * positioned absolutely over the agent column's bounding rect with a floating
@@ -42,6 +42,7 @@ import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { AgentChatBar } from '@/components/AgentChatBar';
 import { cn } from '@/lib/utils';
 import { invalidateCache } from '@/lib/page-fetch-cache';
+import { ROUTES, withQuery } from '@/lib/routes';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -235,11 +236,11 @@ export default function OutreachPage() {
   const sidePanelOpen = editorOpen || detailsOpen;
 
   // Mirror the AgentPanel column's bounding rect so the side panel can
-  // overlay it pixel-for-pixel. Identical pattern to /leads/contacts —
+  // overlay it pixel-for-pixel. Identical pattern to /contacts —
   // AgentPanel below renders with the marker class `.outreach-agent-col`.
   //
   // IMPORTANT: this effect depends on `loading`/`loadingData`. Unlike
-  // /leads/contacts (which renders the agent column on every pass and shows
+  // /contacts (which renders the agent column on every pass and shows
   // its spinner inside the table area), this page early-returns a spinner
   // while loading — so `.outreach-agent-col` does NOT exist on first mount.
   // Without re-running once data lands, the element is never found, agentRect
@@ -324,8 +325,8 @@ export default function OutreachPage() {
     const interval = window.setInterval(() => {
       void refresh();
       invalidateCache('/api/outreach/hooks');
-      invalidateCache('/api/leads');
-      invalidateCache('/api/accounts');
+      invalidateCache('/api/contacts');
+      invalidateCache('/api/companies');
       invalidateCache('/api/today');
     }, 3000);
     return () => window.clearInterval(interval);
@@ -445,15 +446,15 @@ export default function OutreachPage() {
       // which would now point at a deleted sequence — disappears.
       if (contactId) {
         invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
-        invalidateCache(`/api/leads/${encodeURIComponent(contactId)}`);
+        invalidateCache(`/api/contacts/${encodeURIComponent(contactId)}`);
       }
       // Contacts/accounts/today all derive "Send outreach" from
       // outreach_sequences. Clear their list caches so deleting the last draft
       // lets the action fall back to the score-driven "Reach out" state.
-      invalidateCache('/api/leads');
-      invalidateCache('/api/accounts');
+      invalidateCache('/api/contacts');
+      invalidateCache('/api/companies');
       invalidateCache('/api/today');
-      if (companyId) invalidateCache(`/api/accounts/${encodeURIComponent(companyId)}`);
+      if (companyId) invalidateCache(`/api/companies/${encodeURIComponent(companyId)}`);
     }
   };
 
@@ -527,7 +528,7 @@ export default function OutreachPage() {
   ];
 
   return (
-    // ── Page shell — mirrors /leads/contacts exactly so the side panel +
+    // ── Page shell — mirrors /contacts exactly so the side panel +
     //    floating chat bar inherit the same positioning and inset math.
     <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
@@ -671,7 +672,7 @@ export default function OutreachPage() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  router.push(`/leads/contacts?lead=${encodeURIComponent(seq.contact_id)}`)
+                                  router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(seq.contact_id)}`))
                                 }
                                 className="text-left font-medium text-[#0d3547] hover:text-arcova-teal hover:underline underline-offset-2 transition-colors"
                                 title="Open contact"
@@ -824,7 +825,7 @@ export default function OutreachPage() {
         />
 
         {/* Side panel — overlays the agent column. Rendered INSIDE the flex
-            row (same nesting as /leads/contacts) so absolute positioning via
+            row (same nesting as /contacts) so absolute positioning via
             agentRect resolves against the same coordinate space. */}
         {(editorOpen || detailsOpen) && (
           <>

@@ -5,15 +5,16 @@ import {
   type HubSpotLeadState,
 } from '@/lib/hubspot-lead-state';
 import { isCrmSuppressed } from '@/lib/lead-action';
+import { updateCompanyStateForUser } from '@/lib/org-company-state';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AdminClient = SupabaseClient<any>;
 
 /**
  * Denormalize each contact's CRM suppression state onto `contacts.crm_is_suppressed`
- * and the company-aggregated state onto `user_companies.crm_is_suppressed`.
+ * and the company-aggregated state onto `org_companies.crm_is_suppressed`.
  *
- * WHY: the contacts list (/api/leads query-builder) and accounts list
+ * WHY: the contacts list (/api/contacts query-builder) and accounts list
  * (list_user_accounts RPC) paginate in SQL ordered by priority_score. CRM
  * suppression (closed-won/lost → priority drops) is otherwise applied only at
  * READ time on the current page, so across page boundaries a closed deal with
@@ -82,8 +83,8 @@ export async function denormalizeCrmSuppressionState(
     if (!upErr) contactsUpdated += ids.length;
   }
 
-  // Bulk-write user_companies: companies with an aggregated suppressed state vs.
-  // everything else (cleared to false). Scope to this user's companies only.
+  // Bulk-write org_companies: companies with an aggregated suppressed state vs.
+  // everything else (cleared to false). Scope to this user's org companies only.
   const suppressedCompanyIds = [...companyAgg.entries()]
     .filter(([, v]) => isCrmSuppressed(v.state, v.closedAt))
     .map(([companyId]) => companyId);
@@ -91,20 +92,12 @@ export async function denormalizeCrmSuppressionState(
   // Reset every currently-flagged company for this user to false (heals expired
   // cooldowns + companies that dropped their closed deal), then flag the current
   // suppressed set true. Two clean writes — no fragile NOT-IN string building.
-  await admin
-    .from('user_companies')
-    .update({ crm_is_suppressed: false })
-    .eq('user_id', userId)
-    .eq('crm_is_suppressed', true);
+  await updateCompanyStateForUser(admin, userId, { crm_is_suppressed: false });
 
   let companiesUpdated = 0;
   if (suppressedCompanyIds.length) {
-    const { error: sErr } = await admin
-      .from('user_companies')
-      .update({ crm_is_suppressed: true })
-      .eq('user_id', userId)
-      .in('company_id', suppressedCompanyIds);
-    if (!sErr) companiesUpdated += suppressedCompanyIds.length;
+    await updateCompanyStateForUser(admin, userId, { crm_is_suppressed: true }, suppressedCompanyIds);
+    companiesUpdated += suppressedCompanyIds.length;
   }
 
   return { contactsUpdated, companiesUpdated };

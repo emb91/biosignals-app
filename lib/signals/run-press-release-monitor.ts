@@ -33,6 +33,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase-admin';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -311,22 +312,15 @@ export async function runPressReleaseMonitor(
   input: PressReleaseMonitorInput,
 ): Promise<PressReleaseMonitorResult> {
   const admin = createAdminClient();
-  // Default 14 days, clamped to [1, 30]. Matches the other monitors so the
-  // signal feed has a consistent "recent activity" window across pipelines.
-  const lookbackDays = Math.min(30, Math.max(1, Math.floor(input.lookbackDays ?? 14)));
+  // Default 14 days, clamped to [1, 40]. Matches the other monitors so the
+  // signal feed has a consistent "recent activity" window across pipelines, and
+  // 40 covers a monthly-tier customer's first-weekday gap (~35 days).
+  const lookbackDays = Math.min(40, Math.max(1, Math.floor(input.lookbackDays ?? 14)));
   const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
   // Load the user's active companies
-  const { data: linkRows, error: linkError } = await admin
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', input.userId)
-    .is('archived_at', null);
-  if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
-
-  let ownedIds = (linkRows ?? [])
-    .map((r) => (r as { company_id?: unknown }).company_id)
-    .filter((v): v is string => typeof v === 'string' && Boolean(v));
+  let ownedIds = (await listActiveCompanyStateForUser(admin, input.userId))
+    .map((r) => r.company_id);
 
   // Optionally restrict to a specific subset of companies
   const companyIds = Array.isArray(input.companyIds)

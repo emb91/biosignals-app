@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server';
 
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
-import { createClient } from '@/lib/supabase-server';
 import { isMissingColumnError } from '@/lib/supabase-column-compat';
-import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { getOrgContext, scopeIcpsToUser } from '@/lib/org-context';
 
 function isMissingRelationError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -99,22 +98,18 @@ export async function POST(
     }
 
     const { id } = await params;
-    const supabase = await createClient();
+    const ctx = await getOrgContext();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { supabase, user, orgId } = ctx;
+
     const companyResult = await supabase
-      .from('accounts_view')
-      .select('id, company_name, matched_icp_id, company_fit_score, company_fit_breakdown')
+      .from('companies')
+      .select('id, company_name')
       .eq('id', id)
-      .eq('user_id', user.id)
       .maybeSingle();
 
     if (companyResult.error && isSchemaUnavailableError(companyResult.error)) {
@@ -128,7 +123,36 @@ export async function POST(
       );
     }
 
-    const company = companyResult.data as Record<string, unknown>;
+    let fitStateResult = await supabase
+      .from('org_companies')
+      .select('matched_icp_id, company_fit_score, company_fit_breakdown')
+      .eq('org_id', orgId)
+      .eq('company_id', id)
+      .is('archived_at', null)
+      .maybeSingle();
+
+    if (!fitStateResult.data && !fitStateResult.error) {
+      fitStateResult = await supabase
+        .from('user_companies')
+        .select('matched_icp_id, company_fit_score, company_fit_breakdown')
+        .eq('user_id', user.id)
+        .eq('company_id', id)
+        .is('archived_at', null)
+        .maybeSingle();
+    }
+
+    if (fitStateResult.error) {
+      return NextResponse.json({ error: 'Failed to load company fit state.' }, { status: 500 });
+    }
+
+    if (!fitStateResult.data) {
+      return NextResponse.json({ error: 'Company not found.' }, { status: 404 });
+    }
+
+    const company = {
+      ...(companyResult.data as Record<string, unknown>),
+      ...(fitStateResult.data as Record<string, unknown>),
+    };
     const companyName =
       typeof company.company_name === 'string' && company.company_name.trim()
         ? company.company_name.trim()
@@ -159,10 +183,9 @@ export async function POST(
       breakdown: normalizeObject(row.breakdown),
     }));
 
-    const fitOrgId = await orgIdForUser(supabase, user.id);
     const icpResult = await scopeIcpsToUser(
       supabase.from('icps').select('id, name, created_at'),
-      fitOrgId,
+      orgId,
       user.id,
     ).order('created_at', { ascending: false });
 

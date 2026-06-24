@@ -710,7 +710,7 @@ function ICPCard({
       onSaved(result.data ?? { ...icp, ...editData });
 
       if (persona) {
-        const teamRes = await fetch(`/api/contacts/${persona.id}`, {
+        const teamRes = await fetch(`/api/buyer-personas/${persona.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -727,7 +727,7 @@ function ICPCard({
       } else if (editFunctions.length > 0 || editSeniority.length > 0) {
         const personaName =
           editFunctions.length > 0 ? `Buying group: ${editFunctions[0]}` : 'Buying group';
-        const teamRes = await fetch('/api/contacts', {
+        const teamRes = await fetch('/api/buyer-personas', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1424,7 +1424,7 @@ export default function ICPManagerPage() {
   const refreshPageData = async () => {
     const [icpRes, personaRes, billingRes] = await Promise.all([
       fetch(ROUTES.api.icps),
-      fetch('/api/contacts'),
+      fetch('/api/buyer-personas'),
       fetch('/api/billing/summary'),
     ]);
 
@@ -1561,7 +1561,7 @@ export default function ICPManagerPage() {
       // Delete any associated buying team persona first
       const linkedPersona = personas.find((p) => p.icp_id === id);
       if (linkedPersona) {
-        await fetch(`/api/contacts/${linkedPersona.id}`, { method: 'DELETE' }).catch(() => {});
+        await fetch(`/api/buyer-personas/${linkedPersona.id}`, { method: 'DELETE' }).catch(() => {});
         setPersonas((prev) => prev.filter((p) => p.id !== linkedPersona.id));
       }
 

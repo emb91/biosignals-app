@@ -5,6 +5,7 @@
  */
 
 import { normalizeCompanyDomain } from './contact-emails';
+import { listActiveCompanyStateForUser, userHasActiveCompany } from './org-company-state';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseLike = { from: (table: string) => any };
@@ -19,15 +20,7 @@ async function userOwnsCompany(
   userId: string,
   companyId: string,
 ): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', userId)
-    .eq('company_id', companyId)
-    .limit(1)
-    .maybeSingle();
-
-  return !error && Boolean(data?.company_id);
+  return userHasActiveCompany(supabase as any, userId, companyId);
 }
 
 /**
@@ -69,14 +62,12 @@ export async function linkContactToResolvedCompany(
 
   if (!name) return null;
 
-  const { data: userCompanyRows, error: userCompanyError } = await supabase
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', params.userId);
-
-  if (userCompanyError || !userCompanyRows?.length) return null;
-
-  const companyIds = (userCompanyRows as Array<{ company_id: string }>).map((row) => row.company_id);
+  const companyIds = (await listActiveCompanyStateForUser(
+    supabase as any,
+    params.userId,
+    'company_id',
+  )).map((row) => row.company_id);
+  if (!companyIds.length) return null;
   const { data: byNameRows, error: nameError } = await supabase
     .from('companies')
     .select('id, company_name')

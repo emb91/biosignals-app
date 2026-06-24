@@ -1,5 +1,6 @@
 import { scoreContacts, type ContactLike, type FitScoreResult, type PersonaRow } from '@/lib/scoring';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 const SCORE_VERSION = 'contact_fit_llm_v2';
 
@@ -230,17 +231,15 @@ async function loadContactsById(
     return contacts.map((contact) => ({ ...contact, matched_icp_id: null }));
   }
 
-  const companyResult = await supabase
-    .from('user_companies')
-    .select('company_id, matched_icp_id')
-    .eq('user_id', userId)
-    .in('company_id', companyIds);
-
-  if (companyResult.error) throw companyResult.error;
-
+  const companyRows = (await listActiveCompanyStateForUser(
+    supabase as any,
+    userId,
+    'company_id, matched_icp_id',
+  )) as Array<{ company_id: string; matched_icp_id?: string | null }>;
+  const companyIdSet = new Set(companyIds);
   const matchedIcpByCompanyId = new Map(
-    ((companyResult.data || []) as Array<{ company_id: string; matched_icp_id: string | null }>)
-      .filter((row) => typeof row.company_id === 'string')
+    companyRows
+      .filter((row) => companyIdSet.has(row.company_id))
       .map((row) => [row.company_id, row.matched_icp_id ?? null]),
   );
 

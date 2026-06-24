@@ -2,7 +2,7 @@
  * AgentChatBar — the side-panel-style chat input + send button.
  *
  * Extracted from `AgentPanel` so other surfaces (e.g. the floating "Intercom-style"
- * bar on `/leads/contacts` while a contact card is open) can reuse the same input
+ * bar on `/contacts` while a contact card is open) can reuse the same input
  * affordance and stay visually consistent with the side-panel agent.
  *
  * Visual spec (matches AgentPanel's default / side-panel variant):

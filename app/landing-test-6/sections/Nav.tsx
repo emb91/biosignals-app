@@ -6,7 +6,7 @@ export function Nav() {
     <nav className="nav" id="lt6-nav">
       <div className="wrap nav-in">
         <a href="#top" aria-label="Arcova home" className="nav-logo">
-          <Logo size={28} badge="none" />
+          <Logo size={28} badge="navy" />
         </a>
         <div className="nav-mid">
           <a className="nav-link" href="#how">How it works</a>

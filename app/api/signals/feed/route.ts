@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { collectRecentPatentsByCompany, PATENT_SURGE_WINDOW_DAYS, type RecentPatent } from '@/lib/signals/patent-surge';
+import { orgIdForUser } from '@/lib/org-context';
 
 type SignalFeedItem = {
   id: string;
@@ -163,22 +164,30 @@ export async function GET(request: Request) {
 
     const rows = Array.isArray(data) ? data : [];
 
-    // companies.archived_at was dropped in the P1d canonicalisation; archive
-    // state lives on user_companies (per-user). Pull the user's archived
-    // company_ids in one shot and filter rows whose company appears there.
+    // Company archive state is org-scoped. Pull archived company_ids in one shot
+    // and filter rows whose company appears there.
     const allCompanyIds = [
       ...new Set(rows.map((row: any) => normalizeString(row.company_id)).filter(Boolean)),
     ] as string[];
     const archivedCompanyIds = new Set<string>();
     if (allCompanyIds.length) {
-      const { data: archivedRows, error: archivedErr } = await supabase
-        .from('user_companies')
-        .select('company_id')
-        .eq('user_id', user.id)
-        .in('company_id', allCompanyIds)
-        .not('archived_at', 'is', null);
+      const orgId = await orgIdForUser(supabase as any, user.id);
+      const archivedQuery = orgId
+        ? supabase
+            .from('org_companies')
+            .select('company_id')
+            .eq('org_id', orgId)
+            .in('company_id', allCompanyIds)
+            .not('archived_at', 'is', null)
+        : supabase
+            .from('user_companies')
+            .select('company_id')
+            .eq('user_id', user.id)
+            .in('company_id', allCompanyIds)
+            .not('archived_at', 'is', null);
+      const { data: archivedRows, error: archivedErr } = await archivedQuery;
       if (archivedErr) {
-        console.error('[GET /api/signals/feed] user_companies archive lookup error', archivedErr);
+        console.error('[GET /api/signals/feed] company archive lookup error', archivedErr);
       }
       for (const r of (archivedRows ?? []) as Array<{ company_id: string | null }>) {
         if (r.company_id) archivedCompanyIds.add(r.company_id);

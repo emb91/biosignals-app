@@ -1,6 +1,6 @@
 /**
  * Shared accounts data-fetching logic.
- * Used by /api/accounts/query and /api/agent/chat.
+ * Used by /api/companies/query and /api/agent/chat.
  */
 import {
   formatDataProvenanceTypeOnly,

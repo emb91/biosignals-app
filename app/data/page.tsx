@@ -1244,10 +1244,10 @@ function DataPageContent() {
               subtitle="Tell Arcova what gap to fill. Jobs run one at a time and only ever add people and companies you don't already have."
             />
 
-            <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,1fr)_388px]">
+            <div className="grid grid-cols-1 items-stretch gap-6 min-[1100px]:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_388px]">
               {/* Agent tile — same briefing bento embed as /today (orb top, welcome bottom). */}
               <div
-                className="briefing-today flex h-[min(72vh,760px)] min-h-[540px] flex-col [--bt-agent-tile-h:100%]"
+                className="briefing-today mx-auto flex h-[min(72vh,760px)] min-h-[540px] w-full max-w-3xl flex-col [--bt-agent-tile-h:100%] min-[1100px]:max-w-none"
               >
                 <section className="bt-bento bt-agent-tile min-h-0 flex-1">
                   <div className="bt-agent-meta">
@@ -1284,7 +1284,7 @@ function DataPageContent() {
               </div>
 
               {/* Side column: live pipeline */}
-              <div className="hidden h-[min(72vh,760px)] min-h-[540px] xl:block">
+              <div className="hidden h-[min(72vh,760px)] min-h-[540px] min-[1100px]:block">
                 <PipelineRail jobs={visibleJobs} icpFor={icpFor} onRefresh={() => void loadData()} onSimulate={addSimJob} onClearSim={clearSim} />
               </div>
             </div>

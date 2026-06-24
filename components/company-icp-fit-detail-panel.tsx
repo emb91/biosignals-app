@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import '@/app/leads/contacts-layout.css';
+import '@/app/contacts/contacts-layout.css';
 
 export type CompanyFitComponentKey =
   | 'company_type'

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 const SCORE_VERSION = 'company_fit_llm_v3';
 
@@ -128,6 +129,16 @@ export type CompanyFitSyncResult = {
 type ExistingScoreRow = {
   company_id: string;
   icp_id: string;
+};
+
+type OrgCompanyFitFields = {
+  matched_icp_id: string | null;
+  company_fit_score: number;
+  company_fit_breakdown: ScoreBreakdown | null;
+  company_fit_coverage: number | null;
+  company_fit_scored_at: string;
+  company_fit_version: string;
+  company_fit_summary: string;
 };
 
 function roundScore01(value: number): number {
@@ -515,6 +526,33 @@ function buildContactFitFields(winner: CompanyIcpScoreResult | null): {
   };
 }
 
+async function upsertOrgCompanyFit(
+  supabase: MinimalSupabase,
+  userId: string,
+  companyId: string,
+  fields: OrgCompanyFitFields,
+): Promise<void> {
+  const orgId = await orgIdForUser(supabase, userId);
+  if (!orgId) return;
+
+  const { error } = await supabase
+    .from('org_companies')
+    .upsert(
+      {
+        org_id: orgId,
+        company_id: companyId,
+        created_by: userId,
+        updated_at: fields.company_fit_scored_at,
+        ...fields,
+      },
+      { onConflict: 'org_id,company_id' },
+    );
+
+  if (error) {
+    throw error;
+  }
+}
+
 async function loadIcpsForUser(supabase: MinimalSupabase, userId: string): Promise<IcpScoreRow[]> {
   // Org-scoped: company-wide ICPs + this user's own personal ICPs (see scopeIcpsToUser).
   // For a solo owner this is exactly their own ICPs — behavior-preserving.
@@ -605,7 +643,8 @@ async function clearCompanyFit(
     throw deleteResult.error;
   }
 
-  // Per-user scoring state lives in user_companies.
+  // Org-scoped scoring state lives in org_companies; user_companies is retained
+  // as a legacy mirror.
   const userCompanyUpdateResult = await supabase
     .from('user_companies')
     .upsert(
@@ -626,6 +665,16 @@ async function clearCompanyFit(
   if (userCompanyUpdateResult.error) {
     throw userCompanyUpdateResult.error;
   }
+
+  await upsertOrgCompanyFit(supabase, userId, companyId, {
+    matched_icp_id: null,
+    company_fit_score: 0,
+    company_fit_breakdown: null,
+    company_fit_coverage: null,
+    company_fit_scored_at: now,
+    company_fit_version: SCORE_VERSION,
+    company_fit_summary: 'This company has no ICP fit winner yet, so company fit is low until ICP criteria and profile evidence are available.',
+  });
 
   const { data: contacts, error: contactUpdateError } = await supabase
     .from('contacts')
@@ -695,7 +744,8 @@ async function persistScoresForCompany(
     }
   }
 
-  // Per-user scoring state lives in user_companies.
+  // Org-scoped scoring state lives in org_companies; user_companies is retained
+  // as a legacy mirror.
   const userCompanyUpdate = await supabase
     .from('user_companies')
     .upsert(
@@ -716,6 +766,16 @@ async function persistScoresForCompany(
   if (userCompanyUpdate.error) {
     throw userCompanyUpdate.error;
   }
+
+  await upsertOrgCompanyFit(supabase, userId, companyId, {
+    matched_icp_id: winner?.icpId ?? null,
+    company_fit_score: winner?.finalScore01 ?? 0,
+    company_fit_breakdown: winner?.breakdown ?? null,
+    company_fit_coverage: winner?.coverage01 ?? null,
+    company_fit_scored_at: now,
+    company_fit_version: SCORE_VERSION,
+    company_fit_summary: buildCompanyFitSummary(company, winner ?? null),
+  });
 
   const fitFields = buildContactFitFields(winner);
   const contactUpdate = await supabase
@@ -810,19 +870,11 @@ export async function syncCompanyFitForCompany(
 export async function rescoreAllCompanyFitForUser(userId: string): Promise<CompanyFitSyncResult> {
   const supabase = createAdminClient();
 
-  const { data: companies, error } = await supabase
-    .from('user_companies')
-    .select('company_id')
-    .eq('user_id', userId);
-
-  if (error) {
-    throw error;
-  }
-
+  const companies = await listActiveCompanyStateForUser(supabase, userId, 'company_id');
   const result = await syncCompanyFitForCompanies(
     supabase,
     userId,
-    ((companies || []) as Array<{ company_id: string }>).map((row) => row.company_id),
+    companies.map((row) => row.company_id),
   );
 
   const unlinkedContactUpdate = await supabase

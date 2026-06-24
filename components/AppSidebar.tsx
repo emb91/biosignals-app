@@ -208,8 +208,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     setupItems.some((item) => isActive(item.href)) ||
     pathname === ROUTES.setup.arcova;
 
-  const contactsActive = isActive(ROUTES.contacts) || isActive(ROUTES.leads.contacts);
-  const accountsActive = isActive(ROUTES.accounts) || isActive(ROUTES.leads.accounts);
+  const contactsActive = isActive(ROUTES.contacts);
+  const accountsActive = isActive(ROUTES.accounts) || isActive(ROUTES.legacyAccounts);
 
   const closeAccountMenu = () => {
     setAccountMenuOpen(false);
@@ -560,7 +560,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         {railIconButton('accounts', NavIconAccount, {
           onClick: () => guardedNavigate(ROUTES.accounts),
           active: accountsActive,
-          title: 'Accounts',
+          title: 'Companies',
           dot: showAccountsDot || showSignalsDot,
         })}
         {topNavigation.slice(3).map((item) =>
@@ -772,11 +772,19 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         )}
       >
       <div
+        // Click anywhere on the rail to re-stick it fully extended (full-width only,
+        // where collapse is a persistent toggle). Nav buttons still navigate; the
+        // click also bubbles up here to pin the sidebar open.
+        onClick={() => {
+          if (fullWidthSidebar && sidebarCollapsed) setCollapsed(false);
+        }}
         className={cn(
           'flex h-full min-h-0 flex-col overflow-hidden transition-[width] duration-200 ease-out',
           railGlass,
           displayCollapsed ? 'w-[6rem]' : 'w-[18.25rem]',
           'rounded-[1.75rem]',
+          // While collapsed in full-width mode the whole rail is a pin-open target.
+          fullWidthSidebar && sidebarCollapsed && 'cursor-pointer',
           // Hover pop-out: float the full nav over the page from the collapsed slot.
           isHoverExpanded && 'absolute left-3 top-0 z-50 shadow-[0_24px_60px_-24px_rgba(13,53,71,0.55)]',
         )}
@@ -813,7 +821,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-2 border-b border-[rgba(13,53,71,0.08)] px-4 py-[1.125rem]">
+          <div className="flex items-center gap-2 border-b border-[rgba(13,53,71,0.08)] px-5 py-[1.125rem]">
             <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
               <Logo variant="icon" badge="navy" size={22} className="shrink-0" />
               <span className="min-w-0 truncate text-[18px] font-medium tracking-tight text-arcova-navy" style={{ fontFamily: "var(--font-quicksand), system-ui, sans-serif" }}>arcova</span>
@@ -890,7 +898,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderSectionLabel('Go-to-market')}
                   <div className="space-y-0.5">
                     {renderNavItem({ name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact })}
-                    {renderNavItem({ name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount })}
+                    {renderNavItem({ name: 'Companies', href: ROUTES.accounts, icon: NavIconAccount })}
                     {renderNavItem({ name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth })}
                     {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
                     {renderNavItem({ name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach })}

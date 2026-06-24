@@ -121,7 +121,8 @@ async function pushUserToHubSpot(
 
   await ensureArcovaHubSpotProperties(accessToken);
 
-  // Company-level scores live on user_companies post-Phase-1d, not companies.
+  // Company-level scores live in the org-scoped account layer, exposed through
+  // accounts_view for the derived priority score used by HubSpot.
   const leadCompanyIds = [
     ...new Set(
       leads
@@ -134,19 +135,19 @@ async function pushUserToHubSpot(
     { fit: number | null; readiness: number | null; priority: number | null; crmIsSuppressed: boolean }
   >();
   if (leadCompanyIds.length > 0) {
-    const { data: ucRows } = await admin
-      .from('user_companies')
-      .select('company_id, company_fit_score, readiness_score, priority_score, crm_is_suppressed')
+    const { data: accountRows } = await admin
+      .from('accounts_view')
+      .select('id, company_fit_score, readiness_score, priority_score, crm_is_suppressed')
       .eq('user_id', userId)
-      .in('company_id', leadCompanyIds);
-    for (const r of (ucRows ?? []) as Array<{
-      company_id: string;
+      .in('id', leadCompanyIds);
+    for (const r of (accountRows ?? []) as Array<{
+      id: string;
       company_fit_score: number | null;
       readiness_score: number | null;
       priority_score: number | null;
       crm_is_suppressed: boolean | null;
     }>) {
-      companyScoreById.set(r.company_id, {
+      companyScoreById.set(r.id, {
         fit: r.company_fit_score,
         readiness: r.readiness_score,
         priority: r.priority_score,

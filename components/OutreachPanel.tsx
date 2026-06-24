@@ -259,8 +259,8 @@ export function OutreachPanel({ contactId, contactName }: Props) {
         if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
         if (json.sequenceId) {
           invalidateCache('/api/outreach');
-          invalidateCache('/api/leads');
-          invalidateCache('/api/accounts');
+          invalidateCache('/api/contacts');
+          invalidateCache('/api/companies');
           invalidateCache('/api/today');
           invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
           if (mountedRef.current) {

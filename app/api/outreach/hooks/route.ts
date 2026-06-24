@@ -24,6 +24,7 @@ import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores, HIGH_SCORE } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
+import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 // 30 days, not 14: month-old signals like an FDA approval or indication
 // expansion are still strong, honest outreach anchors. The panel shows them as
@@ -344,7 +345,7 @@ function cleanTitle(raw: string | null, signalType: string | null): string {
 // the action model — company fit high AND contact fit high AND effective
 // readiness (max of company + contact) high. HIGH_SCORE + the gate logic come
 // from lib/lead-action so the gate can never drift from the action shown in the
-// leads/accounts UI.
+// contacts/companies UI.
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -935,24 +936,24 @@ export async function GET(request: Request) {
     const companyName: string | null =
       (companiesField?.company_name ?? null) ?? contactRow.company_name ?? null;
 
-    // Pull company-side scores from user_companies (post-Phase-1d the
-    // per-user scoring fields live here, not on companies).
+    // Pull org-scoped company-side scores.
     let companyFit: number | null = null;
     let companyReadiness: number | null = null;
     let matchedIcpId: string | null = null;
     if (companyId) {
-      const { data: uc } = await supabase
-        .from('user_companies')
-        .select('company_fit_score, readiness_score, matched_icp_id')
-        .eq('user_id', user.id)
-        .eq('company_id', companyId)
-        .maybeSingle();
-      if (uc) {
-        const ucRow = uc as {
-          company_fit_score?: number | null;
-          readiness_score?: number | null;
-          matched_icp_id?: string | null;
-        };
+      const companyState = await listActiveCompanyStateForUser(
+        supabase as any,
+        user.id,
+        'company_id, company_fit_score, readiness_score, matched_icp_id',
+      );
+      const ucRow = companyState.find((row) => row.company_id === companyId) as
+        | {
+            company_fit_score?: number | null;
+            readiness_score?: number | null;
+            matched_icp_id?: string | null;
+          }
+        | undefined;
+      if (ucRow) {
         companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
         companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
         matchedIcpId = ucRow.matched_icp_id ?? null;

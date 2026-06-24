@@ -1,6 +1,6 @@
 /**
- * Shared leads/contacts data-fetching and filtering logic.
- * Used by /api/leads/query and /api/agent/chat.
+ * Shared contact data-fetching and filtering logic.
+ * Used by /api/contacts/query and /api/agent/chat.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getActionFromScores } from '@/lib/lead-action';
