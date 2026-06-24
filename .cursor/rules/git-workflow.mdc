@@ -1,5 +1,5 @@
 ---
-description: Git workflow - stay on current branch, avoid creating new branches
+description: Git workflow - one task per branch, parallel-agent safe
 alwaysApply: true
 ---
 
@@ -7,17 +7,30 @@ alwaysApply: true
 
 ## Branch Strategy
 
-- **Stay on the current working branch** - do not create new feature branches unless explicitly requested
-- When asked to push to GitHub, push to the current branch
-- Only create a new branch if the user specifically asks for one
+- **One task = one branch.** At the START of a task, branch off the latest main:
+  `git switch main && git pull && git switch -c <type>/<short-task-name>`.
+- **Stay on that branch for the whole task** — no branch-hopping mid-task.
+- **Never reuse a branch after its PR has merged.** Start a fresh one off main.
+- Each parallel agent works on its OWN branch (and ideally its own git worktree)
+  so uncommitted work can't collide.
 
 ## Commit Guidelines
 
-- Commit frequently with descriptive messages
-- Use conventional commit style when appropriate
-- Never force push unless explicitly requested
+- Commit frequently to your own branch, with descriptive messages.
+- Commit only your own files via explicit paths (`git commit -- <paths>`);
+  never `git add -A` / `commit -a` — it sweeps up other agents' work.
+- Use conventional commit style when appropriate.
 
-## Before Pushing
+## Opening a PR
 
-1. Check current branch with `git branch`
-2. Push to that branch, not a new one
+- Open ONE pull request per branch, at the END of the task, once it's verified
+  (typecheck + relevant tests pass).
+- Before opening/merging, sync onto latest main: `git fetch && git rebase origin/main`,
+  resolve any conflicts on your branch, then `git push --force-with-lease`.
+- After it merges (squash is fine — the branch is never reused), delete the branch.
+
+## Never
+
+- Never force-push main or any shared branch. `--force-with-lease` is only OK on
+  your own feature branch after a rebase.
+- Never push directly to main (the human owner does that deliberately).
