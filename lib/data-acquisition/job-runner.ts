@@ -955,7 +955,7 @@ function exclusionListsFor(contacts: OwnedContactRef[]): {
 
 // ─── Shared pipeline tail ─────────────────────────────────────────────────────
 
-function rawUploadFromPerson(userId: string, batchId: string, person: DiscoveredPerson, jobId: string) {
+function rawUploadFromPerson(userId: string, orgId: string | null, batchId: string, person: DiscoveredPerson, jobId: string) {
   const rawData = {
     full_name: person.full_name,
     first_name: person.first_name,
@@ -974,6 +974,7 @@ function rawUploadFromPerson(userId: string, batchId: string, person: Discovered
 
   return {
     user_id: userId,
+    org_id: orgId,
     batch_id: batchId,
     raw_data: rawData,
     full_name: person.full_name,
@@ -992,8 +993,9 @@ async function ingestPeopleAndRunImportPipeline(
   meter: Meter,
   completionNote: string | null,
 ): Promise<void> {
+  const orgId = await orgIdForUser(admin, job.user_id);
   const rawRows = uniquePeople.map((person) =>
-    rawUploadFromPerson(job.user_id, job.upload_batch_id!, person, job.id),
+    rawUploadFromPerson(job.user_id, orgId, job.upload_batch_id!, person, job.id),
   );
   const { data: insertedRows, error: insertError } =
     rawRows.length > 0

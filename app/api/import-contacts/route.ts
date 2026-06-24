@@ -8,6 +8,7 @@ import {
   processQueuedRowsInBackground,
 } from '@/lib/import-queue';
 import { getPostHogClient } from '@/lib/posthog-server';
+import { orgIdForUser } from '@/lib/org-context';
 
 type ImportField =
   | 'first_name'
@@ -150,6 +151,7 @@ export async function POST(request: Request) {
     }
 
     const normalizedRows = normalizeIncomingRows(headers, rows, columnMappings);
+    const orgId = await orgIdForUser(supabase, user.id);
 
     const { data: batch, error: batchError } = await supabase
       .from('upload_batches')
@@ -171,6 +173,7 @@ export async function POST(request: Request) {
 
     const insertPayload = normalizedRows.map((row) => ({
       user_id: user.id,
+      org_id: orgId,
       batch_id: batchId,
       raw_data: row as unknown as Record<string, unknown>,
       full_name: row.full_name || null,

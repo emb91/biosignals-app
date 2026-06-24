@@ -23,6 +23,7 @@ const APP_ROUTES = [
   ROUTES.today,
   ROUTES.gtmBase,
   ROUTES.import,
+  ROUTES.triage,
   ROUTES.signals,
   ROUTES.outreach,
   ROUTES.log,
