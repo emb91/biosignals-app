@@ -23,24 +23,34 @@ import {
 } from '@/lib/data-provenance';
 import { HUBSPOT_CLOSED_DEAL_STAGES } from '@/lib/hubspot-deals';
 import { effectiveReadiness } from '@/lib/lead-action';
-import { resolveEffectivePriority } from '@/lib/effective-priority';
+import { authoritativeAccountReadiness, resolveEffectivePriority } from '@/lib/effective-priority';
 
 /** Normalise a 0-1 or 0-100 score to a 0-1 fraction (null if unusable). */
 function norm01Score(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  if (value > 1 && value <= 100) return value / 100;
-  if (value >= 0 && value <= 1) return value;
+  const score = finiteScoreNumber(value);
+  if (score == null) return null;
+  if (score > 1 && score <= 100) return score / 100;
+  if (score >= 0 && score <= 1) return score;
   return null;
+}
+
+function finiteScoreNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /**
  * Recompute each contact's priority_score LIVE from the freshly-attached
- * company_fit + contact_fit + effective readiness, overwriting the stored
- * (mirrored) value which can go stale when company_fit changes without a
- * readiness recompute. Same formula as lib/signals/readiness-store and the
- * client's contactPriorityScore:
+ * company_fit + contact_fit + authoritative effective readiness, overwriting
+ * the stored (mirrored) value which can go stale when company_fit changes
+ * without a readiness recompute. Same formula as lib/signals/readiness-store
+ * and the client's contactPriorityScore:
  *   priority = company_fit × contact_fit × (0.5 + 0.5 × effectiveReadiness)
  * Mirrors the live-priority fix applied to the accounts RPC (list_user_accounts).
+ * Keep company readiness aligned with account_readiness_snapshots, not the
+ * org/company compat view mirror, so /contacts agrees with /companies.
  * Contacts without a contact/company fit get a null live priority so the
  * Priority gauge cannot drift high while the Action gate correctly refuses to
  * engage them.
@@ -502,9 +512,9 @@ async function attachReadinessBestEffort(
       .in('contact_id', contactIds);
     if (error || !data) return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
     const readinessMap = new Map<string, { label: string | null; score: number | null }>(
-      (data as Array<{ contact_id: string; overall_label: string | null; overall_score: number | null }>).map((r) => [
+      (data as Array<{ contact_id: string; overall_label: string | null; overall_score: unknown }>).map((r) => [
         r.contact_id,
-        { label: r.overall_label, score: r.overall_score },
+        { label: r.overall_label, score: finiteScoreNumber(r.overall_score) },
       ]),
     );
     return rows.map((row) => {
@@ -645,30 +655,58 @@ async function attachUserCompanyScoresBestEffort(
       data = [...data, ...fallbackRows];
     }
 
+    // The account/org compat views can carry stale org_companies.readiness_score
+    // after the readiness model recomputes. /companies reads
+    // account_readiness_snapshots via list_user_accounts; use the same
+    // authoritative source here so contact priority does not collapse to an old
+    // account readiness value.
+    const { data: snapshotRows, error: snapshotError } = await supabase
+      .from('account_readiness_snapshots')
+      .select('company_id, overall_score')
+      .eq('user_id', userId)
+      .in('company_id', companyIds);
+
+    const readinessByCompanyId =
+      snapshotError || !snapshotRows
+        ? new Map<string, number | null>()
+        : new Map(
+            (snapshotRows as Array<{ company_id: string; overall_score: unknown }>)
+              .filter((row) => typeof row.company_id === 'string')
+              .map((row) => [
+                row.company_id,
+                finiteScoreNumber(row.overall_score),
+              ]),
+          );
+
     const scoreMap = new Map<string, { fit: number | null; readiness: number | null }>(
       data.map((r) => [
         r.company_id,
         {
-          fit: typeof r.company_fit_score === 'number' ? r.company_fit_score : null,
-          readiness: typeof r.readiness_score === 'number' ? r.readiness_score : null,
+          fit: finiteScoreNumber(r.company_fit_score),
+          readiness: finiteScoreNumber(r.readiness_score),
         },
       ]),
     );
     return rows.map((row) => {
       const hit = typeof row.company_id === 'string' ? scoreMap.get(row.company_id) : null;
+      const rowCompanyFit = finiteScoreNumber(row.company_fit_score);
       // Only OVERRIDE company_fit_score when we have a value; preserve any
       // existing top-level value so we don't regress contacts whose fit was
       // populated elsewhere.
       const company_fit_score =
         hit?.fit != null
           ? hit.fit
-          : typeof row.company_fit_score === 'number'
-          ? row.company_fit_score
+          : rowCompanyFit != null
+          ? rowCompanyFit
+          : null;
+      const snapshotReadiness =
+        typeof row.company_id === 'string' && readinessByCompanyId.has(row.company_id)
+          ? readinessByCompanyId.get(row.company_id) ?? null
           : null;
       return {
         ...row,
         company_fit_score,
-        company_readiness_score: hit?.readiness ?? null,
+        company_readiness_score: authoritativeAccountReadiness(snapshotReadiness, hit?.readiness),
       };
     });
   } catch {

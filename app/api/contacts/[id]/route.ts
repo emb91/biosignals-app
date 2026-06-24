@@ -13,6 +13,7 @@ import {
   looksLikePhone,
   syncUserAddedContactPhones,
 } from '@/lib/contact-phones';
+import { effectiveReadiness } from '@/lib/lead-action';
 import { getOrgContext } from '@/lib/org-context';
 
 type LeadUpdateBody = {
@@ -42,6 +43,29 @@ const normalizeString = (value: unknown): string | null => {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
 };
+
+function finiteScoreNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function priorityFromScores(input: {
+  companyFit: unknown;
+  contactFit: unknown;
+  companyReadiness: unknown;
+  contactReadiness: unknown;
+}): number | null {
+  const companyFit = finiteScoreNumber(input.companyFit);
+  const contactFit = finiteScoreNumber(input.contactFit);
+  const readiness = effectiveReadiness(
+    finiteScoreNumber(input.companyReadiness),
+    finiteScoreNumber(input.contactReadiness),
+  ) ?? 0;
+  if (companyFit == null || contactFit == null) return null;
+  return Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * readiness)));
+}
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -176,14 +200,61 @@ export async function GET(
     }
 
     try {
-      const [{ overrides }, emailsGrouped, phonesGrouped] = await Promise.all([
+      const contactRow = data as Record<string, unknown>;
+      const companyId = typeof contactRow.company_id === 'string' ? contactRow.company_id : null;
+
+      const [
+        { overrides },
+        emailsGrouped,
+        phonesGrouped,
+        accountResult,
+        contactReadinessResult,
+      ] = await Promise.all([
         fetchOrgContactOverride(ctx.supabase, ctx.orgId, id),
         fetchContactEmailsForContacts(ctx.supabase, [id]),
         fetchContactPhonesForContacts(ctx.supabase, [id]),
+        companyId
+          ? ctx.supabase
+              .from('accounts_view')
+              .select('company_fit_score, readiness_score')
+              .eq('user_id', ctx.user.id)
+              .eq('id', companyId)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        ctx.supabase
+          .from('contact_readiness_snapshots')
+          .select('overall_score')
+          .eq('user_id', ctx.user.id)
+          .eq('contact_id', id)
+          .maybeSingle(),
       ]);
+
+      const accountRow =
+        accountResult && typeof accountResult === 'object' && 'data' in accountResult
+          ? ((accountResult as { data?: Record<string, unknown> | null }).data ?? null)
+          : null;
+      const contactReadinessRow =
+        contactReadinessResult && typeof contactReadinessResult === 'object' && 'data' in contactReadinessResult
+          ? ((contactReadinessResult as { data?: Record<string, unknown> | null }).data ?? null)
+          : null;
+      const companyFit = finiteScoreNumber(accountRow?.company_fit_score);
+      const companyReadiness = finiteScoreNumber(accountRow?.readiness_score);
+      const contactReadiness = finiteScoreNumber(contactReadinessRow?.overall_score);
+      const priority = priorityFromScores({
+        companyFit,
+        contactFit: contactRow.contact_fit_score,
+        companyReadiness,
+        contactReadiness,
+      });
+
       return NextResponse.json({
         data: {
-          ...applyContactOverrides(data as Record<string, unknown>, overrides),
+          ...applyContactOverrides(contactRow, overrides),
+          company_fit_score: companyFit,
+          company_readiness_score: companyReadiness,
+          contact_readiness_score: contactReadiness,
+          priority_score: priority,
+          intrinsic_priority_score: priority,
           contact_emails: emailsGrouped.get(id) ?? [],
           contact_phones: phonesGrouped.get(id) ?? [],
         },

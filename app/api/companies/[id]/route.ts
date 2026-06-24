@@ -186,7 +186,7 @@ export async function PATCH(
     const incoming = sanitizeOverrides(body.overrides);
     const toClear = clearedKeys(body.overrides);
 
-    const stateSelect = 'source, added_at, updated_at, matched_icp_id, fit_score, readiness_score, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version, company_fit_summary, customer_therapeutic_areas, customer_modalities, customer_development_stages, crm_is_suppressed, archived_at, archived_by, archived_reason';
+    const stateSelect = 'source, added_at, updated_at, matched_icp_id, fit_score, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version, company_fit_summary, customer_therapeutic_areas, customer_modalities, customer_development_stages, crm_is_suppressed, archived_at, archived_by, archived_reason';
     let { data: existing, error: existingError } = await ctx.supabase
       .from('org_companies')
       .select(stateSelect)
@@ -240,7 +240,6 @@ export async function PATCH(
         created_by: ctx.user.id,
         matched_icp_id: existing.matched_icp_id,
         fit_score: existing.fit_score,
-        readiness_score: existing.readiness_score,
         company_fit_score: existing.company_fit_score,
         company_fit_breakdown: existing.company_fit_breakdown,
         company_fit_coverage: existing.company_fit_coverage,
