@@ -22,9 +22,22 @@ says *"this specific person is going"* — a warmer, more actionable datum for a
 - **Cost = posts, not runs.** The actor is priced per result, so batching runs together saves nothing.
   The cost levers are **fewer posts** — per-conference post caps, in-window-only, and tight hashtag
   queries — never bigger batches.
-- **Load-spreading is automatic.** With a single platform and per-conference, in-window jobs, scrapes
-  spread across the calendar on their own (BIO in June, SfN in November). No separate "stagger across
-  days" mechanism is needed — the event-date window *is* the spreader.
+- **Windowed to the conference dates — hard gate.** The sweep is a hashtag *post-search* (not a
+  profile scrape), and the "see you at #ASCO26" posts only exist around the event. So the runner fires
+  a conference's hashtag **only while that conference is in its active phase** (`upcoming`/`live`/
+  `recent`, from `conferences.start_date/end_date` via `conference-phase.ts`) — never outside it. This
+  is the cost gate *and* the precision gate: a dead hashtag is both wasted spend and noise. Per-conf
+  hashtags live on `conferences.social_tags text[]`.
+- **Load-spreading is automatic.** Because each sweep is per-conference and windowed, scrapes spread
+  across the calendar on their own (BIO in June, SfN in November) — no separate "stagger across days"
+  mechanism needed; the event-date window *is* the spreader.
+- **Standalone runner — do NOT bundle with profile enrichment.** This sweep uses a *different actor*
+  (`harvestapi~linkedin-post-search`, fed a hashtag) than the job-change profile enrichment
+  (`harvestapi~linkedin-profile-scraper`, fed each tracked contact's URL). You can't get hashtag
+  results from a profile scrape, so bundling is **not free** — and merging it into the every-contact,
+  every-cycle job-change pass would balloon call volume and trip rate-limit thresholds. Keep it a
+  dedicated `conference-social` runner on its own cadence, gated to in-window conferences only. Its
+  call volume is then a handful of hashtag queries spread across the year — well under any threshold.
 
 ---
 

@@ -59,6 +59,14 @@
     {
       "path": "/api/cron/conference-delta",
       "schedule": "0 15 * * 1,4"
+    },
+    {
+      "path": "/api/cron/conference-presenters-delta",
+      "schedule": "0 16 * * 2"
+    },
+    {
+      "path": "/api/cron/conference-social-delta",
+      "schedule": "0 17 * * 4"
     }
   ]
 }

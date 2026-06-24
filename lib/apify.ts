@@ -16,6 +16,16 @@ export const APIFY_ACTORS = {
     publishedUnit: 'returned_job',
     unitPriceUsd: 0.001,
   },
+  // Conference Phase 3 — social-intent (contact-level `attending_conference`).
+  // Hashtag post-search: feed a conference hashtag, get posts back WITH the
+  // author block (name/headline/company/profileUrl). Priced per post (FREE/BRONZE
+  // $0.002; $0.0015 GOLD+) — see docs/CONFERENCE_PHASE3_SOCIAL.md. Env-overridable
+  // so a tier change doesn't need a code change.
+  'linkedin-post-search': {
+    id: 'harvestapi~linkedin-post-search',
+    publishedUnit: 'post',
+    unitPriceUsd: Number(process.env.APIFY_LINKEDIN_POST_SEARCH_UNIT_PRICE_USD || 0.002),
+  },
 } as const;
 
 export type ApifyActorKey = keyof typeof APIFY_ACTORS;

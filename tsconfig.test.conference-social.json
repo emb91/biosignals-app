@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-conference-social-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/company-name-variants.ts",
+    "lib/signals/conference/conference-phase.ts",
+    "lib/signals/conference/social/types.ts",
+    "lib/signals/conference/social/post-parsing.ts",
+    "lib/signals/conference/social/author-token.ts",
+    "lib/signals/conference/social/social-resolution.ts",
+    "lib/signals/conference/social/scrape-window.ts",
+    "lib/signals/conference/social/conference-social.test.ts"
+  ]
+}
