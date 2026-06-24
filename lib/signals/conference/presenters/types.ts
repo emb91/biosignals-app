@@ -56,6 +56,14 @@ export type ConferenceForAppearanceFetch = {
    * (e.g. an abstractsonline eventId, or a SPARGO session-planner slug).
    */
   platformParams?: Record<string, string | number>;
+  /**
+   * Optional target company names (+ aliases) to scope the fetch to OUR tracked
+   * accounts. Used by adapters that can't be enumerated whole and must query
+   * per-entity (abstractsonline/OASIS: thousands of presentations, searchable by
+   * company name). Adapters that server-render the full agenda ignore this and
+   * return everything. Empty/undefined ⇒ a targeted adapter returns nothing.
+   */
+  targetCompanies?: string[];
 };
 
 /**
