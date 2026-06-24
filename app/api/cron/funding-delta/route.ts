@@ -12,12 +12,13 @@
  * the others.
  */
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { observeCron } from '@/lib/cron-observability';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureTrackedCompanyCiks } from '@/lib/signals/company-cik';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runFundingMonitor } from '@/lib/signals/run-funding-monitor';
-import { syncSecDelta } from '@/lib/signals/sync-sec-delta';
+import { syncSecDelta, type SyncSecDeltaResult } from '@/lib/signals/sync-sec-delta';
 import {
   accountSweepSubscribersForTargets,
   listDueAccountSweepTargets,
@@ -32,6 +33,19 @@ function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
+
+function nonNegFromEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+type FundingSyncOutcome =
+  | SyncSecDeltaResult
+  | { skipped: true; reason: string; targets_due: number; subscribers_due: number; last_success_at?: string | null };
 
 async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -54,9 +68,60 @@ async function runCron(request: Request) {
     const cikPriming = subscribers.length > 0
       ? await ensureTrackedCompanyCiks(admin)
       : { skipped: true as const, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };
-    const syncResult = subscribers.length > 0
-      ? await syncSecDelta({ admin, overlapDays })
-      : { skipped: true as const, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };
+
+    // Decide the sync plan from the most recent run:
+    //  - a prior partial / rate-limit-halted run leaves a resume_date → resume there;
+    //  - a recent SUCCESS within the reuse window → skip the heavy pull (the
+    //    per-user monitor still runs against the existing mirror);
+    //  - otherwise pull the standard overlap window.
+    // A soft deadline keeps each invocation under the serverless timeout.
+    const reuseSeconds = nonNegFromEnv('FUNDING_SYNC_REUSE_SECONDS', 6 * 24 * 60 * 60);
+    const softDeadlineMs = Math.max(30_000, Number(process.env.FUNDING_SYNC_DEADLINE_MS) || 240_000);
+    let syncResult: FundingSyncOutcome;
+    if (subscribers.length === 0) {
+      syncResult = { skipped: true, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };
+    } else {
+      const { data: lastRun } = await admin
+        .from('sec_delta_sync_runs')
+        .select('status, resume_date, finished_at')
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle<{ status: string; resume_date: string | null; finished_at: string | null }>();
+      const resumeFrom = (lastRun?.status === 'partial' || lastRun?.status === 'halted_rate_limit')
+        ? lastRun.resume_date
+        : null;
+      const recentSuccess = lastRun?.status === 'success' && lastRun.finished_at
+        && Date.now() - new Date(lastRun.finished_at).getTime() < reuseSeconds * 1000;
+      if (recentSuccess && !resumeFrom) {
+        syncResult = {
+          skipped: true,
+          reason: 'reuse',
+          targets_due: targets.length,
+          subscribers_due: subscribers.length,
+          last_success_at: lastRun?.finished_at ?? null,
+        };
+      } else {
+        syncResult = resumeFrom
+          ? await syncSecDelta({ admin, startDate: resumeFrom, endDate: todayIso(), softDeadlineMs })
+          : await syncSecDelta({ admin, overlapDays, softDeadlineMs });
+      }
+    }
+
+    // Surface a non-success live sync to Sentry. (observeCron only alerts on
+    // HTTP/logical failures of the whole cron; a partial or failed sync still
+    // returns success:true so the per-user monitor can run on prior data.)
+    if ('status' in syncResult && syncResult.status !== 'success') {
+      Sentry.captureMessage(`SEC funding sync ${syncResult.status}`, {
+        level: syncResult.status === 'partial' ? 'warning' : 'error',
+        tags: { job: 'funding-delta', sync_status: syncResult.status },
+        extra: {
+          resume_date: syncResult.resume_date,
+          error: syncResult.error,
+          days_processed: syncResult.days_processed,
+          filings_upserted: syncResult.filings_upserted,
+        },
+      });
+    }
 
     let monitorOk = 0;
     let monitorFailed = 0;

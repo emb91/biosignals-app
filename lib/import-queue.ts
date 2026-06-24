@@ -8,7 +8,7 @@ import { ingestEnrichedRecords, type EnrichedImportRecord, type ImportProgressCa
 import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { resolveLinkedinUrl, type LinkedinResolutionInput } from '@/lib/linkedin-url-resolver';
-import { triageContacts, TRIAGE_VERSION, type TriageGroup } from '@/lib/triage';
+import { triageContacts, TRIAGE_VERSION, type TriageGroup, type TriageIcpContext } from '@/lib/triage';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { checkAndIncrementUsage } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
@@ -148,6 +148,78 @@ async function linkedinForStorage(
   }
 }
 
+/**
+ * Load a coarse ICP description for ICP-aware triage. Aggregates the workspace's
+ * ICP(s) and buyer persona(s) (org-scoped when the user belongs to an org, else
+ * their own rows). Returns null when there is no usable signal so triage falls
+ * back to the generic life-sciences prompt.
+ */
+async function loadIcpTriageContext(
+  admin: ReturnType<typeof createAdminClient>,
+  { orgId, userId }: { orgId?: string | null; userId: string },
+): Promise<TriageIcpContext | null> {
+  const uniq = (values: Array<string | null | undefined>): string[] => {
+    const seen = new Set<string>();
+    for (const v of values) {
+      const t = (v ?? '').trim();
+      if (t) seen.add(t);
+    }
+    return [...seen];
+  };
+
+  const scopeCol = orgId ? 'org_id' : 'user_id';
+  const scopeVal = orgId ?? userId;
+
+  const [{ data: icps }, { data: personas }] = await Promise.all([
+    admin
+      .from('icps')
+      .select(
+        'icp_summary, company_type, therapeutic_areas, modalities, development_stages, target_customers, buyer_types, example_companies, customer_therapeutic_areas, customer_modalities',
+      )
+      .eq(scopeCol, scopeVal)
+      .limit(5),
+    admin
+      .from('personas')
+      .select('functions, job_titles, seniority_levels')
+      .eq(scopeCol, scopeVal)
+      .limit(8),
+  ]);
+
+  if ((!icps || icps.length === 0) && (!personas || personas.length === 0)) return null;
+
+  const icpRows = (icps ?? []) as Array<Record<string, unknown>>;
+  const personaRows = (personas ?? []) as Array<Record<string, unknown>>;
+  const arr = (row: Record<string, unknown>, key: string): string[] =>
+    Array.isArray(row[key]) ? (row[key] as unknown[]).map((x) => String(x)) : [];
+
+  const context: TriageIcpContext = {
+    summary: uniq(icpRows.map((r) => r.icp_summary as string | null)).join(' | ') || null,
+    companyTypes: uniq(icpRows.map((r) => r.company_type as string | null)),
+    therapeuticAreas: uniq([
+      ...icpRows.flatMap((r) => arr(r, 'therapeutic_areas')),
+      ...icpRows.flatMap((r) => arr(r, 'customer_therapeutic_areas')),
+    ]),
+    modalities: uniq([
+      ...icpRows.flatMap((r) => arr(r, 'modalities')),
+      ...icpRows.flatMap((r) => arr(r, 'customer_modalities')),
+    ]),
+    developmentStages: uniq(icpRows.flatMap((r) => arr(r, 'development_stages'))),
+    targetCustomers: uniq(icpRows.flatMap((r) => arr(r, 'target_customers'))),
+    buyerTypes: uniq(icpRows.flatMap((r) => arr(r, 'buyer_types'))),
+    exampleCompanies: uniq(icpRows.flatMap((r) => arr(r, 'example_companies'))),
+    buyerRoles: uniq([
+      ...personaRows.flatMap((r) => arr(r, 'functions')),
+      ...personaRows.flatMap((r) => arr(r, 'job_titles')),
+      ...personaRows.flatMap((r) => arr(r, 'seniority_levels')),
+    ]),
+  };
+
+  const hasSignal =
+    Boolean(context.summary) ||
+    Object.values(context).some((v) => Array.isArray(v) && v.length > 0);
+  return hasSignal ? context : null;
+}
+
 export async function processQueuedRowsInBackground(params: {
   queuedRows: QueuedRow[];
   batchId: string;
@@ -203,7 +275,11 @@ export async function processQueuedRowsInBackground(params: {
   }
 
   // Batch-triage all rows before spending Apollo/Apify credits.
-  // 'low'-classified rows are stored with minimal identity data only (no enrichment).
+  // Triage is ICP-aware: load the org's ICP(s) + buyer persona(s) so the
+  // classifier scores each row against who we actually target, not a generic
+  // biotech yardstick. 'low'-classified rows are stored with minimal identity
+  // data only (no enrichment).
+  const icpContext = await loadIcpTriageContext(admin, { orgId: member?.org_id, userId });
   const triageMap = await triageContacts(
     triageRows.map((r) => ({
       id: r.id,
@@ -211,6 +287,7 @@ export async function processQueuedRowsInBackground(params: {
       company_name: r.company_name,
       email: r.email,
     })),
+    { icp: icpContext },
   );
 
   const triageNow = new Date().toISOString();
@@ -380,6 +457,15 @@ export async function processQueuedRowsInBackground(params: {
           linkedin_url: resolvedLinkedinForStorage,
           profile_photo_url: enrichmentResult.profile_photo_url,
           headline: enrichmentResult.headline,
+          // Persist title + employer onto the contact/company. Prefer the
+          // enriched (Apollo) value, fall back to what the CSV provided. Without
+          // these the ingested record dropped job_title and company_name/domain
+          // to null, so the contact list showed blank role/company and contact
+          // fit scored 0 even though Apollo returned the data.
+          job_title: enrichmentResult.job_title || (rawData.job_title as string) || undefined,
+          company_name: enrichmentResult.company_name || (rawData.company_name as string) || undefined,
+          company_domain:
+            enrichmentResult.company_domain || (rawData.company_domain as string) || undefined,
           location: finalLocation,
           city: parsedLocation.city || undefined,
           country: parsedLocation.country || undefined,

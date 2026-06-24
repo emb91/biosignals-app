@@ -60,6 +60,22 @@ export type SyncSecDeltaInput = {
   overlapDays?: number;
   startDate?: string;
   endDate?: string;
+  /**
+   * Soft wall-clock budget in ms. When exceeded at a day boundary the run stops
+   * cleanly, records the unfinished date in `resume_date`, and reports
+   * status='partial' so the next invocation resumes instead of being hard-killed
+   * by the serverless function timeout.
+   */
+  softDeadlineMs?: number;
+  /** Per-day filing-fetch concurrency. The SEC client enforces the global 8 req/s cap. */
+  concurrency?: number;
+  /**
+   * Only fetch Form D primary_doc.xml (offering amounts) for CIKs that match a
+   * tracked company — mirroring the 8-K/424B paths. Untracked Form Ds still get
+   * an index-only row (name-matched at flush). Defaults true; set the env
+   * SEC_FORM_D_ALL_CIKS=true to restore the legacy fetch-everything behavior.
+   */
+  formDTrackedCiksOnly?: boolean;
 };
 
 export type SyncSecDeltaResult = {
@@ -73,6 +89,10 @@ export type SyncSecDeltaResult = {
   form_424b_upserted: number;
   rate_limit_halted: boolean;
   duration_ms: number;
+  status: 'success' | 'failed' | 'halted_rate_limit' | 'partial';
+  error: string | null;
+  timed_out: boolean;
+  resume_date: string | null;
 };
 
 type DailyIndexRow = {
@@ -388,6 +408,171 @@ function messageFromUnknown(error: unknown): string {
   return String(error);
 }
 
+type ProcessedFiling = { row: FilingUpsertRow; kind: 'd' | '8k' | '424b' } | null;
+
+/**
+ * Fetch + parse a single daily-index filing into an upsert row. Returns null
+ * when the filing is skipped (untracked 8-K, unrecognized form). Rate-limit
+ * errors propagate so the caller can halt the whole run; all other per-filing
+ * errors are logged and swallowed (return null on hard failure, or the
+ * index-only row when a body parse fails).
+ */
+async function processFiling(
+  row: DailyIndexRow,
+  ctx: { trackedCiks: Set<string>; startedAtIso: string; formDTrackedCiksOnly: boolean },
+): Promise<ProcessedFiling> {
+  const { trackedCiks, startedAtIso, formDTrackedCiksOnly } = ctx;
+  try {
+    if (TARGET_FORM_TYPES_FORM_D.has(row.formType)) {
+      // Form D: the primary_doc.xml fetch (offering amounts) is the expensive
+      // part. Only pay it for tracked CIKs; everything else gets a cheap
+      // index-only row that still name-matches at flush and can be enriched
+      // later — same shape as the 424B path.
+      if (formDTrackedCiksOnly && !trackedCiks.has(row.cik)) {
+        return { row: buildBaseUpsertRow(row, null, startedAtIso), kind: 'd' };
+      }
+      const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'xml');
+      const base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
+      if (primaryDocUrl) {
+        try {
+          const xml = await secFetchText(primaryDocUrl);
+          const parsed = parseFormDXml(xml);
+          base.entity_name = parsed.entityName || base.entity_name;
+          base.entity_name_normalized = base.entity_name
+            ? normalizeCompanyForMatching(base.entity_name)
+            : null;
+          base.entity_type = parsed.entityType;
+          base.industry_group_type = parsed.industryGroupType;
+          base.date_of_first_sale = parsed.dateOfFirstSale;
+          base.total_offering_amount = parsed.totalOfferingAmount;
+          base.total_amount_sold = parsed.totalAmountSold;
+          base.total_remaining = parsed.totalRemaining;
+        } catch (error) {
+          if (isRateLimitError(error)) throw error;
+          console.warn(
+            `[sync-sec-delta] Form D primary_doc parse failed (${row.accessionNumber}): ${messageFromUnknown(error)}`,
+          );
+        }
+      }
+      return { row: base, kind: 'd' };
+    }
+
+    if (TARGET_FORM_TYPES_8K.has(row.formType)) {
+      // 8-K: only worth a primary-doc fetch if the CIK matches a tracked
+      // company. Otherwise we'd be downloading ~120 8-Ks/day for nothing.
+      if (!trackedCiks.has(row.cik)) return null;
+      const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'htm');
+      const base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
+      let body: string | null = null;
+      if (primaryDocUrl) {
+        try {
+          body = await secFetchText(primaryDocUrl);
+          base.items = extractEightKItems(body);
+        } catch (error) {
+          if (isRateLimitError(error)) throw error;
+          console.warn(
+            `[sync-sec-delta] 8-K primary_doc parse failed (${row.accessionNumber}): ${messageFromUnknown(error)}`,
+          );
+        }
+      }
+      // Classify 8-Ks whose item codes (1.01 material agreement, 5.02
+      // leadership change, 8.01 catch-all) need body inspection to route to a
+      // specific signal. 3.02 (PIPE) is handled separately by the item-only
+      // path in run-funding-monitor.ts.
+      if (body && Array.isArray(base.items)
+          && base.items.some((item) => CLASSIFIABLE_8K_ITEMS.has(item))) {
+        const { classification, classifiedAt } = await tryClassify(
+          row.formType,
+          base.entity_name,
+          row.filingDate,
+          base.items,
+          body,
+          row.accessionNumber,
+        );
+        base.classification = classification;
+        base.classified_at = classifiedAt;
+      }
+      return { row: base, kind: '8k' };
+    }
+
+    if (TARGET_FORM_TYPES_424B.has(row.formType)) {
+      // 424B: default to index-only record for the global mirror; but if the
+      // CIK is tracked, also fetch the prospectus body and classify it to
+      // extract proceeds / use-of-proceeds.
+      let base: FilingUpsertRow;
+      if (trackedCiks.has(row.cik)) {
+        const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'htm');
+        base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
+        if (primaryDocUrl) {
+          try {
+            const body = await secFetchText(primaryDocUrl);
+            const { classification, classifiedAt } = await tryClassify(
+              row.formType,
+              base.entity_name,
+              row.filingDate,
+              [],
+              body,
+              row.accessionNumber,
+            );
+            base.classification = classification;
+            base.classified_at = classifiedAt;
+          } catch (error) {
+            if (isRateLimitError(error)) throw error;
+            console.warn(
+              `[sync-sec-delta] 424B primary_doc fetch failed (${row.accessionNumber}): ${messageFromUnknown(error)}`,
+            );
+          }
+        }
+      } else {
+        base = buildBaseUpsertRow(row, null, startedAtIso);
+      }
+      return { row: base, kind: '424b' };
+    }
+
+    return null;
+  } catch (error) {
+    if (isRateLimitError(error)) throw error;
+    // Non-rate-limit errors for a single filing are non-fatal — log & drop.
+    console.warn(
+      `[sync-sec-delta] filing ${row.accessionNumber} (${row.formType}) failed: ${messageFromUnknown(error)}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Run `worker` over `items` with bounded concurrency. The SEC client's
+ * module-level throttle still enforces the global 8 req/s cap, so concurrency
+ * only removes per-request round-trip stalls. The first error halts scheduling
+ * and rejects (used for rate-limit halts).
+ */
+async function runConcurrent<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let cursor = 0;
+  let halt: unknown = null;
+  const pump = async (): Promise<void> => {
+    while (true) {
+      if (halt) return;
+      const i = cursor++;
+      if (i >= items.length) return;
+      try {
+        out[i] = await worker(items[i], i);
+      } catch (error) {
+        halt = error;
+        return;
+      }
+    }
+  };
+  const workers = Math.max(1, Math.min(limit, items.length || 1));
+  await Promise.all(Array.from({ length: workers }, () => pump()));
+  if (halt) throw halt;
+  return out;
+}
+
 export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDeltaResult> {
   const admin = input.admin;
   const startedAt = new Date();
@@ -426,12 +611,18 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
   if (runInsertErr) throw new Error(`sec_delta_sync_runs insert: ${runInsertErr.message}`);
   const runId = runRow?.id as string;
 
+  const softDeadlineMs = input.softDeadlineMs ?? null;
+  const concurrency = input.concurrency ?? Math.max(1, Number(process.env.SEC_SYNC_CONCURRENCY) || 6);
+  const formDTrackedCiksOnly = input.formDTrackedCiksOnly ?? (process.env.SEC_FORM_D_ALL_CIKS !== 'true');
+
   let daysProcessed = 0;
   let daysSkipped = 0;
   let formDUpserted = 0;
   let form8kUpserted = 0;
   let form424bUpserted = 0;
   let rateLimitHalted = false;
+  let timedOut = false;
+  let resumeDate: string | null = null;
   let lastError: string | null = null;
 
   const upsertBuffer: FilingUpsertRow[] = [];
@@ -455,19 +646,30 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
 
     // Resolve entity_name with provenance. Only verified matches populate the
     // scalar canonical_company_id used by funding monitors.
-    if (chunk.some((r) => Boolean(r.entity_name))) {
+    //
+    // buildCompanyMentionMatches already batches internally (one resolver pass +
+    // chunked company fetch per call), so we hand it the WHOLE chunk at once.
+    // It maps over its non-empty inputs in order, so matches[i] lines up with
+    // the i-th named row — turning ~200 sequential resolver round-trips per
+    // flush into one. This is the dominant cost of a large delta sync.
+    // Trim-check mirrors buildCompanyMentionMatches' internal cleanSourceText so
+    // matches[i] stays aligned with namedRows[i] (whitespace-only names are
+    // dropped by both, never by only one).
+    const namedRows = chunk.filter((r) => Boolean(r.entity_name && r.entity_name.trim().length > 0));
+    if (namedRows.length) {
       try {
-        for (const row of chunk) {
-          const matches = await buildCompanyMentionMatches(admin, [
-            { sourceText: row.entity_name, sourceField: 'entity_name' },
-          ]);
-          const match = matches[0] ?? null;
+        const matches = await buildCompanyMentionMatches(
+          admin,
+          namedRows.map((row) => ({ sourceText: row.entity_name, sourceField: 'entity_name' })),
+        );
+        namedRows.forEach((row, i) => {
+          const match = matches[i] ?? null;
           row.canonical_company_match = match;
           row.canonical_company_id =
             match?.company_id && hasVerifiedCanonicalCompanyMatch(match, match.company_id)
               ? match.company_id
               : null;
-        }
+        });
       } catch (e) {
         console.error('[sync-sec] resolver failed for chunk:', e);
         for (const row of chunk) {
@@ -487,6 +689,14 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
     // Walk forward from startDate so partial progress is meaningful if we halt.
     const cursor = new Date(startDate.getTime());
     while (cursor.getTime() <= endDate.getTime()) {
+      // Soft time budget: stop at a day boundary before the next (expensive)
+      // day so the serverless function never gets hard-killed mid-write. The
+      // unfinished date is recorded so the next run resumes here.
+      if (softDeadlineMs !== null && Date.now() - startedAt.getTime() > softDeadlineMs) {
+        timedOut = true;
+        resumeDate = isoFromDate(cursor);
+        break;
+      }
       if (isWeekendUtc(cursor)) {
         cursor.setUTCDate(cursor.getUTCDate() + 1);
         continue;
@@ -500,6 +710,7 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
         if (isRateLimitError(error)) {
           rateLimitHalted = true;
           lastError = messageFromUnknown(error);
+          resumeDate = isoFromDate(cursor);
           break;
         }
         throw error;
@@ -513,121 +724,27 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
       const rows = parseDailyIndex(indexText, filingDateIso);
       daysProcessed += 1;
 
-      for (const row of rows) {
-        try {
-          if (TARGET_FORM_TYPES_FORM_D.has(row.formType)) {
-            const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'xml');
-            const base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
-            if (primaryDocUrl) {
-              try {
-                const xml = await secFetchText(primaryDocUrl);
-                const parsed = parseFormDXml(xml);
-                base.entity_name = parsed.entityName || base.entity_name;
-                base.entity_name_normalized = base.entity_name
-                  ? normalizeCompanyForMatching(base.entity_name)
-                  : null;
-                base.entity_type = parsed.entityType;
-                base.industry_group_type = parsed.industryGroupType;
-                base.date_of_first_sale = parsed.dateOfFirstSale;
-                base.total_offering_amount = parsed.totalOfferingAmount;
-                base.total_amount_sold = parsed.totalAmountSold;
-                base.total_remaining = parsed.totalRemaining;
-              } catch (error) {
-                if (isRateLimitError(error)) throw error;
-                // Non-fatal: paper or malformed primary_doc — fall back to index-only.
-                console.warn(
-                  `[sync-sec-delta] Form D primary_doc parse failed (${row.accessionNumber}): ${messageFromUnknown(error)}`,
-                );
-              }
-            }
-            upsertBuffer.push(base);
-            formDUpserted += 1;
-          } else if (TARGET_FORM_TYPES_8K.has(row.formType)) {
-            // 8-K: only worth a primary-doc fetch if the CIK matches a tracked
-            // company. Otherwise we'd be downloading ~120 8-Ks/day for nothing.
-            if (!trackedCiks.has(row.cik)) {
-              continue;
-            }
-            const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'htm');
-            const base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
-            let body: string | null = null;
-            if (primaryDocUrl) {
-              try {
-                body = await secFetchText(primaryDocUrl);
-                base.items = extractEightKItems(body);
-              } catch (error) {
-                if (isRateLimitError(error)) throw error;
-                console.warn(
-                  `[sync-sec-delta] 8-K primary_doc parse failed (${row.accessionNumber}): ${messageFromUnknown(error)}`,
-                );
-              }
-            }
-            // Classify 8-Ks whose item codes (1.01 material agreement, 5.02
-            // leadership change, 8.01 catch-all) need body inspection to
-            // route to a specific signal. 3.02 (PIPE) is handled separately
-            // by the item-only path in run-funding-monitor.ts.
-            if (body && Array.isArray(base.items)
-                && base.items.some((item) => CLASSIFIABLE_8K_ITEMS.has(item))) {
-              const { classification, classifiedAt } = await tryClassify(
-                row.formType,
-                base.entity_name,
-                row.filingDate,
-                base.items,
-                body,
-                row.accessionNumber,
-              );
-              base.classification = classification;
-              base.classified_at = classifiedAt;
-            }
-            upsertBuffer.push(base);
-            form8kUpserted += 1;
-          } else if (TARGET_FORM_TYPES_424B.has(row.formType)) {
-            // 424B: default to index-only record for the global mirror; but if
-            // the CIK is tracked, also fetch the prospectus body and classify
-            // it to extract proceeds / use-of-proceeds. Untracked-CIK 424Bs
-            // stay as basic ipo_or_follow_on rows with no body fetch.
-            let base: FilingUpsertRow;
-            if (trackedCiks.has(row.cik)) {
-              const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'htm');
-              base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
-              if (primaryDocUrl) {
-                try {
-                  const body = await secFetchText(primaryDocUrl);
-                  const { classification, classifiedAt } = await tryClassify(
-                    row.formType,
-                    base.entity_name,
-                    row.filingDate,
-                    [],
-                    body,
-                    row.accessionNumber,
-                  );
-                  base.classification = classification;
-                  base.classified_at = classifiedAt;
-                } catch (error) {
-                  if (isRateLimitError(error)) throw error;
-                  console.warn(
-                    `[sync-sec-delta] 424B primary_doc fetch failed (${row.accessionNumber}): ${messageFromUnknown(error)}`,
-                  );
-                }
-              }
-            } else {
-              base = buildBaseUpsertRow(row, null, startedAtIso);
-            }
-            upsertBuffer.push(base);
-            form424bUpserted += 1;
-          }
-          if (upsertBuffer.length >= UPSERT_CHUNK) await flush();
-        } catch (error) {
-          if (isRateLimitError(error)) {
-            rateLimitHalted = true;
-            lastError = messageFromUnknown(error);
-            throw error; // bubble out of day loop
-          }
-          // Non-rate-limit errors for a single filing are non-fatal — log & continue.
-          console.warn(
-            `[sync-sec-delta] filing ${row.accessionNumber} (${row.formType}) failed: ${messageFromUnknown(error)}`,
-          );
+      let dayResults: ProcessedFiling[];
+      try {
+        dayResults = await runConcurrent(rows, concurrency, (row) =>
+          processFiling(row, { trackedCiks, startedAtIso, formDTrackedCiksOnly }));
+      } catch (error) {
+        if (isRateLimitError(error)) {
+          rateLimitHalted = true;
+          lastError = messageFromUnknown(error);
+          resumeDate = isoFromDate(cursor);
+          break;
         }
+        throw error;
+      }
+
+      for (const res of dayResults) {
+        if (!res) continue;
+        upsertBuffer.push(res.row);
+        if (res.kind === 'd') formDUpserted += 1;
+        else if (res.kind === '8k') form8kUpserted += 1;
+        else form424bUpserted += 1;
+        if (upsertBuffer.length >= UPSERT_CHUNK) await flush();
       }
 
       cursor.setUTCDate(cursor.getUTCDate() + 1);
@@ -646,7 +763,13 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
   }
 
   const finishedAt = new Date();
-  const status = rateLimitHalted ? 'halted_rate_limit' : lastError ? 'failed' : 'success';
+  const status: SyncSecDeltaResult['status'] = rateLimitHalted
+    ? 'halted_rate_limit'
+    : lastError
+      ? 'failed'
+      : timedOut
+        ? 'partial'
+        : 'success';
   await admin
     .from('sec_delta_sync_runs')
     .update({
@@ -659,6 +782,7 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
       form_8k_upserted: form8kUpserted,
       form_424b_upserted: form424bUpserted,
       rate_limit_halted: rateLimitHalted,
+      resume_date: resumeDate,
       error: lastError,
     })
     .eq('id', runId);
@@ -674,5 +798,9 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
     form_424b_upserted: form424bUpserted,
     rate_limit_halted: rateLimitHalted,
     duration_ms: finishedAt.getTime() - startedAt.getTime(),
+    status,
+    error: lastError,
+    timed_out: timedOut,
+    resume_date: resumeDate,
   };
 }
