@@ -15,8 +15,12 @@ import { observeCron } from '@/lib/cron-observability';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runConferenceSocialMonitor } from '@/lib/signals/conference/social/run-social-monitor';
 import { syncConferenceSocialDelta } from '@/lib/signals/conference/social/sync-social-delta';
-import { listUserIdsWithActiveCompanyState } from '@/lib/org-company-state';
-import { monitorDueForUser } from '@/lib/signals/monitor-cadence';
+import {
+  contactSweepSubscribersForTargets,
+  listDueContactSweepTargets,
+  markContactSourceSweep,
+  refreshAllMonitoringUniverses,
+} from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -34,22 +38,38 @@ async function runCron(request: Request) {
   }
   try {
     const admin = createAdminClient();
-    const syncResult = await syncConferenceSocialDelta({ admin });
+    const dispatcherLimit = Math.max(1, Number(process.env.CONFERENCE_SOCIAL_MONITOR_DISPATCH_LIMIT ?? '2500'));
+    const refreshFailures = await refreshAllMonitoringUniverses();
+    const targets = await listDueContactSweepTargets({ source: 'conference_social', limit: dispatcherLimit });
+    const subscribers = await contactSweepSubscribersForTargets({
+      personIds: targets.map((target) => target.personId),
+      runner: 'conference-social',
+    });
+    const syncResult = subscribers.length > 0
+      ? await syncConferenceSocialDelta({ admin })
+      : { skipped: true as const, reason: 'cadence', targets_due: targets.length, subscribers_due: 0 };
 
-    const userIds = await listUserIdsWithActiveCompanyState(admin);
     let monitorOk = 0;
     let monitorFailed = 0;
     let monitorSkipped = 0;
     const failures: Array<{ user_id: string; error: string }> = [];
-    for (const userId of userIds) {
+    const byUser = new Map<string, typeof subscribers>();
+    for (const item of subscribers) {
+      const list = byUser.get(item.userId) ?? [];
+      list.push(item);
+      byUser.set(item.userId, list);
+    }
+    const failedPersons = new Set<string>();
+    for (const [userId, items] of byUser) {
       try {
-        const { due } = await monitorDueForUser(admin, { userId, runner: 'conference-social' });
-        if (!due) {
-          monitorSkipped += 1;
-          continue;
-        }
-        const result = await runConferenceSocialMonitor({ userId });
+        const result = await runConferenceSocialMonitor({
+          userId,
+          contactIds: [...new Set(items.map((item) => item.contactId))],
+        });
         monitorOk += 1;
+        if (result.failed_conferences > 0) {
+          for (const item of items) failedPersons.add(item.personId);
+        }
         await persistRunHistory(admin, {
           userId,
           signalKey: 'conference_social_all',
@@ -82,12 +102,28 @@ async function runCron(request: Request) {
         });
       }
     }
+    if (byUser.size === 0) monitorSkipped = targets.length;
+    const subscriberPersonIds = new Set(subscribers.map((item) => item.personId));
+    await Promise.all(targets.filter((target) => subscriberPersonIds.has(target.personId)).map((target) => markContactSourceSweep({
+      personId: target.personId,
+      source: 'conference_social',
+      cadenceDays: target.cadenceDays,
+      status: failedPersons.has(target.personId) ? 'failed' : 'succeeded',
+      providerCostUsd: 0,
+    })));
+    const { count: overdue } = await admin.from('contact_source_sweep_targets')
+      .select('id', { count: 'exact', head: true })
+      .eq('source', 'conference_social').eq('status', 'active').lte('next_sweep_at', new Date().toISOString());
 
     return NextResponse.json({
       success: true,
       sync: syncResult,
+      targets_due: targets.length,
+      subscribers_due: subscribers.length,
+      overdue: overdue ?? 0,
+      refresh_failures: refreshFailures,
       monitor: {
-        users_total: userIds.length,
+        users_total: byUser.size,
         users_succeeded: monitorOk,
         users_failed: monitorFailed,
         users_skipped: monitorSkipped,

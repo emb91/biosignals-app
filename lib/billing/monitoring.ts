@@ -3,9 +3,31 @@ import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { creditEnforcementEnabled } from '@/lib/billing/credits';
 import { FREE_TIER } from '@/lib/billing/config';
 import { SWEEP_FIT_THRESHOLD } from '@/lib/signals/sweep-fit-gate';
+import {
+  dueForRollingCadence,
+  lookbackDaysForCadence,
+} from '@/lib/signals/monitor-cadence-rules';
 
-const ACCOUNT_SWEEP_SOURCES = ['hiring', 'publications', 'patents', 'press_releases'] as const;
-const CONTACT_SWEEP_SOURCES = ['job_change', 'publications'] as const;
+export const ACCOUNT_SWEEP_SOURCES = [
+  'hiring',
+  'publications',
+  'patents',
+  'press_releases',
+  'funding',
+  'grants',
+  'fda_regulatory',
+  'clinical_trials',
+  'conferences',
+] as const;
+export const CONTACT_SWEEP_SOURCES = [
+  'job_change',
+  'publications',
+  'conference_presenters',
+  'conference_social',
+] as const;
+
+export type AccountSweepSource = typeof ACCOUNT_SWEEP_SOURCES[number];
+export type ContactSweepSource = typeof CONTACT_SWEEP_SOURCES[number];
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -41,6 +63,60 @@ type SweepTargetRow = {
   effective_cadence_days: number;
   last_sweep_at: string | null;
   next_sweep_at: string;
+};
+
+type SharedAccountSweepTargetRow = {
+  company_id: string;
+  source: AccountSweepSource;
+  effective_cadence_days: number;
+  active_subscriber_count: number;
+  fastest_org_id: string | null;
+};
+
+type SharedContactSweepTargetRow = {
+  person_id: string;
+  source: ContactSweepSource;
+  effective_cadence_days: number;
+  active_subscriber_count: number;
+  fastest_org_id: string | null;
+};
+
+export type DueAccountSweepTarget = {
+  companyId: string;
+  source: AccountSweepSource;
+  cadenceDays: number;
+  lookbackDays: number;
+  activeSubscriberCount: number;
+  fastestOrgId: string | null;
+};
+
+export type DueContactSweepTarget = {
+  personId: string;
+  source: ContactSweepSource;
+  cadenceDays: number;
+  lookbackDays: number;
+  activeSubscriberCount: number;
+  fastestOrgId: string | null;
+};
+
+export type AccountSweepSubscriber = {
+  orgId: string;
+  userId: string;
+  companyId: string;
+  monitorId: string | null;
+  cadenceDays: number;
+  lookbackDays: number;
+};
+
+export type ContactSweepSubscriber = {
+  orgId: string;
+  userId: string;
+  contactId: string;
+  personId: string;
+  companyId: string | null;
+  monitorId: string | null;
+  cadenceDays: number;
+  lookbackDays: number;
 };
 
 export async function refreshMonitoringUniverse(orgId: string): Promise<{
@@ -177,6 +253,24 @@ export async function reconcileMonitoringAfterBillingChange(
   } catch (error) {
     console.warn(`[billing] monitoring reconciliation skipped after ${reason}:`, error);
   }
+}
+
+export async function refreshAllMonitoringUniverses(): Promise<Array<{ org_id: string; error: string }>> {
+  const admin = createAdminClient();
+  const { data: orgRows, error } = await admin.from('organizations').select('id');
+  if (error) throw new Error(`organization read failed: ${error.message}`);
+  const failures: Array<{ org_id: string; error: string }> = [];
+  for (const org of orgRows ?? []) {
+    const orgId = org.id as string;
+    try {
+      await refreshMonitoringUniverse(orgId);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      failures.push({ org_id: orgId, error: message });
+      console.error(`[monitoring] org ${orgId} refresh failed:`, caught);
+    }
+  }
+  return failures;
 }
 
 async function reconcileSharedMonitoringCadenceForOrg(
@@ -381,6 +475,276 @@ function nextSweepAtForCadence(
   return existing.next_sweep_at;
 }
 
+export async function listDueAccountSweepTargets(params: {
+  source: AccountSweepSource;
+  limit: number;
+  now?: Date;
+}): Promise<DueAccountSweepTarget[]> {
+  const admin = createAdminClient();
+  const now = params.now ?? new Date();
+  const { data, error } = await admin.from('account_source_sweep_targets')
+    .select('company_id, source, effective_cadence_days, active_subscriber_count, fastest_org_id')
+    .eq('source', params.source)
+    .eq('status', 'active')
+    .lte('next_sweep_at', now.toISOString())
+    .order('next_sweep_at', { ascending: true })
+    .limit(Math.max(1, params.limit));
+  if (error) throw new Error(`account sweep target read failed: ${error.message}`);
+  return ((data ?? []) as SharedAccountSweepTargetRow[]).map((row) => ({
+    companyId: row.company_id,
+    source: row.source,
+    cadenceDays: Number(row.effective_cadence_days),
+    lookbackDays: lookbackDaysForCadence(Number(row.effective_cadence_days)),
+    activeSubscriberCount: Number(row.active_subscriber_count ?? 0),
+    fastestOrgId: row.fastest_org_id,
+  }));
+}
+
+export async function listDueContactSweepTargets(params: {
+  source: ContactSweepSource;
+  limit: number;
+  now?: Date;
+}): Promise<DueContactSweepTarget[]> {
+  const admin = createAdminClient();
+  const now = params.now ?? new Date();
+  const { data, error } = await admin.from('contact_source_sweep_targets')
+    .select('person_id, source, effective_cadence_days, active_subscriber_count, fastest_org_id')
+    .eq('source', params.source)
+    .eq('status', 'active')
+    .lte('next_sweep_at', now.toISOString())
+    .order('next_sweep_at', { ascending: true })
+    .limit(Math.max(1, params.limit));
+  if (error) throw new Error(`contact sweep target read failed: ${error.message}`);
+  return ((data ?? []) as SharedContactSweepTargetRow[]).map((row) => ({
+    personId: row.person_id,
+    source: row.source,
+    cadenceDays: Number(row.effective_cadence_days),
+    lookbackDays: lookbackDaysForCadence(Number(row.effective_cadence_days)),
+    activeSubscriberCount: Number(row.active_subscriber_count ?? 0),
+    fastestOrgId: row.fastest_org_id,
+  }));
+}
+
+async function orgMembersByOrg(
+  admin: AdminClient,
+  orgIds: string[],
+): Promise<Map<string, string[]>> {
+  const byOrg = new Map<string, string[]>();
+  const uniqueOrgIds = [...new Set(orgIds)].filter(Boolean);
+  if (!uniqueOrgIds.length) return byOrg;
+  const { data, error } = await admin.from('org_members')
+    .select('org_id, user_id')
+    .in('org_id', uniqueOrgIds);
+  if (error) throw new Error(`org members read failed: ${error.message}`);
+  for (const row of data ?? []) {
+    const orgId = row.org_id as string;
+    const userId = row.user_id as string;
+    if (!orgId || !userId) continue;
+    const list = byOrg.get(orgId) ?? [];
+    list.push(userId);
+    byOrg.set(orgId, list);
+  }
+  return byOrg;
+}
+
+async function usersDueForRunner(
+  admin: AdminClient,
+  candidates: Array<{ userId: string; cadenceDays: number }>,
+  runner: string,
+  now: number,
+): Promise<Set<string>> {
+  const due = new Set<string>();
+  const userIds = [...new Set(candidates.map((candidate) => candidate.userId))];
+  if (!userIds.length) return due;
+  const { data, error } = await admin.from('signals_run_history')
+    .select('user_id, created_at')
+    .in('user_id', userIds)
+    .eq('runner', runner)
+    .eq('status', 'success');
+  if (error) throw new Error(`run history cadence check failed: ${error.message}`);
+
+  const latestByUser = new Map<string, number>();
+  for (const row of data ?? []) {
+    const userId = row.user_id as string;
+    const createdAt = Date.parse(row.created_at as string);
+    if (!userId || Number.isNaN(createdAt)) continue;
+    latestByUser.set(userId, Math.max(latestByUser.get(userId) ?? 0, createdAt));
+  }
+  for (const candidate of candidates) {
+    const lastSuccessfulAt = latestByUser.get(candidate.userId);
+    if (dueForRollingCadence(candidate.cadenceDays, lastSuccessfulAt, now)) {
+      due.add(candidate.userId);
+    }
+  }
+  return due;
+}
+
+export async function accountSweepSubscribersForTargets(params: {
+  companyIds: string[];
+  runner: string;
+  now?: Date;
+}): Promise<AccountSweepSubscriber[]> {
+  const companyIds = [...new Set(params.companyIds)].filter(Boolean);
+  if (!companyIds.length) return [];
+  const admin = createAdminClient();
+  const [{ data: subscribers, error: subscribersError }, { data: monitors, error: monitorsError }] = await Promise.all([
+    admin.from('monitored_account_subscribers')
+      .select('org_id, company_id, cadence_days')
+      .in('company_id', companyIds)
+      .eq('status', 'active'),
+    admin.from('org_monitored_accounts')
+      .select('id, org_id, company_id')
+      .in('company_id', companyIds)
+      .eq('status', 'active'),
+  ]);
+  if (subscribersError) throw new Error(`account subscribers read failed: ${subscribersError.message}`);
+  if (monitorsError) throw new Error(`account monitors read failed: ${monitorsError.message}`);
+
+  const subscriberRows = (subscribers ?? []) as Array<{ org_id: string; company_id: string; cadence_days: number }>;
+  const members = await orgMembersByOrg(admin, subscriberRows.map((row) => row.org_id));
+  const monitorByKey = new Map<string, string>();
+  for (const row of monitors ?? []) {
+    monitorByKey.set(`${row.org_id}:${row.company_id}`, row.id as string);
+  }
+  const candidates = subscriberRows.flatMap((row) => {
+    const userId = members.get(row.org_id)?.[0];
+    return userId ? [{ row, userId, cadenceDays: Number(row.cadence_days) }] : [];
+  });
+  const dueUsers = await usersDueForRunner(
+    admin,
+    candidates.map(({ userId, cadenceDays }) => ({ userId, cadenceDays })),
+    params.runner,
+    (params.now ?? new Date()).getTime(),
+  );
+  return candidates
+    .filter(({ userId }) => dueUsers.has(userId))
+    .map(({ row, userId, cadenceDays }) => ({
+      orgId: row.org_id,
+      userId,
+      companyId: row.company_id,
+      monitorId: monitorByKey.get(`${row.org_id}:${row.company_id}`) ?? null,
+      cadenceDays,
+      lookbackDays: lookbackDaysForCadence(cadenceDays),
+    }));
+}
+
+export async function contactSweepSubscribersForTargets(params: {
+  personIds: string[];
+  runner: string;
+  now?: Date;
+}): Promise<ContactSweepSubscriber[]> {
+  const personIds = [...new Set(params.personIds)].filter(Boolean);
+  if (!personIds.length) return [];
+  const admin = createAdminClient();
+  const [{ data: subscribers, error: subscribersError }, { data: monitors, error: monitorsError }] = await Promise.all([
+    admin.from('monitored_contact_subscribers')
+      .select('org_id, person_id, cadence_days')
+      .in('person_id', personIds)
+      .eq('status', 'active'),
+    admin.from('org_monitored_contacts')
+      .select('id, org_id, person_id')
+      .in('person_id', personIds)
+      .eq('status', 'active'),
+  ]);
+  if (subscribersError) throw new Error(`contact subscribers read failed: ${subscribersError.message}`);
+  if (monitorsError) throw new Error(`contact monitors read failed: ${monitorsError.message}`);
+
+  const subscriberRows = (subscribers ?? []) as Array<{ org_id: string; person_id: string; cadence_days: number }>;
+  const members = await orgMembersByOrg(admin, subscriberRows.map((row) => row.org_id));
+  const userIds = [...new Set([...members.values()].flat())];
+  const { data: contacts, error: contactsError } = userIds.length
+    ? await admin.from('user_contacts')
+      .select('id, user_id, person_id, company_id')
+      .in('user_id', userIds)
+      .in('person_id', personIds)
+      .is('archived_at', null)
+    : { data: [], error: null };
+  if (contactsError) throw new Error(`representative contact read failed: ${contactsError.message}`);
+
+  const contactByOrgPerson = new Map<string, { id: string; userId: string; companyId: string | null }>();
+  for (const row of subscriberRows) {
+    const orgUserIds = new Set(members.get(row.org_id) ?? []);
+    const contact = (contacts ?? []).find((candidate) => (
+      candidate.person_id === row.person_id && orgUserIds.has(candidate.user_id as string)
+    ));
+    if (contact) {
+      contactByOrgPerson.set(`${row.org_id}:${row.person_id}`, {
+        id: contact.id as string,
+        userId: contact.user_id as string,
+        companyId: (contact.company_id as string | null | undefined) ?? null,
+      });
+    }
+  }
+  const monitorByKey = new Map<string, string>();
+  for (const row of monitors ?? []) {
+    monitorByKey.set(`${row.org_id}:${row.person_id}`, row.id as string);
+  }
+  const candidates = subscriberRows.flatMap((row) => {
+    const contact = contactByOrgPerson.get(`${row.org_id}:${row.person_id}`);
+    return contact ? [{ row, contact, cadenceDays: Number(row.cadence_days) }] : [];
+  });
+  const dueUsers = await usersDueForRunner(
+    admin,
+    candidates.map(({ contact, cadenceDays }) => ({ userId: contact.userId, cadenceDays })),
+    params.runner,
+    (params.now ?? new Date()).getTime(),
+  );
+  return candidates
+    .filter(({ contact }) => dueUsers.has(contact.userId))
+    .map(({ row, contact, cadenceDays }) => ({
+      orgId: row.org_id,
+      userId: contact.userId,
+      contactId: contact.id,
+      personId: row.person_id,
+      companyId: contact.companyId,
+      monitorId: monitorByKey.get(`${row.org_id}:${row.person_id}`) ?? null,
+      cadenceDays,
+      lookbackDays: lookbackDaysForCadence(cadenceDays),
+    }));
+}
+
+export async function markAccountSourceSweep(params: {
+  companyId: string;
+  source: AccountSweepSource;
+  cadenceDays: number;
+  status: 'succeeded' | 'failed';
+  resultCount?: number;
+  providerCostUsd?: number;
+}): Promise<void> {
+  const now = new Date();
+  const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
+  const admin = createAdminClient();
+  const { error } = await admin.from('account_source_sweep_targets').update({
+    last_sweep_at: now.toISOString(),
+    next_sweep_at: next.toISOString(),
+    last_sweep_status: params.status,
+    last_result_count: params.resultCount ?? null,
+    last_provider_cost_usd: params.providerCostUsd ?? null,
+    updated_at: now.toISOString(),
+  }).eq('company_id', params.companyId).eq('source', params.source);
+  if (error) throw new Error(`account source sweep mark failed: ${error.message}`);
+}
+
+export async function markContactSourceSweep(params: {
+  personId: string;
+  source: ContactSweepSource;
+  cadenceDays: number;
+  status: 'succeeded' | 'failed';
+  providerCostUsd?: number;
+}): Promise<void> {
+  const now = new Date();
+  const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
+  const admin = createAdminClient();
+  const { error } = await admin.from('contact_source_sweep_targets').update({
+    last_sweep_at: now.toISOString(),
+    next_sweep_at: next.toISOString(),
+    last_sweep_status: params.status,
+    last_provider_cost_usd: params.providerCostUsd ?? null,
+    updated_at: now.toISOString(),
+  }).eq('person_id', params.personId).eq('source', params.source);
+  if (error) throw new Error(`contact source sweep mark failed: ${error.message}`);
+}
+
 export async function monitoringRepresentativeContacts(orgId: string, limit: number): Promise<Array<{
   userId: string;
   contactId: string;
@@ -423,6 +787,7 @@ export async function markContactSweep(params: {
   cadenceDays: number;
   status: 'succeeded' | 'failed';
   providerCostUsd?: number;
+  markSharedTarget?: boolean;
 }): Promise<void> {
   const now = new Date();
   const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
@@ -435,7 +800,7 @@ export async function markContactSweep(params: {
     updated_at: now.toISOString(),
   }).eq('id', params.monitorId).select('person_id').maybeSingle<{ person_id: string }>();
   if (error) throw new Error(`contact sweep mark failed: ${error.message}`);
-  if (data?.person_id) {
+  if (data?.person_id && params.markSharedTarget !== false) {
     await admin.from('contact_source_sweep_targets').update({
       last_sweep_at: now.toISOString(),
       next_sweep_at: next.toISOString(),
@@ -481,6 +846,7 @@ export async function markAccountSweep(params: {
   status: 'succeeded' | 'failed';
   resultCount?: number;
   providerCostUsd?: number;
+  markSharedTarget?: boolean;
 }): Promise<void> {
   const now = new Date();
   const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
@@ -494,7 +860,7 @@ export async function markAccountSweep(params: {
     updated_at: now.toISOString(),
   }).eq('id', params.monitorId).select('company_id').maybeSingle<{ company_id: string }>();
   if (error) throw new Error(`account sweep mark failed: ${error.message}`);
-  if (data?.company_id) {
+  if (data?.company_id && params.markSharedTarget !== false) {
     await admin.from('account_source_sweep_targets').update({
       last_sweep_at: now.toISOString(),
       next_sweep_at: next.toISOString(),

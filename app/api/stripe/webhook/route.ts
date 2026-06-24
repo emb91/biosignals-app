@@ -300,13 +300,12 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
   const plan = PLANS[subscription.plan_key];
   const annual = subscription.billing_interval === 'annual';
   const linePeriod = invoice.lines?.data?.[0]?.period;
-  const validFrom = linePeriod?.start
-    ? new Date(linePeriod.start * 1000).toISOString()
-    : subscription.current_period_start ?? new Date().toISOString();
-  const expiresAt = linePeriod?.end
-    ? new Date(linePeriod.end * 1000).toISOString()
-    : subscription.current_period_end
-      ?? new Date(Date.now() + (annual ? 366 : 32) * 86_400_000).toISOString();
+  const validFrom = subscription.current_period_start
+    ?? (linePeriod?.start ? new Date(linePeriod.start * 1000).toISOString() : new Date().toISOString());
+  const expiresAt = subscription.current_period_end
+    ?? (linePeriod?.end
+      ? new Date(linePeriod.end * 1000).toISOString()
+      : new Date(Date.now() + (annual ? 366 : 32) * 86_400_000).toISOString());
   const { error: grantError } = await admin.rpc('grant_org_credit_bucket', {
     p_org_id: orgId,
     p_source: annual ? 'annual' : 'paid_monthly',
