@@ -75,6 +75,7 @@ import {
   AlertTriangle,
   Maximize2,
   Minimize2,
+  Phone,
 } from 'lucide-react';
 import { EntitySignalsList } from '@/components/EntitySignalsList';
 
@@ -797,17 +798,23 @@ function ScoreRow({
   pct,
   arcColor,
   onOpen,
+  divider,
 }: {
   label: string;
   pct: number | null;
   arcColor: string;
   onOpen: () => void;
+  divider?: boolean;
 }) {
+  // Design score-row: mini ring + label + chevron, rows divided inside one card.
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="w-full rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 flex items-center gap-4 text-left transition-colors hover:bg-arcova-teal/5"
+      className={cn(
+        'flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-white/70',
+        divider && 'border-t border-[rgba(13,53,71,0.06)]',
+      )}
     >
       <AnimatedCircularProgressBar
         value={pct ?? 0}
@@ -816,20 +823,14 @@ function ScoreRow({
         animateOnMount
         deferAnimationMs={160}
         label={
-          <span className="block text-xs font-semibold text-gray-800 leading-snug tabular-nums">
+          <span className="block text-[11px] font-bold leading-snug tabular-nums text-[#0d3547]">
             {pct != null ? pct : '—'}
           </span>
         }
-        className="size-12 shrink-0 [--transition-length:0.95s]"
+        className="size-9 shrink-0 [--transition-length:0.95s]"
       />
-      <div className="flex-1 min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
-          {label}
-        </p>
-        <p className="mt-1 text-[11px] font-semibold text-arcova-teal">
-          See details →
-        </p>
-      </div>
+      <span className="flex-1 text-[13.5px] font-semibold text-[#0d3547]">{label}</span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-[#b6c2c8]" aria-hidden />
     </button>
   );
 }
@@ -1319,12 +1320,6 @@ const getLeadRefreshStatusMeta = (
       };
   }
 };
-
-function isAvanzadoTestContact(lead: { full_name?: string | null; linkedin_url?: string | null }): boolean {
-  const name = (lead.full_name || '').toLowerCase();
-  const linkedin = (lead.linkedin_url || '').toLowerCase();
-  return name.includes('avanzado') || linkedin.includes('a-avanzado');
-}
 
 function getEmailDeliverabilityMeta(
   status: string | null | undefined,
@@ -3284,8 +3279,32 @@ export function ContactsWorkspace() {
                       {ok === 'pass' ? '✓' : ok === 'warn' ? '~' : '✗'}
                     </span>
                     <span className="contacts-fit-criterion-text">{component.label}</span>
-                    <span className="contacts-fit-criterion-val">
-                      {formatPercentValue(component.score01) ?? '—'}
+                    {/* Design .crit-right — % stacked over a short match qualifier, right-aligned. */}
+                    <span className="flex flex-col items-end gap-0.5 pl-2 text-right">
+                      <span
+                        className={cn(
+                          'text-[13px] font-bold leading-none tabular-nums',
+                          ok === 'pass' ? 'text-[#0a7b88]' : ok === 'warn' ? 'text-[#c08328]' : 'text-[#c46b7a]',
+                        )}
+                      >
+                        {formatPercentValue(component.score01) ?? '—'}
+                      </span>
+                      {(() => {
+                        const qual =
+                          component.matchStatus === 'exact'
+                            ? 'Exact match'
+                            : component.matchStatus === 'mismatch'
+                              ? 'No match'
+                              : component.matchStatus === 'partial'
+                                ? 'Partial match'
+                                : null;
+                        if (!qual) return null;
+                        return (
+                          <span className={cn('whitespace-nowrap text-[11px] font-semibold', ok === 'miss' ? 'text-[#c46b7a]' : 'text-[#7d909a]')}>
+                            {qual}
+                          </span>
+                        );
+                      })()}
                     </span>
                   </button>
                   {isOpen && hasDetail && (
@@ -4409,9 +4428,9 @@ export function ContactsWorkspace() {
                           </div>
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7d909a]">
                             {selectedPreview === 'contact'
-                              ? 'Contact'
+                              ? 'Details'
                               : selectedPreview === 'hubspot'
                                 ? 'CRM'
                               : selectedPreview === 'scoring'
@@ -4424,7 +4443,7 @@ export function ContactsWorkspace() {
                                       ? 'Outreach'
                                       : 'Action'}
                           </p>
-                          <h2 className="font-manrope mt-1 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[1.4375rem]">
+                          <h2 className="font-manrope mt-[6px] break-words text-[23px] font-bold leading-[1.1] tracking-[-0.024em] text-[rgb(13,53,71)]">
                             {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
                               selectedLead.full_name ||
                               'Selected contact'}
@@ -4462,7 +4481,7 @@ export function ContactsWorkspace() {
                           row-button entries still work as deep-links into a tab. */}
                       <div className="relative z-[1] flex items-center gap-0.5 border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-2.5 py-2">
                         {([
-                          { key: 'contact', label: 'Contact' },
+                          { key: 'contact', label: 'Details' },
                           { key: 'scoring', label: 'Fit' },
                           { key: 'priority', label: 'Priority' },
                           { key: 'hubspot', label: 'CRM' },
@@ -4490,13 +4509,8 @@ export function ContactsWorkspace() {
                         })}
                       </div>
 
-                      {/* Panel body */}
-                      <div
-                        className={cn(
-                          'min-h-0 flex-1 overflow-auto',
-                          selectedPreview === 'contact' ? 'space-y-4 px-4 py-4' : 'space-y-5 px-5 py-4',
-                        )}
-                      >
+                      {/* Panel body — design .db: 16px padding, 13px gap (uniform across tabs) */}
+                      <div className="min-h-0 flex-1 overflow-auto space-y-[13px] p-[16px]">
                         {selectedPreview === 'contact' ? (
                           isEditingSelected ? (
                             /* ── Edit mode ── */
@@ -4845,13 +4859,13 @@ export function ContactsWorkspace() {
                               )}
 
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
-                                <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                   <button
                                     type="button"
                                     onClick={() => setContactPanelOpen((s) => ({ ...s, about: !s.about }))}
-                                    className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                    className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                   >
-                                    <span className="font-manrope text-xs font-semibold text-[#0d3547]">
+                                    <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                       About
                                     </span>
                                     <ChevronDown
@@ -4861,15 +4875,15 @@ export function ContactsWorkspace() {
                                     />
                                   </button>
                                   {contactPanelOpen.about && (
-                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-3">
+                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-[14px] pb-[13px] pt-[13px]">
                                       {selectedLead.contact_bio.length === 1 ? (
-                                        <p className="text-sm leading-[1.55] text-[#4a6470]">
+                                        <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
                                           {selectedLead.contact_bio[0]}
                                         </p>
                                       ) : (
                                         <ul className="space-y-3">
                                           {selectedLead.contact_bio.map((bullet, i) => (
-                                            <li key={i} className="flex gap-3 text-sm leading-snug text-[#4a6470]">
+                                            <li key={i} className="flex gap-3 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                               <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal" />
                                               {bullet}
                                             </li>
@@ -4881,13 +4895,13 @@ export function ContactsWorkspace() {
                                 </div>
                               )}
 
-                              <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                 <button
                                   type="button"
                                   onClick={() => setContactPanelOpen((s) => ({ ...s, details: !s.details }))}
-                                  className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                  className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                 >
-                                  <span className="font-manrope text-xs font-semibold text-[#0d3547]">
+                                  <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                     Role &amp; contact
                                   </span>
                                   <ChevronDown
@@ -4897,13 +4911,13 @@ export function ContactsWorkspace() {
                                   />
                                 </button>
                                 {contactPanelOpen.details && (
-                                  <div className="border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-3">
+                                  <div className="border-t border-[rgba(13,53,71,0.06)] px-[14px] pb-[13px] pt-[13px]">
                                     <div className="min-w-0 space-y-5">
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Job title
                                         </p>
-                                        <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                        <p className="mt-2 break-words text-[13.5px] leading-[1.4] text-[#0d3547]">
                                           {selectedLead.resolved_current_job_title ||
                                             selectedLead.job_title ||
                                             '—'}
@@ -4926,17 +4940,17 @@ export function ContactsWorkspace() {
                                         if (cells.length === 0) cells.push({ label: 'Location', value: '—' });
                                         return cells.map((c) => (
                                           <div key={c.label} className="min-w-0">
-                                            <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                               {c.label}
                                             </p>
-                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                            <p className="mt-2 break-words text-[13.5px] leading-[1.4] text-[#0d3547]">
                                               {c.value}
                                             </p>
                                           </div>
                                         ));
                                       })()}
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Emails
                                         </p>
                                         <div className="mt-2 space-y-2">
@@ -4948,7 +4962,7 @@ export function ContactsWorkspace() {
                                             );
                                             if (emailRows.length === 0) {
                                               return (
-                                                <p className="break-words text-sm leading-snug text-[#0d3547]">—</p>
+                                                <p className="break-words text-[13.5px] leading-[1.4] text-[#0d3547]">—</p>
                                               );
                                             }
                                             return emailRows.map((r, i) => {
@@ -4962,7 +4976,7 @@ export function ContactsWorkspace() {
                                               return (
                                                 <div
                                                   key={`${r.label}-${r.email}-${i}`}
-                                                  className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm leading-snug text-[#0d3547]"
+                                                  className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[13.5px] leading-[1.4] text-[#0d3547]"
                                                 >
                                                   <p className="min-w-0 break-all">
                                                     <span className="font-medium text-[#7d909a]">{r.label}: </span>
@@ -4970,42 +4984,90 @@ export function ContactsWorkspace() {
                                                   </p>
                                                   <span className={`inline-flex shrink-0 items-center gap-1 ${meta.className}`}>
                                                     <VerificationIcon className="h-3.5 w-3.5" aria-hidden />
-                                                    <span className="text-xs font-medium">{meta.label}</span>
+                                                    <span className="text-[11px] font-medium">{meta.label}</span>
                                                   </span>
                                                 </div>
                                               );
                                             });
                                           })()}
                                         </div>
-                                        {isAvanzadoTestContact(selectedLead) && (
-                                          <div className="mt-3 space-y-1.5">
-                                            <div className="flex flex-wrap gap-2">
-                                              <button
-                                                type="button"
-                                                onClick={() => void handleFindNewEmail(selectedLead.id)}
-                                                disabled={findingEmailLeadId === selectedLead.id}
-                                                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                              >
-                                                {findingEmailLeadId === selectedLead.id ? (
-                                                  <RotateCw className="h-3.5 w-3.5 animate-spin" />
-                                                ) : (
-                                                  <MailCheck className="h-3.5 w-3.5" />
-                                                )}
-                                                {findingEmailLeadId === selectedLead.id
-                                                  ? 'Testing…'
-                                                  : 'Test: get new email'}
-                                              </button>
-                                            </div>
-                                            {findEmailErrorByLeadId[selectedLead.id] && (
-                                              <p className="text-xs leading-snug text-rose-600">
-                                                {findEmailErrorByLeadId[selectedLead.id]}
-                                              </p>
+                                        {/* Singular email refresh (find-new-email · 11 credits) + last-checked.
+                                            Distinct from the full batch "Refresh enrichment" in the Data source box. */}
+                                        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleFindNewEmail(selectedLead.id)}
+                                            disabled={findingEmailLeadId === selectedLead.id}
+                                            className="inline-flex items-center gap-1.5 rounded-[9px] border border-arcova-teal/30 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            {findingEmailLeadId === selectedLead.id ? (
+                                              <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                              <MailCheck className="h-3.5 w-3.5" />
                                             )}
-                                          </div>
+                                            {findingEmailLeadId === selectedLead.id ? 'Finding…' : 'Find new email · 11 credits'}
+                                          </button>
+                                          {(() => {
+                                            // Most recent deliverability check across this contact's emails.
+                                            const lastChecked = (selectedLead.contact_emails ?? [])
+                                              .map((e) => e.email_deliverability_checked_at)
+                                              .filter((d): d is string => Boolean(d))
+                                              .sort()
+                                              .pop();
+                                            if (!lastChecked) return null;
+                                            return (
+                                              <span className="text-[11px] text-[#7d909a]">
+                                                Last checked {formatLastUpdated(lastChecked)}
+                                              </span>
+                                            );
+                                          })()}
+                                        </div>
+                                        {findEmailErrorByLeadId[selectedLead.id] && (
+                                          <p className="mt-1.5 text-[11px] leading-snug text-rose-600">
+                                            {findEmailErrorByLeadId[selectedLead.id]}
+                                          </p>
                                         )}
                                       </div>
+                                      {/* Phone row — show numbers on file, else offer the singular reveal (20 credits) */}
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
+                                          Phone
+                                        </p>
+                                        {(() => {
+                                          const phones = (selectedLead.contact_phones ?? []).filter((p) => (p.phone || '').trim());
+                                          if (phones.length > 0) {
+                                            return (
+                                              <div className="mt-2 space-y-1">
+                                                {phones.map((p) => (
+                                                  <p key={p.id} className="break-all text-[13.5px] leading-[1.4] text-[#0d3547]">
+                                                    {p.phone}
+                                                  </p>
+                                                ))}
+                                              </div>
+                                            );
+                                          }
+                                          return (
+                                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                              <span className="text-[13.5px] leading-snug text-[#7d909a]">Not on file yet</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => void handleRevealPhone(selectedLead.id)}
+                                                disabled={revealingPhoneLeadId === selectedLead.id}
+                                                className="inline-flex items-center gap-1.5 rounded-[9px] border border-arcova-teal/30 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
+                                              >
+                                                {revealingPhoneLeadId === selectedLead.id ? (
+                                                  <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                  <Phone className="h-3.5 w-3.5" />
+                                                )}
+                                                {revealingPhoneLeadId === selectedLead.id ? 'Revealing…' : 'Reveal phone · 20 credits'}
+                                              </button>
+                                            </div>
+                                          );
+                                        })()}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           LinkedIn
                                         </p>
                                         {selectedLead.linkedin_url ? (
@@ -5013,7 +5075,7 @@ export function ContactsWorkspace() {
                                             href={selectedLead.linkedin_url}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="mt-2 inline-flex min-w-0 items-start gap-1.5 break-all text-sm font-medium leading-snug text-arcova-teal hover:underline"
+                                            className="mt-2 inline-flex min-w-0 items-start gap-1.5 break-all text-[13.5px] font-medium leading-snug text-arcova-teal hover:underline"
                                           >
                                             <span className="min-w-0">
                                               {selectedLead.linkedin_url.replace(/^https?:\/\/(www\.)?/, '')}
@@ -5021,12 +5083,12 @@ export function ContactsWorkspace() {
                                             <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-arcova-teal" />
                                           </a>
                                         ) : (
-                                          <p className="mt-2 text-sm leading-snug text-[#0d3547]">—</p>
+                                          <p className="mt-2 text-[13.5px] leading-[1.4] text-[#0d3547]">—</p>
                                         )}
                                       </div>
                                     </div>
                                     {selectedLead.email && contactEmailMayBeOutdated(selectedLead.email_status) && (
-                                        <p className="mt-4 flex items-start gap-1.5 text-xs leading-snug text-amber-700">
+                                        <p className="mt-4 flex items-start gap-1.5 text-[11px] leading-snug text-amber-700">
                                           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                                           <span>
                                             {selectedLead.email_status === 'stale_suspected'
@@ -5041,15 +5103,15 @@ export function ContactsWorkspace() {
 
                               {selectedLead.resolved_employment_history &&
                                 selectedLead.resolved_employment_history.length > 0 && (
-                                  <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                  <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                     <button
                                       type="button"
                                       onClick={() =>
                                         setContactPanelOpen((s) => ({ ...s, workHistory: !s.workHistory }))
                                       }
-                                      className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                      className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                     >
-                                      <span className="font-manrope text-xs font-semibold text-[#0d3547]">
+                                      <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                         Work history
                                       </span>
                                       <ChevronDown
@@ -5080,13 +5142,13 @@ export function ContactsWorkspace() {
                                                 ) : null}
                                               </div>
                                               <div className="min-w-0 pb-1">
-                                                <p className="text-sm font-semibold leading-snug text-[#0d3547]">
+                                                <p className="text-[13.5px] font-semibold leading-snug text-[#0d3547]">
                                                   {job.title || '—'}
                                                 </p>
-                                                <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                                <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                                   {job.company_name || '—'}
                                                 </p>
-                                                <p className="mt-1.5 text-xs tabular-nums text-[#7d909a]">
+                                                <p className="mt-1.5 text-[11px] tabular-nums text-[#7d909a]">
                                                   {[job.start_date, job.end_date].filter(Boolean).join(' → ')}
                                                 </p>
                                               </div>
@@ -5098,7 +5160,7 @@ export function ContactsWorkspace() {
                                           <button
                                             type="button"
                                             onClick={() => setIsWorkHistoryExpanded((prev) => !prev)}
-                                            className="inline-flex items-center gap-1.5 pt-1 text-sm font-semibold text-arcova-teal transition-colors hover:text-arcova-teal/85"
+                                            className="inline-flex items-center gap-1.5 pt-1 text-[13.5px] font-semibold text-arcova-teal transition-colors hover:text-arcova-teal/85"
                                           >
                                             <ChevronDown
                                               className={`h-4 w-4 transition-transform ${
@@ -5118,35 +5180,35 @@ export function ContactsWorkspace() {
                                   </div>
                                 )}
 
-                              <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
-                                <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
+                              <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                <p className="mb-3 font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Data source</p>
                                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                       Type
                                     </p>
-                                    <p className="mt-2 text-sm leading-snug text-[#0d3547]">
+                                    <p className="mt-2 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                       {selectedLeadDataSourceTypeLabel}
                                     </p>
                                   </div>
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                       Imported
                                     </p>
-                                    <p className="mt-2 text-sm leading-snug text-[#0d3547]">
+                                    <p className="mt-2 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                       {formatProvenanceImportedAt(selectedLead.data_provenance_imported_at)}
                                     </p>
                                   </div>
                                 </div>
 
                                 <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
-                                  <p className="text-xs leading-snug text-[#4a6470]">
+                                  <p className="text-[11px] leading-snug text-[#4a6470]">
                                     Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                                   </p>
 
                                   {effectiveRefreshStatus === 'running' && (
                                     <div
-                                      className={`rounded-lg border px-3 py-2 text-xs ${effectiveRefreshStatusMeta.className}`}
+                                      className={`rounded-lg border px-3 py-2 text-[11px] ${effectiveRefreshStatusMeta.className}`}
                                     >
                                       <p className="font-medium">{effectiveRefreshStatusMeta.label}</p>
                                       <div className="mt-2 flex flex-col gap-1.5">
@@ -5154,13 +5216,13 @@ export function ContactsWorkspace() {
                                           type="button"
                                           onClick={() => stopLeadEnrichment(selectedLead.id)}
                                           disabled={isStoppingSelected}
-                                          className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                          className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                           <Ban className="h-3.5 w-3.5" aria-hidden />
                                           {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
                                         </button>
                                         {stopEnrichmentError && (
-                                          <p className="text-xs text-red-500">{stopEnrichmentError}</p>
+                                          <p className="text-[11px] text-red-500">{stopEnrichmentError}</p>
                                         )}
                                       </div>
                                     </div>
@@ -5175,8 +5237,8 @@ export function ContactsWorkspace() {
                                           aria-hidden
                                         />
                                         <div className="min-w-0 space-y-1">
-                                          <p className="text-xs font-semibold text-[#2D8A8A]">Enrichment done</p>
-                                          <p className="text-xs leading-snug text-[#6B7280]">
+                                          <p className="text-[11px] font-semibold text-[#2D8A8A]">Enrichment done</p>
+                                          <p className="text-[11px] leading-snug text-[#6B7280]">
                                             Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
                                           </p>
                                         </div>
@@ -5186,22 +5248,22 @@ export function ContactsWorkspace() {
 
                                   {selectedLeadRefreshStatus === 'cancelled' &&
                                     selectedLead.enrichment_refresh_finished_at && (
-                                      <p className="text-xs leading-snug text-[#6B7280]">
+                                      <p className="text-[11px] leading-snug text-[#6B7280]">
                                         Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                       </p>
                                     )}
 
                                   {selectedLeadRefreshStatus === 'failed' && (
                                     <>
-                                      <p className="text-xs font-semibold text-[rgb(13,53,71)]">
+                                      <p className="text-[11px] font-semibold text-[rgb(13,53,71)]">
                                         {selectedLeadRefreshStatusMeta.label}
                                       </p>
-                                      <p className="text-xs leading-snug text-[#7d909a]">Showing last known data.</p>
+                                      <p className="text-[11px] leading-snug text-[#7d909a]">Showing last known data.</p>
                                     </>
                                   )}
 
                                   {selectedLeadRefreshStatus !== 'running' && (
-                                    <p className="text-xs leading-relaxed text-[#6B7280]">
+                                    <p className="text-[11px] leading-relaxed text-[#6B7280]">
                                       You can refresh this enrichment again whenever you need updated data.
                                     </p>
                                   )}
@@ -5215,7 +5277,7 @@ export function ContactsWorkspace() {
                                       isEditingSelected ||
                                       isSelectedLeadRefreshRunning
                                     }
-                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     <RotateCw
                                       className={`h-4 w-4 text-[#1F2937] ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
@@ -5229,7 +5291,7 @@ export function ContactsWorkspace() {
                                           : 'Refresh enrichment'}
                                   </button>
                                   {selectedLead.hubspot_lead_state === 'customer' ? (
-                                    <p className="text-xs leading-snug text-[#7d909a]">
+                                    <p className="text-[11px] leading-snug text-[#7d909a]">
                                       Closed-won contacts should move through customer workflows instead of paid lead enrichment.
                                     </p>
                                   ) : null}
@@ -5251,11 +5313,11 @@ export function ContactsWorkspace() {
 
                             {selectedHubSpotCrmState?.loading ? (
                               <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
-                                <p className="text-sm leading-snug text-[#4a6470]">Loading HubSpot CRM…</p>
+                                <p className="text-[13.5px] leading-[1.45] text-[#4a6470]">Loading HubSpot CRM…</p>
                               </div>
                             ) : selectedHubSpotCrmState?.error ? (
                               <div className="rounded-xl border border-[#ffd8c7] bg-[#fff7f3] px-4 py-4">
-                                <p className="text-sm leading-snug text-[#b45309]">{selectedHubSpotCrmState.error}</p>
+                                <p className="text-[13px] leading-snug text-[#b45309]">{selectedHubSpotCrmState.error}</p>
                               </div>
                             ) : selectedHubSpotCrm?.deals?.length ? (
                               <div className="space-y-3">
@@ -5278,14 +5340,14 @@ export function ContactsWorkspace() {
                                   return (
                                     <div
                                       key={deal.hubspot_deal_id}
-                                      className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]"
+                                      className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]"
                                     >
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
-                                          <p className="text-base font-semibold text-[#0d3547]">
+                                          <p className="text-[13.5px] font-semibold text-[#0d3547]">
                                             {deal.deal_name || 'HubSpot deal'}
                                           </p>
-                                          <p className="mt-1 text-xs text-[#7d909a]">
+                                          <p className="mt-1 text-[11px] text-[#7d909a]">
                                             HubSpot account:{' '}
                                             <span className="font-medium text-[#4a6470]">
                                               {deal.hubspot_company_name || deal.hubspot_company_domain || '—'}
@@ -5294,41 +5356,41 @@ export function ContactsWorkspace() {
                                         </div>
                                         {deal.deal_stage ? (
                                           <span className="inline-flex items-center rounded-full bg-[#fff1ec] px-2.5 py-1 text-[11px] font-medium text-[#cc5b3f]">
-                                            {deal.deal_stage}
+                                            {formatHubSpotStageLabel(deal.deal_stage) || deal.deal_stage}
                                           </span>
                                         ) : null}
                                       </div>
 
                                       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Company
                                           </p>
-                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {arcovaCompanyName || '—'}
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Domain
                                           </p>
-                                          <p className="mt-1 break-all text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 break-all text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {arcovaCompanyDomain || '—'}
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Amount
                                           </p>
-                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {formatUsdValue(deal.amount) || '—'}
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Last synced
                                           </p>
-                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {formatLastUpdated(deal.synced_at)}
                                           </p>
                                         </div>
@@ -5336,7 +5398,7 @@ export function ContactsWorkspace() {
 
                                       <div className="mt-4 space-y-2">
                                         {deal.close_date ? (
-                                          <p className="text-xs leading-snug text-[#4a6470]">
+                                          <p className="text-[11px] leading-snug text-[#4a6470]">
                                             Close date:{' '}
                                             <span className="font-medium text-[#0d3547]">
                                               {formatLastUpdated(deal.close_date)}
@@ -5345,10 +5407,10 @@ export function ContactsWorkspace() {
                                         ) : null}
                                         {hasMismatch ? (
                                           <div className="rounded-lg border border-[#ffd8c7] bg-[#fff7f3] px-3 py-2">
-                                            <p className="text-xs font-medium text-[#b45309]">
+                                            <p className="text-[11px] font-medium text-[#b45309]">
                                               This deal points at a different company
                                             </p>
-                                            <p className="mt-1 text-xs leading-snug text-[#7c5a4b]">
+                                            <p className="mt-1 text-[11px] leading-snug text-[#7c5a4b]">
                                               The matched account is {arcovaCompanyName || arcovaCompanyDomain || 'this contact’s company'},
                                               but HubSpot still has this deal attached to{' '}
                                               {deal.hubspot_company_name || deal.hubspot_company_domain || 'another CRM account'}.
@@ -5357,16 +5419,16 @@ export function ContactsWorkspace() {
                                         ) : null}
                                         {deal.resolution_suppressed && !hasMismatch ? (
                                           <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-[rgba(246,250,252,0.9)] px-3 py-2">
-                                            <p className="text-xs font-medium text-[#0d3547]">
+                                            <p className="text-[11px] font-medium text-[#0d3547]">
                                               Stored as HubSpot CRM context only
                                             </p>
-                                            <p className="mt-1 text-xs leading-snug text-[#4a6470]">
+                                            <p className="mt-1 text-[11px] leading-snug text-[#4a6470]">
                                               We kept this deal for CRM visibility, but did not use it to move an Arcova account yet.
                                             </p>
                                           </div>
                                         ) : null}
                                         {deal.resolution_status ? (
-                                          <p className="text-xs leading-snug text-[#4a6470]">
+                                          <p className="text-[11px] leading-snug text-[#4a6470]">
                                             Resolution:{' '}
                                             <span className="font-medium text-[#0d3547]">
                                               {formatHubSpotResolutionLabel(deal.resolution_status)}
@@ -5374,7 +5436,7 @@ export function ContactsWorkspace() {
                                           </p>
                                         ) : null}
                                         {deal.mismatch_reason ? (
-                                          <p className="text-xs leading-snug text-[#7d909a]">
+                                          <p className="text-[11px] leading-snug text-[#7d909a]">
                                             {deal.mismatch_reason}
                                           </p>
                                         ) : null}
@@ -5385,7 +5447,7 @@ export function ContactsWorkspace() {
                               </div>
                             ) : (
                               <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
-                                <p className="text-sm leading-snug text-[#4a6470]">
+                                <p className="text-[13.5px] leading-[1.45] text-[#4a6470]">
                                   No mirrored HubSpot deal activity on this contact yet.
                                 </p>
                               </div>
@@ -5402,47 +5464,47 @@ export function ContactsWorkspace() {
                                     should not be worked as an active lead here.
                                   </p>
                                   <div className="rounded-xl border border-[rgba(45,138,138,0.22)] bg-[rgba(45,138,138,0.07)] p-4">
-                                    <p className="text-sm font-semibold text-[#2d8a8a]">Customer state</p>
-                                    <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                    <p className="text-[13px] font-semibold text-[#2d8a8a]">Customer state</p>
+                                    <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                       Keep the CRM history for attribution and future customer workflows, but avoid
                                       spending more lead-enrichment budget on it from this queue.
                                     </p>
                                   </div>
-                                  <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
-                                    <p className="text-sm font-semibold text-[#0d3547]">Arcova attribution</p>
+                                  <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                    <p className="text-[13px] font-semibold text-[#0d3547]">Arcova attribution</p>
                                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Sourced
                                         </p>
-                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                        <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
                                           {selectedLeadArcovaSourced ? 'By Arcova' : 'Not by Arcova'}
                                         </p>
-                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                        <p className="mt-1 text-[11px] leading-snug text-[#6b7f8a]">
                                           {selectedLeadDataSourceTypeLabel}
                                         </p>
                                       </div>
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Enriched
                                         </p>
-                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                        <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
                                           {selectedLeadArcovaEnriched ? 'By Arcova' : 'Not yet'}
                                         </p>
-                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                        <p className="mt-1 text-[11px] leading-snug text-[#6b7f8a]">
                                           {selectedLeadLatestArcovaTouchIso
                                             ? `Last touch ${actionDrawerRelativeTime(selectedLeadLatestArcovaTouchIso)}`
                                             : 'No Arcova touch recorded'}
                                         </p>
                                       </div>
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Outcome
                                         </p>
-                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                        <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
                                           {selectedLeadWonAfterArcovaTouch ? 'Won after Arcova touch' : 'Won in CRM'}
                                         </p>
-                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                        <p className="mt-1 text-[11px] leading-snug text-[#6b7f8a]">
                                           {selectedLead.hubspot_latest_deal_updated_at
                                             ? `Closed won ${actionDrawerRelativeTime(selectedLead.hubspot_latest_deal_updated_at)}`
                                             : 'Closed-won timing not yet available'}
@@ -5462,8 +5524,8 @@ export function ContactsWorkspace() {
                                     new signal changes the picture.
                                   </p>
                                   <div className="rounded-xl border border-[rgba(125,144,154,0.2)] bg-[rgba(125,144,154,0.08)] p-4">
-                                    <p className="text-sm font-semibold text-[#5f7480]">Dormant for now</p>
-                                    <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                    <p className="text-[13.5px] font-semibold text-[#5f7480]">Dormant for now</p>
+                                    <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                       Let fresh budget, a new decision-maker, or a strategic shift reactivate this
                                       lead later.
                                     </p>
@@ -5489,7 +5551,7 @@ export function ContactsWorkspace() {
                             // (Recommended action + Why this action). All states, conditions,
                             // CTAs and handlers are preserved — only the presentation changed.
                             const navyCta =
-                              'inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition hover:brightness-110';
+                              'inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition hover:brightness-110';
                             const detail: { lede: ReactNode; cta?: ReactNode; why?: ReactNode } = (() => {
                               if (action === 'monitor') {
                                 if (isLeadReadyAwaitingContactSignal(selectedLead)) {
@@ -5515,7 +5577,7 @@ export function ContactsWorkspace() {
                                     <button
                                       type="button"
                                       onClick={() => router.push(ROUTES.contacts)}
-                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                     >
                                       View Signals
                                       <ChevronRight className="h-4 w-4" aria-hidden />
@@ -5656,7 +5718,7 @@ export function ContactsWorkspace() {
                                         setSelectedPreview('contact');
                                         startEditingLead(selectedLead);
                                       }}
-                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#e8a07e] bg-white px-4 py-2.5 text-sm font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#e8a07e] bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
                                     >
                                       Edit contact email
                                       <ChevronRight className="h-4 w-4" aria-hidden />
@@ -5676,7 +5738,7 @@ export function ContactsWorkspace() {
                                   </p>
                                   <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
                                     <span
-                                      className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${actionConfig.className}`}
+                                      className={`inline-flex items-center rounded-full px-3 py-1 text-[13.5px] font-medium ${actionConfig.className}`}
                                     >
                                       {actionConfig.label}
                                     </span>
@@ -5708,6 +5770,7 @@ export function ContactsWorkspace() {
                             contactId={selectedLead.id}
                             companyId={selectedLead.company_id ?? undefined}
                             primaryScope="contact"
+                            grouped
                             // Same value the Priority tab's readiness row uses (CRM-suppressed),
                             // so the Signals hero gauge and Priority can't show different numbers.
                             effectiveReadinessScore={displayEffectiveReadiness(selectedLead)}
@@ -5740,8 +5803,8 @@ export function ContactsWorkspace() {
                             const priorityPct = percentDisplayNumber(priorityNorm);
                             return (
                               <div className="space-y-3">
-                                {/* Priority — large gauge, number only */}
-                                <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-6">
+                                {/* Priority — large gauge hero with caption + supporting line */}
+                                <div className="flex flex-col items-center justify-center rounded-[14px] border border-[rgba(13,53,71,0.06)] bg-[rgba(246,250,250,0.7)] px-4 py-6 text-center">
                                   <AnimatedCircularProgressBar
                                     value={priorityPct ?? 0}
                                     gaugePrimaryColor={priorityScoreArcColor(priorityPct)}
@@ -5749,13 +5812,13 @@ export function ContactsWorkspace() {
                                     animateOnMount
                                     deferAnimationMs={160}
                                     label={
-                                      <span className="block text-xl font-semibold text-[#0d3547] leading-snug tabular-nums">
+                                      <span className="block text-[19px] font-semibold text-[#0d3547] leading-snug tabular-nums">
                                         {priorityPct != null ? priorityPct : '—'}
                                       </span>
                                     }
                                     className="size-24 [--transition-length:0.95s]"
                                   />
-                                  <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                                  <p className="mt-3 font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                     Priority score
                                   </p>
                                   {(() => {
@@ -5777,31 +5840,36 @@ export function ContactsWorkspace() {
                                     });
                                     if (!blurb) return null;
                                     return (
-                                      <p className="mt-3 text-[12.5px] leading-[1.55] text-[#1f475a]">
+                                      <p className="mt-2 text-[12.5px] leading-[1.55] text-[#1f475a]">
                                         {blurb}
                                       </p>
                                     );
                                   })()}
                                 </div>
 
-                                <ScoreRow
-                                  label="Company fit"
-                                  pct={companyFitPct}
-                                  arcColor={fitScoreArcColor(companyFitPct)}
-                                  onOpen={() => setSelectedPreview('scoring')}
-                                />
-                                <ScoreRow
-                                  label="Contact fit"
-                                  pct={fitPct}
-                                  arcColor={fitScoreArcColor(fitPct)}
-                                  onOpen={() => setSelectedPreview('scoring')}
-                                />
-                                <ScoreRow
-                                  label="Readiness score"
-                                  pct={readinessPct}
-                                  arcColor={fitScoreArcColor(readinessPct)}
-                                  onOpen={() => setSelectedPreview('signals')}
-                                />
+                                {/* Score breakdown — company fit / contact fit / readiness, one card */}
+                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                  <ScoreRow
+                                    label="Company fit"
+                                    pct={companyFitPct}
+                                    arcColor={fitScoreArcColor(companyFitPct)}
+                                    onOpen={() => setSelectedPreview('scoring')}
+                                  />
+                                  <ScoreRow
+                                    label="Contact fit"
+                                    pct={fitPct}
+                                    arcColor={fitScoreArcColor(fitPct)}
+                                    onOpen={() => setSelectedPreview('scoring')}
+                                    divider
+                                  />
+                                  <ScoreRow
+                                    label="Readiness score"
+                                    pct={readinessPct}
+                                    arcColor={fitScoreArcColor(readinessPct)}
+                                    onOpen={() => setSelectedPreview('signals')}
+                                    divider
+                                  />
+                                </div>
                               </div>
                             );
                           })()
@@ -5849,13 +5917,13 @@ export function ContactsWorkspace() {
                       >
                         {selectedPreview !== 'contact' && (
                           <div className="space-y-4">
-                            <p className="text-xs leading-snug text-[#4a6470]">
+                            <p className="text-[11px] leading-snug text-[#4a6470]">
                               Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                             </p>
 
                             {effectiveRefreshStatus === 'running' && (
                               <div
-                                className={`rounded-lg border px-3 py-2 text-xs ${effectiveRefreshStatusMeta.className}`}
+                                className={`rounded-lg border px-3 py-2 text-[11px] ${effectiveRefreshStatusMeta.className}`}
                               >
                                 <p className="font-medium">{effectiveRefreshStatusMeta.label}</p>
                                 <div className="mt-2 flex flex-col gap-1.5">
@@ -5863,13 +5931,13 @@ export function ContactsWorkspace() {
                                     type="button"
                                     onClick={() => stopLeadEnrichment(selectedLead.id)}
                                     disabled={isStoppingSelected}
-                                    className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     <Ban className="h-3.5 w-3.5" aria-hidden />
                                     {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
                                   </button>
                                   {stopEnrichmentError && (
-                                    <p className="text-xs text-red-500">{stopEnrichmentError}</p>
+                                    <p className="text-[11px] text-red-500">{stopEnrichmentError}</p>
                                   )}
                                 </div>
                               </div>
@@ -5884,8 +5952,8 @@ export function ContactsWorkspace() {
                                     aria-hidden
                                   />
                                   <div className="min-w-0 space-y-1">
-                                    <p className="text-xs font-semibold text-[#2D8A8A]">Enrichment done</p>
-                                    <p className="text-xs leading-snug text-[#6B7280]">
+                                    <p className="text-[11px] font-semibold text-[#2D8A8A]">Enrichment done</p>
+                                    <p className="text-[11px] leading-snug text-[#6B7280]">
                                       Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
                                     </p>
                                   </div>
@@ -5895,22 +5963,22 @@ export function ContactsWorkspace() {
 
                             {selectedLeadRefreshStatus === 'cancelled' &&
                               selectedLead.enrichment_refresh_finished_at && (
-                                <p className="text-xs leading-snug text-[#6B7280]">
+                                <p className="text-[11px] leading-snug text-[#6B7280]">
                                   Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                 </p>
                               )}
 
                             {selectedLeadRefreshStatus === 'failed' && (
                               <>
-                                <p className="text-xs font-semibold text-[rgb(13,53,71)]">
+                                <p className="text-[11px] font-semibold text-[rgb(13,53,71)]">
                                   {selectedLeadRefreshStatusMeta.label}
                                 </p>
-                                <p className="text-xs leading-snug text-[#7d909a]">Showing last known data.</p>
+                                <p className="text-[11px] leading-snug text-[#7d909a]">Showing last known data.</p>
                               </>
                             )}
 
                             {selectedLeadRefreshStatus !== 'running' && (
-                              <p className="text-xs leading-relaxed text-[#6B7280]">
+                              <p className="text-[11px] leading-relaxed text-[#6B7280]">
                                 You can refresh this enrichment again whenever you need updated data.
                               </p>
                             )}
@@ -5924,7 +5992,7 @@ export function ContactsWorkspace() {
                                 isEditingSelected ||
                                 isSelectedLeadRefreshRunning
                               }
-                              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <RotateCw
                                 className={`h-4 w-4 text-[#1F2937] ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
@@ -5938,7 +6006,7 @@ export function ContactsWorkspace() {
                                     : 'Refresh enrichment'}
                             </button>
                             {selectedLead.hubspot_lead_state === 'customer' ? (
-                              <p className="text-xs leading-snug text-[#7d909a]">
+                              <p className="text-[11px] leading-snug text-[#7d909a]">
                                 Closed-won contacts should move through customer workflows instead of paid lead enrichment.
                               </p>
                             ) : null}
