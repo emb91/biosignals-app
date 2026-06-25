@@ -23,6 +23,11 @@ import {
   fetchOrgContactPhones,
   resolveOrgContactAccess,
 } from '@/lib/org-contact-access';
+import {
+  fetchOrgOutreachActivityByPerson,
+  statusForTeammateAction,
+  type OrgOutreachActivity,
+} from '@/lib/org-outreach';
 
 type LeadUpdateBody = {
   full_name?: string;
@@ -96,6 +101,31 @@ function priorityFromScores(input: {
   ) ?? 0;
   if (companyFit == null || contactFit == null) return null;
   return Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * readiness)));
+}
+
+function normalizeOwnSequenceStatus(row: {
+  dispatch_status: string | null;
+  exported_to?: string | null;
+}): string {
+  let normalized = row.dispatch_status;
+  if (normalized === 'queued') normalized = 'sent';
+  if (normalized === 'exported') normalized = 'sent';
+  if (!normalized) normalized = row.exported_to ? 'sent' : 'draft';
+  return normalized;
+}
+
+function serializeOrgOutreachActivity(activity: OrgOutreachActivity): {
+  userName: string;
+  status: OrgOutreachActivity['status'];
+  customerFacing: boolean;
+  lastStatusAt: string | null;
+} {
+  return {
+    userName: activity.userName,
+    status: activity.status,
+    customerFacing: activity.customerFacing,
+    lastStatusAt: activity.lastStatusAt,
+  };
 }
 
 function messageFromUnknown(error: unknown): string {
@@ -320,6 +350,8 @@ export async function GET(
         accountResult,
         accountReadinessByCompany,
         contactReadinessByContact,
+        ownSequenceResult,
+        teammateActivityByPerson,
       ] = await Promise.all([
         personId
           ? ctx.supabase
@@ -351,6 +383,20 @@ export async function GET(
           userId: ctx.user.id,
           contactIds: [contactId],
         }),
+        ctx.supabase
+          .from('outreach_sequences')
+          .select('dispatch_status, exported_to, created_at')
+          .eq('user_id', ctx.user.id)
+          .or(`person_id.eq.${personId},contact_id.eq.${contactId}`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        personId
+          ? fetchOrgOutreachActivityByPerson(ctx.supabase as any, {
+              userId: ctx.user.id,
+              personIds: [personId],
+            })
+          : Promise.resolve(new Map()),
       ]);
 
       const overrides =
@@ -371,6 +417,18 @@ export async function GET(
         companyReadiness,
         contactReadiness,
       });
+      const ownSequence =
+        ownSequenceResult && typeof ownSequenceResult === 'object' && 'data' in ownSequenceResult
+          ? ((ownSequenceResult as {
+              data?: { dispatch_status: string | null; exported_to: string | null } | null;
+            }).data ?? null)
+          : null;
+      const teammateActivity = personId ? teammateActivityByPerson.get(personId) ?? null : null;
+      const latestSequenceStatus = ownSequence
+        ? normalizeOwnSequenceStatus(ownSequence)
+        : teammateActivity
+          ? statusForTeammateAction(teammateActivity.status)
+          : null;
 
       return NextResponse.json({
         data: {
@@ -380,6 +438,8 @@ export async function GET(
           contact_readiness_score: contactReadiness,
           priority_score: priority,
           intrinsic_priority_score: priority,
+          latest_sequence_status: latestSequenceStatus,
+          org_outreach_activity: teammateActivity ? serializeOrgOutreachActivity(teammateActivity) : null,
           contact_emails: contactEmails,
           contact_phones: contactPhones,
         },

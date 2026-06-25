@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Copy, Check, ChevronLeft, Send, Linkedin, Mail, UserPlus } from 'lucide-react';
+import { ACTION_CREDITS } from '@/lib/billing/config';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 import { useCreditConfirm } from '@/context/CreditConfirmContext';
 
@@ -112,6 +113,8 @@ type ExistingSequence = {
   dispatch_error: string | null;
   last_status_at: string | null;
   created_at: string;
+  owned_by_teammate?: boolean;
+  teammate_name?: string | null;
 };
 
 type Gating = {
@@ -236,7 +239,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
         title: 'Generate outreach sequence?',
         description:
           'Arcova drafts a multichannel sequence for this contact and stages it in Outreach for your review.',
-        cost: 5,
+        cost: ACTION_CREDITS.outreach_sequence,
         confirmLabel: 'Generate',
       });
       if (!ok) return;
@@ -617,6 +620,26 @@ function ContactedNotice({
     : '';
 
   const status = (sequence.dispatch_status ?? 'draft').toLowerCase();
+  const teammateName = sequence.teammate_name?.trim() || 'A teammate';
+
+  if (sequence.owned_by_teammate) {
+    const sentLike = status === 'sent' || status === 'queued' || status === 'replied';
+    return (
+      <div className="space-y-3">
+        <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-3.5">
+          <p className="text-[13px] font-semibold text-[#0d3547]">
+            {sentLike
+              ? `${teammateName} has sent outreach`
+              : `${teammateName} has drafted outreach`}
+          </p>
+          <p className="mt-1 text-[12.5px] leading-snug text-gray-700">
+            This contact is already being worked by someone in your workspace. Coordinate before drafting another
+            sequence for {firstName}.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   let headline: React.ReactNode = '';
   let body: React.ReactNode = null;

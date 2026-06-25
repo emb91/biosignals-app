@@ -19,12 +19,15 @@
  * }
  */
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores, HIGH_SCORE } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
 import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
+import { fetchOrgOutreachActivityByPerson, statusForTeammateAction } from '@/lib/org-outreach';
+import { getOrgContext } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 
 // 30 days, not 14: month-old signals like an FDA approval or indication
 // expansion are still strong, honest outreach anchors. The panel shows them as
@@ -858,14 +861,12 @@ async function curateHooks(
 
 export async function GET(request: Request) {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const supabase = ctx.supabase;
+    const user = ctx.user;
 
     const url = new URL(request.url);
     const contactId = (url.searchParams.get('contactId') ?? '').trim();
@@ -877,34 +878,63 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'contactId required' }, { status: 400 });
     }
 
+    const admin = createAdminClient();
+    const access = await resolveOrgContactAccess({
+      id: contactId,
+      orgId: ctx.orgId,
+      userId: user.id,
+      admin,
+    });
+    if (!access) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+
     // ── Existing-sequence lookup ───────────────────────────────────────────
     // The side panel needs to know if we've already drafted/sent/replied for
     // this contact so it can render a "you're already reaching out…" state
-    // instead of the hook picker. Cheap query — by (user_id, contact_id,
-    // created_at desc) using the existing index.
+    // instead of the hook picker. New rows key by person_id; the contact_id
+    // fallback keeps older staged rows visible until they are regenerated.
+    const ownSequenceContactIds = [...new Set([contactId, access.contactId].filter(Boolean))];
     const { data: existingSeqRow } = await supabase
       .from('outreach_sequences')
       .select('id, anchor_hook_text, anchor_signal_type, dispatch_status, dispatch_channel, dispatch_error, last_status_at, created_at')
       .eq('user_id', user.id)
-      .eq('contact_id', contactId)
+      .or(`person_id.eq.${access.personId},contact_id.in.(${ownSequenceContactIds.join(',')})`)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    const existingSequence = existingSeqRow ?? null;
+
+    const teammateActivity =
+      (await fetchOrgOutreachActivityByPerson(admin as any, {
+          userId: user.id,
+          personIds: [access.personId],
+        })).get(access.personId) ?? null;
+    const existingSequence = existingSeqRow ?? (teammateActivity
+      ? {
+          id: '',
+          anchor_hook_text: teammateActivity.status === 'draft' ? 'Teammate draft' : 'Teammate outreach',
+          anchor_signal_type: null,
+          dispatch_status: statusForTeammateAction(teammateActivity.status),
+          dispatch_channel: null,
+          dispatch_error: null,
+          last_status_at: teammateActivity.lastStatusAt,
+          created_at: teammateActivity.lastStatusAt ?? new Date().toISOString(),
+          owned_by_teammate: true,
+          teammate_name: teammateActivity.userName,
+        }
+      : null);
 
     // Look up the contact's company_id + name + scores + persona context.
     // The persona fields (first_name, full_name, title, bio, fit_summary)
     // are used by the curation LLM to judge which hooks make sense for this
     // specific person.
-    const { data: contact, error: contactErr } = await supabase
+    const { data: contact, error: contactErr } = await admin
       .from('contacts')
       .select(
         'id, company_id, company_name, contact_fit_score, readiness_score, ' +
           'first_name, full_name, job_title, contact_bio, contact_fit_summary, ' +
           'scored_against_persona_id, companies(company_name)',
       )
-      .eq('user_id', user.id)
-      .eq('id', contactId)
+      .eq('user_id', access.ownerUserId)
+      .eq('id', access.contactId)
       .maybeSingle();
     if (contactErr) {
       return NextResponse.json({ error: contactErr.message }, { status: 500 });
@@ -1019,13 +1049,13 @@ export async function GET(request: Request) {
     // Pull signals from the lookback window — contact-scoped OR company-scoped.
     const cutoffIso = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const filterExpr = companyId
-      ? `entity_contact_id.eq.${contactId},entity_company_id.eq.${companyId}`
-      : `entity_contact_id.eq.${contactId}`;
+      ? `entity_contact_id.eq.${access.contactId},entity_company_id.eq.${companyId}`
+      : `entity_contact_id.eq.${access.contactId}`;
 
     const { data: signals, error: signalsErr } = await supabase
       .from('signal_source_events')
       .select('id, source_event_type, title, summary, event_at, entity_company_id, entity_contact_id')
-      .eq('user_id', user.id)
+      .eq('user_id', access.ownerUserId)
       .or(filterExpr)
       .gte('event_at', cutoffIso)
       .order('event_at', { ascending: false })
@@ -1053,8 +1083,8 @@ export async function GET(request: Request) {
         bestByLabel.set(label, s);
         continue;
       }
-      const newIsContact = s.entity_contact_id === contactId;
-      const existingIsContact = existing.entity_contact_id === contactId;
+      const newIsContact = s.entity_contact_id === access.contactId;
+      const existingIsContact = existing.entity_contact_id === access.contactId;
       if (newIsContact && !existingIsContact) {
         bestByLabel.set(label, s);
         continue;
@@ -1068,7 +1098,7 @@ export async function GET(request: Request) {
 
     const hooksAll: Hook[] = [];
     for (const s of bestByLabel.values()) {
-      const isContactLevel = s.entity_contact_id === contactId;
+      const isContactLevel = s.entity_contact_id === access.contactId;
       const signalLabel = humanizeSignalType(s.source_event_type);
       const cleanedTitle = cleanTitle(s.title, s.source_event_type);
       const phrase = phraseFor(s.source_event_type, signalLabel, isContactLevel, companyName);
@@ -1130,7 +1160,7 @@ export async function GET(request: Request) {
 
     const curated = await curateHooks(mechanicalHooks, {
       userId: user.id,
-      contactId,
+      contactId: access.contactId,
       contact: {
         firstName: contactRow.first_name ?? '',
         fullName: contactRow.full_name ?? '',

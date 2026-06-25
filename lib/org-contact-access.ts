@@ -29,22 +29,34 @@ function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+function chunks<T>(values: T[], size: number = 500): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    out.push(values.slice(i, i + size));
+  }
+  return out;
+}
+
 async function orgMemberIds(admin: AdminClient, orgId: string): Promise<string[]> {
   const { data, error } = await admin
     .from('org_members')
     .select('user_id')
-    .eq('org_id', orgId);
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: true })
+    .order('user_id', { ascending: true });
   if (error) throw new Error(`org member lookup failed: ${error.message}`);
   return dedupe((data ?? []).map((row) => row.user_id as string).filter(Boolean));
 }
 
-function chooseRepresentativeLink(links: ContactLinkRow[], userId: string): ContactLinkRow | null {
-  const own = links.find((link) => link.user_id === userId);
-  if (own) return own;
+function chooseRepresentativeLink(links: ContactLinkRow[], memberIds: string[]): ContactLinkRow | null {
+  const memberRank = new Map(memberIds.map((userId, index) => [userId, index]));
   return [...links].sort((a, b) => {
-    const aUpdated = Date.parse(a.updated_at ?? a.created_at ?? '') || 0;
-    const bUpdated = Date.parse(b.updated_at ?? b.created_at ?? '') || 0;
-    if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+    const rankDiff = (memberRank.get(a.user_id) ?? Number.MAX_SAFE_INTEGER) -
+      (memberRank.get(b.user_id) ?? Number.MAX_SAFE_INTEGER);
+    if (rankDiff !== 0) return rankDiff;
+    const aCreated = Date.parse(a.created_at ?? '') || Number.MAX_SAFE_INTEGER;
+    const bCreated = Date.parse(b.created_at ?? '') || Number.MAX_SAFE_INTEGER;
+    if (aCreated !== bCreated) return aCreated - bCreated;
     return a.id.localeCompare(b.id);
   })[0] ?? null;
 }
@@ -58,6 +70,7 @@ export async function resolveOrgContactAccess(params: {
   const admin = params.admin ?? createAdminClient();
   const memberIds = await orgMemberIds(admin, params.orgId);
   if (memberIds.length === 0) return null;
+  if (!memberIds.includes(params.userId)) return null;
 
   const { data: requestedLink, error: requestedLinkError } = await admin
     .from('user_contacts')
@@ -88,7 +101,7 @@ export async function resolveOrgContactAccess(params: {
     .is('archived_at', null);
   if (linksError) throw new Error(`org contact links lookup failed: ${linksError.message}`);
 
-  const link = chooseRepresentativeLink((links ?? []) as ContactLinkRow[], params.userId);
+  const link = chooseRepresentativeLink((links ?? []) as ContactLinkRow[], memberIds);
   if (!link) return null;
 
   return {
@@ -111,6 +124,7 @@ export async function listOrgContactAccesses(params: {
   const admin = params.admin ?? createAdminClient();
   const memberIds = await orgMemberIds(admin, params.orgId);
   if (memberIds.length === 0) return [];
+  if (!memberIds.includes(params.userId)) return [];
 
   const { data: states, error: stateError } = await admin
     .from('org_contact_state')
@@ -126,16 +140,20 @@ export async function listOrgContactAccesses(params: {
   );
   if (personIds.length === 0) return [];
 
-  const { data: links, error: linksError } = await admin
-    .from('user_contacts')
-    .select('id, user_id, person_id, company_id, source, created_at, updated_at')
-    .in('user_id', memberIds)
-    .in('person_id', personIds)
-    .is('archived_at', null);
-  if (linksError) throw new Error(`org contact links lookup failed: ${linksError.message}`);
+  const links: ContactLinkRow[] = [];
+  for (const personIdChunk of chunks(personIds)) {
+    const { data, error } = await admin
+      .from('user_contacts')
+      .select('id, user_id, person_id, company_id, source, created_at, updated_at')
+      .in('user_id', memberIds)
+      .in('person_id', personIdChunk)
+      .is('archived_at', null);
+    if (error) throw new Error(`org contact links lookup failed: ${error.message}`);
+    links.push(...((data ?? []) as ContactLinkRow[]));
+  }
 
   const linksByPersonId = new Map<string, ContactLinkRow[]>();
-  for (const link of (links ?? []) as ContactLinkRow[]) {
+  for (const link of links) {
     if (!link.person_id) continue;
     linksByPersonId.set(link.person_id, [...(linksByPersonId.get(link.person_id) ?? []), link]);
   }
@@ -144,7 +162,7 @@ export async function listOrgContactAccesses(params: {
     .map((state): OrgContactAccess | null => {
       const personId = state.person_id as string | null;
       if (!personId) return null;
-      const link = chooseRepresentativeLink(linksByPersonId.get(personId) ?? [], params.userId);
+      const link = chooseRepresentativeLink(linksByPersonId.get(personId) ?? [], memberIds);
       if (!link) return null;
       return {
         contactId: link.id,

@@ -382,6 +382,13 @@ interface Lead {
   company_readiness_score?: number | null;
   /** Most recent outreach_sequences.dispatch_status for this contact, surfaced by /api/contacts. */
   latest_sequence_status?: SequenceDispatchStatus;
+  /** Teammate outreach state for the same canonical person, without exposing their sequence. */
+  org_outreach_activity?: {
+    userName: string;
+    status: 'generating' | 'draft' | 'queued' | 'sent' | 'replied';
+    customerFacing: boolean;
+    lastStatusAt: string | null;
+  } | null;
   contact_panel_summary?: string | null;
   contact_fit_summary?: string | null;
   /** Mirrored from contact_readiness_snapshots.priority_score by the readiness cron. */
@@ -857,6 +864,25 @@ function contactSyncIssueReason(lead: Pick<Lead, 'email'>): 'no_email' | 'invali
 
 function contactHasSyncIssue(lead: Pick<Lead, 'email'>): boolean {
   return contactSyncIssueReason(lead) !== null;
+}
+
+function teammateOutreachActivity(lead: Pick<Lead, 'org_outreach_activity'>) {
+  return lead.org_outreach_activity ?? null;
+}
+
+function teammateOutreachLabel(activity: NonNullable<Lead['org_outreach_activity']>): string {
+  const name = activity.userName?.trim() || 'A teammate';
+  return activity.status === 'generating' || activity.status === 'draft'
+    ? `${name} has drafted outreach`
+    : `${name} has sent outreach`;
+}
+
+function contactActionLabel(lead: Lead, action: LeadAction): string {
+  const teammate = teammateOutreachActivity(lead);
+  if (teammate && (action === 'send_outreach' || action === 'await_reply')) {
+    return teammateOutreachLabel(teammate);
+  }
+  return formatLeadActionLabel(action);
 }
 
 function getContactAction(
@@ -1980,7 +2006,7 @@ export function ContactsWorkspace() {
       p++;
     }
 
-    const actionLabel = (lead: Lead) => formatLeadActionLabel(getContactAction(lead));
+    const actionLabel = (lead: Lead) => contactActionLabel(lead, getContactAction(lead));
 
     const pct = (n: number | null | undefined) =>
       n != null && Number.isFinite(n) ? `${Math.round(n * 100)}%` : '';
@@ -4205,9 +4231,12 @@ export function ContactsWorkspace() {
                             {(() => {
                               const action = getContactAction(lead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
+                              const teammateActivity = teammateOutreachActivity(lead);
+                              const label = contactActionLabel(lead, action);
                               return (
                                 <button
                                   type="button"
+                                  title={label}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     cancelEditingLead();
@@ -4215,6 +4244,11 @@ export function ContactsWorkspace() {
                                     //   send_outreach → /outreach editor (review & dispatch the staged draft)
                                     //   reach_out      → side-panel Outreach tab (generate a fresh sequence)
                                     //   anything else  → side-panel Action drawer (explanation)
+                                    if (teammateActivity && (action === 'send_outreach' || action === 'await_reply')) {
+                                      setSelectedLeadId(lead.id);
+                                      setSelectedPreview('action');
+                                      return;
+                                    }
                                     if (action === 'send_outreach') {
                                       router.push(ROUTES.outreach);
                                       return;
@@ -4230,7 +4264,9 @@ export function ContactsWorkspace() {
                                       : cn(config.className, config.interactiveClassName, 'shadow-sm'),
                                   )}
                                 >
-                                  {config.label}
+                                  <span className="block max-w-[9rem] overflow-hidden text-ellipsis whitespace-nowrap">
+                                    {label}
+                                  </span>
                                 </button>
                               );
                             })()}
@@ -5477,7 +5513,9 @@ export function ContactsWorkspace() {
                               [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
                               selectedLead.full_name;
 
+                            const teammateActivity = teammateOutreachActivity(selectedLead);
                             const actionConfig = LEAD_ACTION_PILL_CLASS[action];
+                            const actionLabel = contactActionLabel(selectedLead, action);
                             const updatedIso =
                               selectedContactFit?.contact_fit_scored_at ??
                               selectedLead.updated_at ??
@@ -5589,6 +5627,22 @@ export function ContactsWorkspace() {
                                 };
                               }
                               if (action === 'send_outreach') {
+                                if (teammateActivity) {
+                                  return {
+                                    lede: (
+                                      <>
+                                        {teammateOutreachLabel(teammateActivity)} for {contactName || 'this contact'}.
+                                        Coordinate before drafting another sequence.
+                                      </>
+                                    ),
+                                    why: (
+                                      <>
+                                        Collision state is shared across your workspace by canonical person, so duplicate
+                                        outreach prompts stay hidden even when contacts are owned by different teammates.
+                                      </>
+                                    ),
+                                  };
+                                }
                                 return {
                                   lede: (
                                     <>
@@ -5609,6 +5663,22 @@ export function ContactsWorkspace() {
                                 };
                               }
                               if (action === 'await_reply') {
+                                if (teammateActivity) {
+                                  return {
+                                    lede: (
+                                      <>
+                                        {teammateOutreachLabel(teammateActivity)} to {contactName || 'this contact'}.
+                                        Wait for that motion to resolve before starting a new one.
+                                      </>
+                                    ),
+                                    why: (
+                                      <>
+                                        The sequence itself stays private to its owner, but the assignment state is
+                                        visible so the team does not double-pitch the same person.
+                                      </>
+                                    ),
+                                  };
+                                }
                                 return {
                                   lede: (
                                     <>
@@ -5677,8 +5747,8 @@ export function ContactsWorkspace() {
                                   <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
                                     <span
                                       className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${actionConfig.className}`}
-                                    >
-                                      {actionConfig.label}
+                                  >
+                                      {actionLabel}
                                     </span>
                                     {updatedRel ? (
                                       <span className="text-[11px] text-[#7d909a]">Updated {updatedRel}</span>

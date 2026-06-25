@@ -25,7 +25,11 @@ import {
   LemlistError,
 } from '@/lib/lemlist';
 import { getHubSpotTokenForUser, pushOutreachStatusByEmail } from '@/lib/hubspot';
-import { fetchOrgOutreachActivityByPerson, releaseExpiredAndFindBlocker } from '@/lib/org-outreach';
+import {
+  fetchOrgOutreachActivityByPerson,
+  findFreshTeammateOutreachBlocker,
+  orgOutreachBlockerPayload,
+} from '@/lib/org-outreach';
 import { orgIdForUser } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
 import {
@@ -123,10 +127,10 @@ export async function POST(req: Request) {
     }
 
     const contactIds = Array.from(new Set(seqRows.map((r) => r.contact_id)));
-    const { data: contactRowsRaw } = await supabase
+    const admin = createAdminClient();
+    const { data: contactRowsRaw } = await admin
       .from('contacts')
       .select('id, email, email_deliverability, first_name, last_name, full_name, linkedin_url, company_name')
-      .eq('user_id', user.id)
       .in('id', contactIds);
     const contactById = new Map<string, ContactRow>(
       ((contactRowsRaw ?? []) as ContactRow[]).map((c) => [c.id, c]),
@@ -193,7 +197,7 @@ export async function POST(req: Request) {
       if (row.person_id) {
         const orgId = await orgIdForUser(supabase, user.id);
         if (orgId) {
-          const blocker = await releaseExpiredAndFindBlocker(createAdminClient(), {
+          const blocker = await findFreshTeammateOutreachBlocker(admin, {
             userId: user.id,
             orgId,
             personId: row.person_id,
@@ -202,11 +206,18 @@ export async function POST(req: Request) {
             results.push({
               id: row.id,
               ok: false,
-              error: `${blocker.userName} already has an active sequence with this contact.`,
+              error: orgOutreachBlockerPayload(blocker).message,
             });
             continue;
           }
         }
+      } else {
+        results.push({
+          id: row.id,
+          ok: false,
+          error: 'This sequence is missing its canonical contact identity. Regenerate it before sending.',
+        });
+        continue;
       }
 
       // Claim the person org-wide BEFORE sending (one active outreach per person per org).

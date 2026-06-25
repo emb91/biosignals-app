@@ -8,8 +8,8 @@
  *
  * DELETE /api/outreach/sequences/[id]
  *
- * Remove a row from /outreach. Only deletes our DB row — does NOT call
- * lemlist's lead-delete (the rep can do that in lemlist if needed).
+ * Remove a draft/failed row from /outreach. Generating/dispatched rows are
+ * retained as org collision history; pausing handles live lemlist stop-work.
  *
  * Input (PATCH): { messages: Array<{ day_offset, subject, body, channel }> }
  */
@@ -60,18 +60,33 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data: deleted, error } = await supabase
+  const { data: existing, error: existingError } = await supabase
+    .from('outreach_sequences')
+    .select('contact_id, company_id, dispatch_status')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .maybeSingle<{ contact_id: string | null; company_id: string | null }>();
+
+  if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
+  if (!existing) return NextResponse.json({ error: 'Sequence not found' }, { status: 404 });
+  const status = (existing as { dispatch_status?: string | null }).dispatch_status ?? 'draft';
+  if (['generating', 'queued', 'sent', 'replied'].includes(status)) {
+    return NextResponse.json(
+      { error: 'Generating or dispatched sequences are retained as workspace outreach history. Pause live sequences instead.' },
+      { status: 409 },
+    );
+  }
+
+  const { error } = await supabase
     .from('outreach_sequences')
     .delete()
     .eq('id', id)
-    .eq('user_id', user.id)
-    .select('contact_id, company_id')
-    .maybeSingle<{ contact_id: string | null; company_id: string | null }>();
+    .eq('user_id', user.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({
     ok: true,
-    contactId: deleted?.contact_id ?? null,
-    companyId: deleted?.company_id ?? null,
+    contactId: existing.contact_id ?? null,
+    companyId: existing.company_id ?? null,
   });
 }

@@ -15,10 +15,10 @@
  *   approach. If the env var is unset we accept all calls (dev convenience) +
  *   log a warning.
  *
- * Matching: lemlist payloads include leadId + campaignId. We match against
- * outreach_sequences.external_ref->>lemlist_lead_id. If no match, we log
- * + 200 OK (lemlist retries on non-2xx; we don't want infinite retries on
- * stale leads).
+ * Matching: lemlist payloads include leadId + campaignId. We match by
+ * leadId first and use campaignId as an extra guard when present. Email
+ * fallback requires campaignId because email alone is ambiguous across
+ * campaigns.
  *
  * Status mapping (v1, conservative):
  *   emailsReplied / linkedinReplied → dispatch_status='replied'
@@ -72,8 +72,12 @@ export async function POST(req: Request) {
   }
   const leadId = payload.leadId ?? payload.lead?._id ?? null;
   const leadEmail = payload.email ?? payload.lead?.email ?? null;
+  const campaignId = payload.campaignId ?? payload.campaign?._id ?? null;
   if (!leadId && !leadEmail) {
     return NextResponse.json({ ok: true, ignored: 'no leadId or email' });
+  }
+  if (!leadId && leadEmail && !campaignId) {
+    return NextResponse.json({ ok: true, ignored: 'email fallback requires campaignId' });
   }
 
   // ── Update matching row ──────────────────────────────────────────────
@@ -99,8 +103,13 @@ export async function POST(req: Request) {
     .select('id, user_id, contact_id, anchor_hook_text, external_ref');
   if (leadId) {
     query = query.eq('external_ref->>lemlist_lead_id', leadId);
+    if (campaignId) {
+      query = query.eq('external_ref->>lemlist_campaign_id', campaignId);
+    }
   } else if (leadEmail) {
-    query = query.eq('external_ref->>lemlist_lead_email', leadEmail);
+    query = query
+      .eq('external_ref->>lemlist_lead_email', leadEmail)
+      .eq('external_ref->>lemlist_campaign_id', campaignId);
   }
   const { data: matchRows } = await query.limit(5);
   const matches = (matchRows ?? []) as Array<{

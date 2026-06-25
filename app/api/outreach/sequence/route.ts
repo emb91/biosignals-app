@@ -17,7 +17,6 @@
  * as background for the model's silent relevance reasoning — never recited in copy.
  */
 import { after, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
@@ -38,7 +37,13 @@ import {
   type OutreachSequenceMessage,
 } from '@/lib/outreach-sequence';
 import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
-import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
+import { getOrgContext } from '@/lib/org-context';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
+import {
+  findFreshOrgOutreachBlocker,
+  findFreshOwnLegacyContactOutreachBlocker,
+  orgOutreachBlockerPayload,
+} from '@/lib/org-outreach';
 
 export const maxDuration = 300;
 
@@ -136,14 +141,12 @@ export async function POST(request: Request) {
   let creditTransactionId: string | null = null;
   let usageContext: { orgId: string; operationId: string } | null = null;
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const supabase = ctx.supabase;
+    const user = ctx.user;
 
     const body = (await request.json().catch(() => ({}))) as {
       contactId?: unknown;
@@ -169,19 +172,40 @@ export async function POST(request: Request) {
       : crypto.randomUUID();
 
     const admin = createAdminClient();
-    const { data: member } = await admin.from('org_members').select('org_id')
-      .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-    if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
+    const access = await resolveOrgContactAccess({
+      id: contactId,
+      orgId: ctx.orgId,
+      userId: user.id,
+      admin,
+    });
+    if (!access) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+
+    const blocker = await findFreshOrgOutreachBlocker(admin, {
+      userId: user.id,
+      orgId: ctx.orgId,
+      personId: access.personId,
+    });
+    if (blocker) {
+      return NextResponse.json(orgOutreachBlockerPayload(blocker), { status: 409 });
+    }
+    const legacyBlocker = await findFreshOwnLegacyContactOutreachBlocker(admin, {
+      userId: user.id,
+      personId: access.personId,
+      contactIds: [contactId, access.contactId],
+    });
+    if (legacyBlocker) {
+      return NextResponse.json(orgOutreachBlockerPayload(legacyBlocker), { status: 409 });
+    }
 
     // Reload the same context as /hooks so the sequence is grounded in
     // the actual data (not just whatever the hook text says).
-    const { data: contact, error: contactErr } = await supabase
+    const { data: contact, error: contactErr } = await admin
       .from('contacts')
       .select(
         'id, full_name, first_name, job_title, seniority_level, business_area, contact_bio, contact_panel_summary, contact_fit_summary, contact_fit_score, readiness_score, resolved_current_company_name, resolved_employment_history, company_id, company_name, companies(id, company_name, domain, description, bio_summary, industry, employee_range, founded_year, headquarters_city, headquarters_country, company_type, funding_stage, therapeutic_areas, modalities, development_stages, products_services, services, technologies)'
       )
-      .eq('user_id', user.id)
-      .eq('id', contactId)
+      .eq('user_id', access.ownerUserId)
+      .eq('id', access.contactId)
       .maybeSingle();
     if (contactErr) return NextResponse.json({ error: contactErr.message }, { status: 500 });
     if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
@@ -290,7 +314,7 @@ export async function POST(request: Request) {
     // for the model's silent relevance/angle reasoning, never recited (see the
     // signals briefing + lib/outreach-signals).
     const contactCompanyId = (contact as { company_id?: string | null }).company_id ?? null;
-    const signals = await fetchContactSignals(supabase, user.id, contactId, contactCompanyId);
+    const signals = await fetchContactSignals(admin, access.ownerUserId, access.contactId, contactCompanyId);
 
     const prompt = buildPrompt({
       contact: contact as Record<string, unknown>,
@@ -302,7 +326,7 @@ export async function POST(request: Request) {
       toneBlock,
     });
 
-    const entitlements = await getOrgEntitlements(member.org_id);
+    const entitlements = await getOrgEntitlements(ctx.orgId);
     if (entitlements.paymentAccessPaused) {
       return NextResponse.json({
         code: 'payment_access_paused',
@@ -311,7 +335,7 @@ export async function POST(request: Request) {
       }, { status: 402 });
     }
     const reservation = await reserveCreditsWithIncludedAllowance({
-      orgId: member.org_id,
+      orgId: ctx.orgId,
       userId: user.id,
       action: 'outreach_sequence',
       operationKey: operationId,
@@ -323,10 +347,10 @@ export async function POST(request: Request) {
         : entitlements.caps.outreachSequencesIncludedMonthly,
       idempotencyKey: `sequence:${operationId}`,
       entityType: 'contact',
-      entityId: contactId,
+      entityId: access.personId,
     });
     if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
-    usageContext = { orgId: member.org_id, operationId };
+    usageContext = { orgId: ctx.orgId, operationId };
     creditTransactionId = reservation.transactionId;
 
     const generateMessages = async (): Promise<Message[]> => {
@@ -343,7 +367,10 @@ export async function POST(request: Request) {
         model: completion.model,
         usage: completion.usage,
         metadata: {
-          contact_id: contactId,
+          org_id: ctx.orgId,
+          contact_id: access.contactId,
+          person_id: access.personId,
+          operation_id: operationId,
           signals: signals.length,
           manual_override: manualOverride,
           has_angle: userAngle.length > 0,
@@ -369,7 +396,9 @@ export async function POST(request: Request) {
         .from('outreach_sequences')
         .insert({
           user_id: user.id,
-          contact_id: contactId,
+          org_id: ctx.orgId,
+          person_id: access.personId,
+          contact_id: access.contactId,
           company_id: contactCompanyId,
           anchor_signal_event_id: null,
           anchor_signal_type: null,

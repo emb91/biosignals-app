@@ -15,12 +15,19 @@
  * Output: { id }
  */
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import {
   hasCompleteBestPracticeCadence,
   sanitizeOutreachMessages,
   type OutreachSequenceMessage,
 } from '@/lib/outreach-sequence';
+import { getOrgContext } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
+import {
+  findFreshOrgOutreachBlocker,
+  findFreshOwnLegacyContactOutreachBlocker,
+  orgOutreachBlockerPayload,
+} from '@/lib/org-outreach';
 
 function messageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : 'Internal server error';
@@ -28,9 +35,8 @@ function messageFromUnknown(error: unknown): string {
 
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const ctx = await getOrgContext();
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = (await req.json().catch(() => ({}))) as {
       contactId?: unknown;
@@ -65,19 +71,48 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: contactRow } = await supabase
+    const admin = createAdminClient();
+    const access = await resolveOrgContactAccess({
+      id: contactId,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+
+    const blocker = await findFreshOrgOutreachBlocker(admin, {
+      userId: ctx.user.id,
+      orgId: ctx.orgId,
+      personId: access.personId,
+    });
+    if (blocker) {
+      return NextResponse.json(orgOutreachBlockerPayload(blocker), { status: 409 });
+    }
+    const legacyBlocker = await findFreshOwnLegacyContactOutreachBlocker(admin, {
+      userId: ctx.user.id,
+      personId: access.personId,
+      contactIds: [contactId, access.contactId],
+    });
+    if (legacyBlocker) {
+      return NextResponse.json(orgOutreachBlockerPayload(legacyBlocker), { status: 409 });
+    }
+
+    const { data: contactRow } = await admin
       .from('contacts')
       .select('company_id')
-      .eq('user_id', user.id)
-      .eq('id', contactId)
+      .eq('user_id', access.ownerUserId)
+      .eq('id', access.contactId)
       .maybeSingle();
+    if (!contactRow) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
     const companyId = (contactRow as { company_id?: string | null } | null)?.company_id ?? null;
 
-    const { data: inserted, error } = await supabase
+    const { data: inserted, error } = await ctx.supabase
       .from('outreach_sequences')
       .insert({
-        user_id: user.id,
-        contact_id: contactId,
+        user_id: ctx.user.id,
+        org_id: ctx.orgId,
+        person_id: access.personId,
+        contact_id: access.contactId,
         company_id: companyId,
         anchor_signal_event_id: anchorSignalEventId,
         anchor_signal_type: anchorSignalType,
