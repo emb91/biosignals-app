@@ -3115,9 +3115,10 @@ export default function CompaniesPage() {
 
                     </div>
 
-                    {/* Panel footer — Edit / Archive company, mirrors the contact card.
-                        Only rendered on the Details tab (matches contacts' Contact tab). */}
-                    {panelMode === 'details' && (
+                    {/* Panel footer — persistent Edit / Archive company on every tab
+                        (matches the Companies Side Panel design's drawer footer).
+                        Refresh enrichment lives in the Details tab's Data source card. */}
+                    {panelMode !== 'reachout' && (
                       <div className="px-4 py-4 border-t border-[rgba(13,53,71,0.08)]">
                         <div className="flex gap-2">
                           <button
