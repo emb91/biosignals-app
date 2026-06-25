@@ -1,31 +1,36 @@
 /**
- * Headcount-expansion readiness signal.
+ * Headcount-change readiness signals (both directions).
  *
  * Apollo's organization enrich returns 6/12/24-month headcount growth ratios at
  * NO extra cost (they ride on org-enrich calls we already make during company
- * enrichment). When a company's 12-month headcount growth clears a threshold we
- * emit a `headcount_expansion` signal (readiness dimension: new_people) — a soft,
- * free proxy for "this team is scaling" that complements the active job-postings
- * `hiring_expansion` signal.
+ * enrichment). From the 12-month figure we emit one of two soft, free signals:
+ *
+ *   - `headcount_expansion` (dimension new_people) when growth ≥ +15% — a
+ *     scaling team, a softer proxy than the active-job-postings `hiring_expansion`.
+ *   - `headcount_contraction` (dimension caution) when growth ≤ −25% — a sharp
+ *     workforce cut, a soft restructuring/distress proxy that suppresses
+ *     readiness. Softer than a confirmed `restructuring` signal (press/SEC).
  *
  * Dedup: one signal per (user, company, signal_key) per CALENDAR MONTH, keyed on
  * source_event_id, so re-enriching the same company doesn't re-emit.
  *
- * Threshold (MIN_GROWTH_PCT) and catalog impact (readiness-catalog.ts:
- * headcount_expansion = 42) are deliberately conservative — tune after review.
+ * Thresholds + catalog impacts (headcount_expansion = 42, headcount_contraction
+ * = 45) are deliberately conservative — tune after review.
  *
  * Best-effort: callers must not let a failure here block enrichment.
  */
 import type { createAdminClient } from '@/lib/supabase-admin';
+import type { SignalKey } from '@/lib/signals/readiness-types';
 import { insertSignalSourceEvent } from '@/lib/signals/readiness-store';
 import { normalizeSignalSourceEvent } from '@/lib/signals/readiness-service';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
 const SOURCE = 'apollo_org_enrich';
-const SIGNAL_KEY = 'headcount_expansion' as const;
-/** Minimum 12-month headcount growth (as a percentage) required to emit. */
-const MIN_GROWTH_PCT = 20;
+/** Emit `headcount_expansion` at or above this 12-month growth (percent). */
+const EXPANSION_MIN_PCT = 15;
+/** Emit `headcount_contraction` (caution) at or below this 12-month change (percent). */
+const CONTRACTION_MAX_PCT = -25;
 
 export type HeadcountGrowth = {
   growth6mo?: number | null;
@@ -55,11 +60,39 @@ export function extractHeadcountGrowth(rawOrg: unknown): HeadcountGrowth {
   };
 }
 
+/** Decide which (if any) headcount signal a 12-month change warrants. */
+function classifyHeadcountChange(
+  growth12: number,
+  label: string,
+): { signalKey: SignalKey; sourceEventType: string; title: string; summary: string } | null {
+  if (growth12 >= EXPANSION_MIN_PCT) {
+    return {
+      signalKey: 'headcount_expansion',
+      sourceEventType: 'headcount_growth',
+      title: `Headcount expansion at ${label}`,
+      summary:
+        `${label} grew headcount roughly ${Math.round(growth12)}% over the past year. ` +
+        'A scaling team often signals new needs and budget.',
+    };
+  }
+  if (growth12 <= CONTRACTION_MAX_PCT) {
+    return {
+      signalKey: 'headcount_contraction',
+      sourceEventType: 'headcount_decline',
+      title: `Headcount contraction at ${label}`,
+      summary:
+        `${label} cut headcount roughly ${Math.abs(Math.round(growth12))}% over the past year — ` +
+        'possible restructuring or distress. Treat with caution.',
+    };
+  }
+  return null;
+}
+
 /**
- * Emit a headcount-expansion signal for one (user, company) when 12-month growth
- * clears the threshold and we haven't already emitted it this calendar month.
- * Returns whether it emitted; the caller is responsible for recomputing readiness
- * when something was emitted.
+ * Emit a headcount expansion/contraction signal for one (user, company) when the
+ * 12-month change clears a threshold and we haven't already emitted that signal
+ * this calendar month. Returns whether it emitted; the caller recomputes
+ * readiness when something was emitted.
  */
 export async function runHeadcountSignalForCompany(
   admin: Admin,
@@ -71,9 +104,13 @@ export async function runHeadcountSignalForCompany(
   },
 ): Promise<'emitted' | 'below_threshold' | 'duplicate'> {
   const growth12 = toPercent(input.growth.growth12mo);
-  if (growth12 == null || growth12 < MIN_GROWTH_PCT) return 'below_threshold';
+  if (growth12 == null) return 'below_threshold';
 
-  const sourceEventId = `${SOURCE}:${input.companyId}:${SIGNAL_KEY}:${monthKey()}`;
+  const label = input.companyName?.trim() || 'This company';
+  const classified = classifyHeadcountChange(growth12, label);
+  if (!classified) return 'below_threshold';
+
+  const sourceEventId = `${SOURCE}:${input.companyId}:${classified.signalKey}:${monthKey()}`;
 
   const { data: existing } = await admin
     .from('signal_source_events')
@@ -85,22 +122,16 @@ export async function runHeadcountSignalForCompany(
     .maybeSingle();
   if (existing) return 'duplicate';
 
-  const label = input.companyName?.trim() || 'This company';
-  const growthRounded = Math.round(growth12);
-  const summary =
-    `${label} grew headcount roughly ${growthRounded}% over the past year. ` +
-    'A scaling team often signals new needs and budget.';
-
   const rawEvent = await insertSignalSourceEvent(admin, {
     userId: input.userId,
     entityScope: 'company',
     companyId: input.companyId,
     source: SOURCE,
-    sourceEventType: 'headcount_growth',
+    sourceEventType: classified.sourceEventType,
     sourceEventId,
-    title: `Headcount expansion at ${label}`,
-    summary,
-    excerpt: summary,
+    title: classified.title,
+    summary: classified.summary,
+    excerpt: classified.summary,
     eventAt: new Date().toISOString(),
     metadata: {
       growth_6mo_pct: toPercent(input.growth.growth6mo),
@@ -113,7 +144,7 @@ export async function runHeadcountSignalForCompany(
   await normalizeSignalSourceEvent(admin, {
     userId: input.userId,
     rawEvent,
-    signalKeys: [SIGNAL_KEY],
+    signalKeys: [classified.signalKey],
     companyId: input.companyId,
   });
 
