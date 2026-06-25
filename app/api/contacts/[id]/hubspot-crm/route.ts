@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { getOrgContext } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 
 type RouteParams = { id: string };
 
@@ -8,18 +10,26 @@ export async function GET(
   { params }: { params: Promise<RouteParams> }
 ) {
   const { id } = await params;
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
+  const ctx = await getOrgContext();
+  if (!ctx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const admin = createAdminClient();
+  const access = await resolveOrgContactAccess({
+    id,
+    orgId: ctx.orgId,
+    userId: ctx.user.id,
+    admin,
+  });
+  if (!access) {
+    return NextResponse.json({ error: 'Contact not found.' }, { status: 404 });
+  }
 
-  const { data: contact, error: contactError } = await supabase
+  const { data: contact, error: contactError } = await admin
     .from('contacts')
     .select('id, email, company_id, resolved_current_company_name, resolved_current_company_domain')
-    .eq('id', id)
-    .eq('user_id', user.id)
+    .eq('id', access.contactId)
+    .eq('user_id', access.ownerUserId)
     .maybeSingle();
 
   if (contactError) {
@@ -31,10 +41,10 @@ export async function GET(
   }
 
   const normalizedEmail = typeof contact.email === 'string' ? contact.email.trim().toLowerCase() : null;
-  const { data: contactLinks, error: linksError } = await supabase
+  const { data: contactLinks, error: linksError } = await admin
     .from('crm_deal_contact_links')
     .select('hubspot_deal_id, hubspot_contact_id, hubspot_contact_email, hubspot_contact_name, arcova_contact_id, raw_payload, synced_at')
-    .eq('user_id', user.id)
+    .in('user_id', access.memberIds)
     .or(
       normalizedEmail
         ? `arcova_contact_id.eq.${contact.id},hubspot_contact_email.eq.${normalizedEmail}`
@@ -63,15 +73,15 @@ export async function GET(
   }
 
   const [{ data: deals, error: dealsError }, { data: companyLinks, error: companyLinksError }] = await Promise.all([
-    supabase
+    admin
       .from('crm_deals')
       .select('hubspot_deal_id, deal_name, deal_stage, amount, close_date, hs_lastmodifieddate, synced_at')
-      .eq('user_id', user.id)
+      .in('user_id', access.memberIds)
       .in('hubspot_deal_id', dealIds),
-    supabase
+    admin
       .from('crm_deal_company_links')
       .select('hubspot_deal_id, hubspot_company_name, hubspot_company_domain, arcova_company_id, raw_payload')
-      .eq('user_id', user.id)
+      .in('user_id', access.memberIds)
       .in('hubspot_deal_id', dealIds),
   ]);
 

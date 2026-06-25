@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { attemptApolloPhoneRevealForContact } from '@/lib/contact-phone-enrichment';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
@@ -10,33 +9,39 @@ import {
   settleCredits,
 } from '@/lib/billing/credits';
 import { recordProviderUsage } from '@/lib/provider-usage';
-import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
+import { getOrgContext } from '@/lib/org-context';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const auth = await createClient();
-  const { data: { user } } = await auth.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getOrgContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const admin = createAdminClient();
+  const access = await resolveOrgContactAccess({
+    id,
+    orgId: ctx.orgId,
+    userId: ctx.user.id,
+    admin,
+  });
+  if (!access) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+
   const { data: contact, error } = await admin.from('contacts')
     .select('id, full_name, first_name, last_name, company_name, company_domain, email, linkedin_url, location')
-    .eq('id', id).eq('user_id', user.id).maybeSingle();
+    .eq('id', access.contactId)
+    .eq('user_id', access.ownerUserId)
+    .maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
 
-  const { data: member } = await admin.from('org_members').select('org_id')
-    .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-  if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
-
-  const entitlements = await getOrgEntitlements(member.org_id);
+  const entitlements = await getOrgEntitlements(ctx.orgId);
   const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
   const reservation = await reserveCreditsWithIncludedAllowance({
-    orgId: member.org_id,
-    userId: user.id,
+    orgId: ctx.orgId,
+    userId: ctx.user.id,
     action: 'phone_reveal',
     operationKey: operationId,
     window: 'utc_month',
@@ -47,13 +52,13 @@ export async function POST(
       : entitlements.caps.phoneRevealsIncludedMonthly,
     idempotencyKey: `phone-reveal:${operationId}`,
     entityType: 'contact',
-    entityId: id,
+    entityId: access.personId,
   });
   if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
 
   const result = await attemptApolloPhoneRevealForContact(admin, {
-    userId: user.id,
-    contactId: id,
+    userId: access.ownerUserId,
+    contactId: access.contactId,
     lookupInput: {
       full_name: contact.full_name ?? undefined,
       first_name: contact.first_name ?? undefined,
@@ -67,20 +72,20 @@ export async function POST(
   });
   if (!result.gateAllowed) {
     await refundCredits(reservation.transactionId);
-    await settleUsage({ orgId: member.org_id, action: 'phone_reveal', operationKey: operationId, quantity: 0 });
+    await settleUsage({ orgId: ctx.orgId, action: 'phone_reveal', operationKey: operationId, quantity: 0 });
     return NextResponse.json({ error: 'Phone reveal is available for high-fit leads.' }, { status: 422 });
   }
   if (result.error) {
     await refundCredits(reservation.transactionId);
-    await settleUsage({ orgId: member.org_id, action: 'phone_reveal', operationKey: operationId, quantity: 0 });
+    await settleUsage({ orgId: ctx.orgId, action: 'phone_reveal', operationKey: operationId, quantity: 0 });
     return NextResponse.json({ error: 'Phone reveal could not be started. Credits were returned.' }, { status: 502 });
   }
 
   await settleCredits(reservation.transactionId);
-  await settleUsage({ orgId: member.org_id, action: 'phone_reveal', operationKey: operationId, quantity: 1 });
+  await settleUsage({ orgId: ctx.orgId, action: 'phone_reveal', operationKey: operationId, quantity: 1 });
   recordProviderUsage({
-    userId: user.id,
-    contactId: id,
+    userId: ctx.user.id,
+    contactId: access.contactId,
     provider: 'apollo',
     eventType: 'apollo_phone_reveal',
     metadata: { pending: result.pending, inlinePhonesRevealed: result.revealed },

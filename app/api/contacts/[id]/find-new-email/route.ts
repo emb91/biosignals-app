@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import {
   classifyEnrichedEmail,
   emailsEqual,
@@ -20,7 +19,8 @@ import {
   settleUsage,
   settleCredits,
 } from '@/lib/billing/credits';
-import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
+import { getOrgContext } from '@/lib/org-context';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 
 type ContactForFinder = {
   id: string;
@@ -124,34 +124,36 @@ export async function POST(
   let usageContext: { orgId: string; operationId: string } | null = null;
   try {
     const { id } = await context.params;
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const admin = createAdminClient();
+    const access = await resolveOrgContactAccess({
+      id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
 
-    const { data: contact, error: contactError } = await supabase
+    const { data: contact, error: contactError } = await admin
       .from('contacts')
       .select('id, user_id, first_name, last_name, full_name, email, email_status, email_deliverability, updated_at, priority_score, crm_is_suppressed, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
-      .eq('id', id)
-      .eq('user_id', user.id)
+      .eq('id', access.contactId)
+      .eq('user_id', access.ownerUserId)
       .maybeSingle();
 
     if (contactError) return NextResponse.json({ error: contactError.message }, { status: 500 });
     if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
 
     const typedContact = contact as ContactForFinder;
-    const { data: contactEmailRows, error: contactEmailError } = await supabase
+    const { data: contactEmailRows, error: contactEmailError } = await admin
       .from('contact_emails')
       .select(
         'id, contact_id, user_id, email, category, label, source_provider, apollo_email_status, email_deliverability, email_deliverability_provider, email_deliverability_checked_at, email_deliverability_metadata, created_at, updated_at',
       )
-      .eq('contact_id', id)
-      .eq('user_id', user.id)
+      .eq('contact_id', access.contactId)
       .order('created_at', { ascending: true });
 
     if (contactEmailError) {
@@ -186,15 +188,11 @@ export async function POST(
       );
     }
 
-    const admin = createAdminClient();
-    const { data: member } = await admin.from('org_members').select('org_id')
-      .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-    if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
-    const entitlements = await getOrgEntitlements(member.org_id);
+    const entitlements = await getOrgEntitlements(ctx.orgId);
     const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
     const reservation = await reserveCreditsWithIncludedAllowance({
-      orgId: member.org_id,
-      userId: user.id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
       action: 'email_finder',
       operationKey: operationId,
       window: 'utc_month',
@@ -205,10 +203,10 @@ export async function POST(
         : entitlements.caps.emailFinderRequestsIncludedMonthly,
       idempotencyKey: `email-finder:${operationId}`,
       entityType: 'contact',
-      entityId: id,
+      entityId: access.personId,
     });
     if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
-    usageContext = { orgId: member.org_id, operationId };
+    usageContext = { orgId: ctx.orgId, operationId };
     creditTransactionId = reservation.transactionId;
 
     const finder = await findEmailWithZeroBounce(typedContact);
@@ -226,8 +224,8 @@ export async function POST(
     }
 
     recordProviderUsage({
-      userId: user.id,
-      contactId: id,
+      userId: ctx.user.id,
+      contactId: access.contactId,
       provider: 'zerobounce',
       eventType: 'zerobounce_email_finder',
       metadata: { email, domain: finder.domain ?? null },
@@ -238,8 +236,8 @@ export async function POST(
     const checkedAt = new Date().toISOString();
 
     recordProviderUsage({
-      userId: user.id,
-      contactId: id,
+      userId: ctx.user.id,
+      contactId: access.contactId,
       provider: 'zerobounce',
       eventType: 'zerobounce_email_validate',
       quantity: zerobounceValidationBillableQuantity(validation.status),
@@ -249,11 +247,10 @@ export async function POST(
     const currentCompanyDomain = typedContact.resolved_current_company_domain || typedContact.company_domain;
     const category = classifyEnrichedEmail(email, currentCompanyDomain);
 
-    const { data: existingRows, error: existingError } = await supabase
+    const { data: existingRows, error: existingError } = await admin
       .from('contact_emails')
       .select('id, email')
-      .eq('contact_id', id)
-      .eq('user_id', user.id);
+      .eq('contact_id', access.contactId);
 
     if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
 
@@ -262,7 +259,7 @@ export async function POST(
     );
 
     if (existing) {
-      const { error: updateEmailError } = await supabase
+      const { error: updateEmailError } = await admin
         .from('contact_emails')
         .update({
           email_deliverability: emailDeliverability,
@@ -271,13 +268,12 @@ export async function POST(
           email_deliverability_metadata: { finder, validation },
           updated_at: checkedAt,
         })
-        .eq('id', existing.id)
-        .eq('user_id', user.id);
+        .eq('id', existing.id);
       if (updateEmailError) return NextResponse.json({ error: updateEmailError.message }, { status: 500 });
     } else {
-      const { error: insertEmailError } = await supabase.from('contact_emails').insert({
-        contact_id: id,
-        user_id: user.id,
+      const { error: insertEmailError } = await admin.from('contact_emails').insert({
+        contact_id: access.contactId,
+        user_id: access.ownerUserId,
         email,
         category,
         label: null,
@@ -330,11 +326,11 @@ export async function POST(
     };
 
     if (Object.keys(contactPatch).length > 0) {
-      const { data: updated, error: contactUpdateError } = await supabase
+      const { data: updated, error: contactUpdateError } = await admin
         .from('contacts')
         .update(contactPatch)
-        .eq('id', id)
-        .eq('user_id', user.id)
+        .eq('id', access.contactId)
+        .eq('user_id', access.ownerUserId)
         .select('id, email, email_deliverability, email_status, updated_at')
         .maybeSingle();
 
@@ -342,11 +338,10 @@ export async function POST(
       updatedContact = updated;
     }
 
-    const { data: emailRows, error: emailRowsError } = await supabase
+    const { data: emailRows, error: emailRowsError } = await admin
       .from('contact_emails')
       .select('id, contact_id, user_id, email, category, label, source_provider, apollo_email_status, email_deliverability, email_deliverability_provider, email_deliverability_checked_at, email_deliverability_metadata, created_at, updated_at')
-      .eq('contact_id', id)
-      .eq('user_id', user.id)
+      .eq('contact_id', access.contactId)
       .order('created_at', { ascending: true });
 
     if (emailRowsError) return NextResponse.json({ error: emailRowsError.message }, { status: 500 });

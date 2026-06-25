@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { getOrgContext } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 
 function clampTwoSentences(input: string, fallback: string): string {
   const text = input.replace(/\s+/g, ' ').trim();
@@ -15,17 +17,22 @@ export async function GET(
 ) {
   try {
     const { id: leadId } = await params;
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const admin = createAdminClient();
+    const access = await resolveOrgContactAccess({
+      id: leadId,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) {
+      return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
+    }
 
-    const { data: lead, error: leadError } = await supabase
+    const { data: lead, error: leadError } = await admin
       .from('contacts')
       .select(`
         id,
@@ -43,8 +50,8 @@ export async function GET(
         contact_panel_summary,
         contact_fit_summary
       `)
-      .eq('user_id', user.id)
-      .eq('id', leadId)
+      .eq('user_id', access.ownerUserId)
+      .eq('id', access.contactId)
       .maybeSingle();
 
     if (leadError || !lead) {
@@ -52,7 +59,7 @@ export async function GET(
     }
 
     const { data: company } = lead.company_id
-      ? await supabase
+      ? await admin
           .from('companies')
           .select('company_name,company_type_display,funding_stage,therapeutic_areas,modalities')
           .eq('id', lead.company_id)

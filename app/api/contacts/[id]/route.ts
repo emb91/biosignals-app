@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import {
-  fetchContactEmailsForContacts,
   looksLikeEmail,
   normalizeUserEmailDeliverability,
   syncEmailDeliverabilityOverrides,
@@ -9,7 +8,6 @@ import {
   type EmailDeliverabilityOverride,
 } from '@/lib/contact-emails';
 import {
-  fetchContactPhonesForContacts,
   looksLikePhone,
   syncUserAddedContactPhones,
 } from '@/lib/contact-phones';
@@ -20,6 +18,11 @@ import {
   contactReadinessByContactIdForOrg,
 } from '@/lib/org-readiness-snapshots';
 import { createAdminClient } from '@/lib/supabase-admin';
+import {
+  fetchOrgContactEmails,
+  fetchOrgContactPhones,
+  resolveOrgContactAccess,
+} from '@/lib/org-contact-access';
 
 type LeadUpdateBody = {
   full_name?: string;
@@ -302,11 +305,18 @@ export async function GET(
       const companyId = typeof contactRow.company_id === 'string' ? contactRow.company_id : null;
       const contactId = typeof contactRow.id === 'string' ? contactRow.id : id;
       const personId = typeof contactRow.person_id === 'string' ? contactRow.person_id : null;
+      const access = personId
+        ? {
+            contactId,
+            personId,
+          }
+        : null;
+      const admin = createAdminClient();
 
       const [
         overrideResult,
-        emailsGrouped,
-        phonesGrouped,
+        contactEmails,
+        contactPhones,
         accountResult,
         accountReadinessByCompany,
         contactReadinessByContact,
@@ -319,8 +329,8 @@ export async function GET(
               .eq('person_id', personId)
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
-        fetchContactEmailsForContacts(ctx.supabase, [contactId]),
-        fetchContactPhonesForContacts(ctx.supabase, [contactId]),
+        access ? fetchOrgContactEmails(access, admin) : Promise.resolve([]),
+        access ? fetchOrgContactPhones(access, admin) : Promise.resolve([]),
         companyId
           ? ctx.supabase
               .from('org_companies')
@@ -370,8 +380,8 @@ export async function GET(
           contact_readiness_score: contactReadiness,
           priority_score: priority,
           intrinsic_priority_score: priority,
-          contact_emails: emailsGrouped.get(contactId) ?? [],
-          contact_phones: phonesGrouped.get(contactId) ?? [],
+          contact_emails: contactEmails,
+          contact_phones: contactPhones,
         },
       });
     } catch {
@@ -460,18 +470,14 @@ export async function PUT(
     };
 
     const now = new Date().toISOString();
-    const { data: contactLink, error: linkError } = await ctx.supabase
-      .from('user_contacts')
-      .select('id, person_id, company_id, source, created_at, updated_at')
-      .eq('user_id', ctx.user.id)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (linkError) {
-      return NextResponse.json({ error: linkError.message }, { status: 500 });
-    }
-
-    if (!contactLink?.person_id) {
+    const admin = createAdminClient();
+    const access = await resolveOrgContactAccess({
+      id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) {
       return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
     }
 
@@ -479,7 +485,7 @@ export async function PUT(
       .from('org_contact_overrides')
       .select('overrides')
       .eq('org_id', ctx.orgId)
-      .eq('person_id', contactLink.person_id)
+      .eq('person_id', access.personId)
       .maybeSingle();
 
     if (existingOverrideError) {
@@ -497,10 +503,10 @@ export async function PUT(
       .from('org_contact_state')
       .upsert({
         org_id: ctx.orgId,
-        person_id: contactLink.person_id,
-        company_id: contactLink.company_id,
-        source: contactLink.source,
-        added_at: contactLink.created_at ?? now,
+        person_id: access.personId,
+        company_id: access.companyId,
+        source: access.source,
+        added_at: access.createdAt ?? now,
         updated_at: now,
         created_by: ctx.user.id,
       }, { onConflict: 'org_id,person_id' });
@@ -513,7 +519,7 @@ export async function PUT(
       .from('org_contact_overrides')
       .upsert({
         org_id: ctx.orgId,
-        person_id: contactLink.person_id,
+        person_id: access.personId,
         overrides: nextOverrides,
         overridden_by: ctx.user.id,
         overridden_at: now,
@@ -524,9 +530,9 @@ export async function PUT(
     }
 
     try {
-      await syncUserAddedContactEmails(ctx.supabase, {
-        contactId: id,
-        userId: ctx.user.id,
+      await syncUserAddedContactEmails(admin, {
+        contactId: access.contactId,
+        userId: access.ownerUserId,
         additionalEmails: userSecondaryEmails,
       });
     } catch (emailErr) {
@@ -538,9 +544,9 @@ export async function PUT(
     }
 
     try {
-      await syncUserAddedContactPhones(ctx.supabase, {
-        contactId: id,
-        userId: ctx.user.id,
+      await syncUserAddedContactPhones(admin, {
+        contactId: access.contactId,
+        userId: access.ownerUserId,
         additionalPhones: userPhones,
       });
     } catch (phoneErr) {
@@ -552,9 +558,9 @@ export async function PUT(
     }
 
     try {
-      await syncPrimaryEmailAsUserRowIfNeeded(ctx.supabase, {
-        contactId: id,
-        userId: ctx.user.id,
+      await syncPrimaryEmailAsUserRowIfNeeded(admin, {
+        contactId: access.contactId,
+        userId: access.ownerUserId,
         primaryEmail: normalizeString(body.email),
       });
     } catch (syncErr) {
@@ -588,9 +594,9 @@ export async function PUT(
     }
 
     try {
-      await syncEmailDeliverabilityOverrides(ctx.supabase, {
-        contactId: id,
-        userId: ctx.user.id,
+      await syncEmailDeliverabilityOverrides(admin, {
+        contactId: access.contactId,
+        userId: access.ownerUserId,
         primaryEmail: normalizeString(body.email),
         overrides: emailDeliverabilityOverrides,
       });
@@ -603,34 +609,34 @@ export async function PUT(
     }
 
     try {
-      const [emailsGrouped, phonesGrouped] = await Promise.all([
-        fetchContactEmailsForContacts(ctx.supabase, [id]),
-        fetchContactPhonesForContacts(ctx.supabase, [id]),
+      const [contactEmails, contactPhones] = await Promise.all([
+        fetchOrgContactEmails(access, admin),
+        fetchOrgContactPhones(access, admin),
       ]);
       return NextResponse.json({
         data: {
-          id,
+          id: access.contactId,
           ...applyContactOverrides(
             {
               ...updatePayload,
               updated_at: now,
-              created_at: contactLink.created_at ?? null,
+              created_at: access.createdAt,
             },
             nextOverrides,
           ),
-          contact_emails: emailsGrouped.get(id) ?? [],
-          contact_phones: phonesGrouped.get(id) ?? [],
+          contact_emails: contactEmails,
+          contact_phones: contactPhones,
         },
       });
     } catch {
       return NextResponse.json({
         data: {
-          id,
+          id: access.contactId,
           ...applyContactOverrides(
             {
               ...updatePayload,
               updated_at: now,
-              created_at: contactLink.created_at ?? null,
+              created_at: access.createdAt,
             },
             nextOverrides,
           ),
@@ -658,27 +664,35 @@ export async function DELETE(
     }
 
     const now = new Date().toISOString();
-    const { data: contactLink } = await ctx.supabase
-      .from('user_contacts')
-      .select('person_id')
-      .eq('user_id', ctx.user.id)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (contactLink?.person_id) {
-      await ctx.supabase
-        .from('org_contact_state')
-        .upsert({
-          org_id: ctx.orgId,
-          person_id: contactLink.person_id,
-          archived_at: now,
-          archived_by: ctx.user.id,
-          archived_reason: 'user_archived',
-          updated_at: now,
-        }, { onConflict: 'org_id,person_id' });
+    const admin = createAdminClient();
+    const access = await resolveOrgContactAccess({
+      id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) {
+      return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
     }
 
-    const { error } = await ctx.supabase
+    const { error: stateError } = await ctx.supabase
+      .from('org_contact_state')
+      .upsert({
+        org_id: ctx.orgId,
+        person_id: access.personId,
+        company_id: access.companyId,
+        source: access.source,
+        archived_at: now,
+        archived_by: ctx.user.id,
+        archived_reason: 'user_archived',
+        updated_at: now,
+      }, { onConflict: 'org_id,person_id' });
+
+    if (stateError) {
+      return NextResponse.json({ error: stateError.message }, { status: 500 });
+    }
+
+    const { error } = await admin
       .from('contacts')
       .update({
         archived_at: now,
@@ -686,8 +700,8 @@ export async function DELETE(
         archived_reason: 'user_archived',
         updated_at: now,
       })
-      .eq('user_id', ctx.user.id)
-      .eq('id', id);
+      .eq('user_id', access.ownerUserId)
+      .eq('id', access.contactId);
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
