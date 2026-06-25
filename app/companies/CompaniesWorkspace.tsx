@@ -19,13 +19,24 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronsUpDown,
+  Download,
   ExternalLink,
+  Maximize2,
+  Minimize2,
   Pencil,
   RotateCw,
   Trash2,
+  Upload,
   Users,
   X,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 import { useCreditConfirm } from '@/context/CreditConfirmContext';
@@ -165,11 +176,26 @@ function useEnrichmentProgress(startedAt: string | null): { percent: number; lab
   return { percent, label };
 }
 
-/** Side-panel banner variant (stacked: heading + label + full-width bar). */
-function CompanyEnrichmentProgress(_props: { startedAt: string | null }) {
+/** Side-panel banner variant (stacked: heading + label + full-width bar +
+ *  percent). Mirrors the /contacts in-panel enriching banner so the company
+ *  card shows real, moving progress instead of a static label. */
+function CompanyEnrichmentProgress({ startedAt }: { startedAt: string | null }) {
+  const { percent, label } = useEnrichmentProgress(startedAt);
   return (
     <div className="min-w-0 flex-1">
       <p className="text-[12.5px] font-semibold text-arcova-teal">Enriching this company…</p>
+      <p className="mt-0.5 text-[11.5px] leading-snug text-arcova-teal/80">{label}…</p>
+      <div className="mt-2 flex items-center gap-2.5">
+        <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-arcova-teal/12">
+          <div
+            className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+            style={{ width: `${percent}%` }}
+          >
+            <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-14 rounded-full" />
+          </div>
+        </div>
+        <span className="shrink-0 text-[11px] font-medium tabular-nums text-arcova-teal">{percent}%</span>
+      </div>
     </div>
   );
 }
@@ -596,7 +622,7 @@ function DetailCard({
 function EyebrowField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">{label}</p>
       <p className="mt-1.5 text-[13.5px] leading-[1.4] text-[#0d3547] break-words">{children}</p>
     </div>
   );
@@ -627,7 +653,7 @@ function EntityRows({ items }: { items: string[] }) {
       {items.map((t, i) => (
         <p
           key={`${t}-${i}`}
-          className="border-t border-[rgba(13,53,71,0.06)] py-2.5 text-[13px] leading-[1.45] text-[#0d3547] first:border-t-0 first:pt-0"
+          className="border-t border-[rgba(13,53,71,0.06)] py-2.5 font-manrope text-[13px] font-bold leading-[1.3] tracking-[-0.01em] text-[#0d3547] first:border-t-0 first:pt-0"
         >
           {t}
         </p>
@@ -682,6 +708,18 @@ export default function CompaniesPage() {
   // /contacts). On submit we dismiss the company card and forward the text
   // to AgentPanel as a pending message; the agent expands back into view.
   const [agentChatBarValue, setAgentChatBarValue] = useState('');
+
+  // Agent docking — when true the agent expands into the TOP HALF and the company
+  // card drops to the bottom half (50/50 split); when false the card takes the
+  // full column and the agent collapses to the floating chat bar at the top.
+  // Mirrors the /contacts drawer behaviour exactly.
+  const [agentDocked, setAgentDocked] = useState(false);
+
+  // Top-of-page Actions menu state (Import / Export CSV / HubSpot sync).
+  const [hubspotConnected, setHubspotConnected] = useState(false);
+  const [pushingToHubspot, setPushingToHubspot] = useState(false);
+  const [pullingHubspotCrm, setPullingHubspotCrm] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
 
   // Mirror the AgentPanel column's bounding rect so the company card and floating
   // chat bar can overlay it pixel-for-pixel. AgentPanel renders its outermost div
@@ -1374,6 +1412,90 @@ export default function CompaniesPage() {
     setSelectedAccountId(null);
   };
 
+  // ── Top-of-page Actions menu ──
+  // HubSpot connection drives whether the Pull/Push items appear (mirrors /contacts).
+  useEffect(() => {
+    fetch('/api/hubspot/status')
+      .then((r) => r.json())
+      .then((data) => setHubspotConnected(data?.connected === true))
+      .catch(() => {});
+  }, []);
+
+  // Org-wide HubSpot sync (same endpoints the contacts page uses). The trigger
+  // icon spins while a sync is in flight; on pull we refresh the table so any
+  // new CRM status lands.
+  const handlePushToHubspot = useCallback(async () => {
+    if (pushingToHubspot) return;
+    setPushingToHubspot(true);
+    try {
+      await fetch('/api/hubspot/push-enrichment', { method: 'POST' });
+    } catch (err) {
+      console.error('Error pushing to HubSpot:', err);
+    } finally {
+      setPushingToHubspot(false);
+    }
+  }, [pushingToHubspot]);
+
+  const handlePullHubspotCrm = useCallback(async () => {
+    if (pullingHubspotCrm) return;
+    setPullingHubspotCrm(true);
+    try {
+      await fetch('/api/hubspot/pull-crm', { method: 'POST' });
+      invalidateCache('/api/companies');
+      await fetchAccounts(true);
+    } catch (err) {
+      console.error('Error pulling HubSpot CRM:', err);
+    } finally {
+      setPullingHubspotCrm(false);
+    }
+  }, [pullingHubspotCrm, fetchAccounts]);
+
+  // Export the current view to CSV, client-side (no dedicated endpoint). Honours
+  // the active agent filter and the on-screen sort so it matches what's shown.
+  const handleExportCsv = useCallback(() => {
+    if (exportingCsv) return;
+    setExportingCsv(true);
+    try {
+      const rows = applyAccountSort(
+        agentFilterIds ? accounts.filter((a) => agentFilterIds.has(a.id)) : accounts,
+        tableSortCol,
+        tableSortDir,
+      );
+      const headers = ['Company', 'Domain', 'Company type', 'Company fit', 'Priority', 'Contacts', 'CRM status'];
+      const escape = (v: string | number | null | undefined) => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const lines = [headers.join(',')];
+      for (const a of rows) {
+        lines.push(
+          [
+            a.company_name ?? '',
+            a.domain ?? '',
+            a.company_type ?? '',
+            formatPct(a.company_fit_score) ?? '',
+            formatPct((a as AccountRow).priority_score) ?? '',
+            a.contact_count,
+            (a as AccountRow).crm_status ?? '',
+          ]
+            .map(escape)
+            .join(','),
+        );
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `companies-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingCsv(false);
+    }
+  }, [accounts, agentFilterIds, tableSortCol, tableSortDir, exportingCsv]);
+
   const renderAccountQueryCell = (account: AccountRow | QueryAccount, col: AccountQueryColumn) => {
     const isSelected = selectedAccountId === account.id;
     const href = externalUrl(account as AccountRow);
@@ -1676,9 +1798,61 @@ export default function CompaniesPage() {
               </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                 {total > 0
-                  ? `${total.toLocaleString()} compan${total === 1 ? 'y' : 'ies'}. Click a row to open the company card.`
+                  ? `${total.toLocaleString()} compan${total === 1 ? 'y' : 'ies'}. Click a row to open the company card, or the company name to open the account.`
                   : 'One row per company, with firmographics and ICP fit at a glance.'}
               </p>
+
+              {total > 0 && (
+                // Sits directly under the intro sentence — mirrors the /contacts Actions menu.
+                <div className="mt-4 flex items-center gap-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm focus-visible:outline-none"
+                        title="Actions"
+                      >
+                        {pullingHubspotCrm || pushingToHubspot ? (
+                          <RotateCw className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                        Actions
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" sideOffset={6} className="min-w-[14rem]">
+                      <DropdownMenuItem onSelect={() => router.push('/import')}>
+                        <Upload className="w-3.5 h-3.5" />
+                        Import companies
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={handleExportCsv} disabled={exportingCsv}>
+                        <Download className="w-3.5 h-3.5" />
+                        Export CSV
+                      </DropdownMenuItem>
+                      {hubspotConnected && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={handlePullHubspotCrm} disabled={pullingHubspotCrm}>
+                            {pullingHubspotCrm ? (
+                              <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Download className="w-3.5 h-3.5" />
+                            )}
+                            {pullingHubspotCrm ? 'Pulling…' : 'Pull HubSpot CRM'}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={handlePushToHubspot} disabled={pushingToHubspot}>
+                            {pushingToHubspot ? (
+                              <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Upload className="w-3.5 h-3.5" />
+                            )}
+                            {pushingToHubspot ? 'Syncing…' : 'Push to HubSpot'}
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
             </div>
 
             {loadingAccounts ? (
@@ -1871,14 +2045,23 @@ export default function CompaniesPage() {
                     )}
                     style={
                       agentRect
-                        ? {
-                            // Seat the card just below the floating chat bar's measured
-                            // bottom (+ a small gap) so the spacing stays tight.
-                            top: agentRect.top + agentBarHeight + AGENT_BAR_GAP,
-                            left: agentRect.left,
-                            width: agentRect.width,
-                            height: Math.max(0, agentRect.height - agentBarHeight - AGENT_BAR_GAP),
-                          }
+                        ? agentDocked
+                          ? {
+                              // Docked: card takes the bottom half; the agent fills the top
+                              // half (50/50 split, viewport-relative — mirrors /contacts).
+                              top: 'calc(50vh + 6px)',
+                              left: agentRect.left,
+                              width: agentRect.width,
+                              height: 'calc(50vh - 20px)',
+                            }
+                          : {
+                              // Seat the card just below the floating chat bar's measured
+                              // bottom (+ a small gap) so the spacing stays tight.
+                              top: agentRect.top + agentBarHeight + AGENT_BAR_GAP,
+                              left: agentRect.left,
+                              width: agentRect.width,
+                              height: Math.max(0, agentRect.height - agentBarHeight - AGENT_BAR_GAP),
+                            }
                         : undefined
                     }
                   >
@@ -1889,7 +2072,7 @@ export default function CompaniesPage() {
                         <img
                           src={selectedAccount.logo_cached ?? selectedAccount.logo_url ?? ''}
                           alt=""
-                          className="relative z-[1] h-[3.375rem] w-[3.375rem] shrink-0 rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white object-contain p-1 shadow-sm ring-1 ring-black/5"
+                          className="relative z-[1] h-[54px] w-[54px] shrink-0 rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white object-contain p-1 shadow-sm ring-1 ring-black/5"
                           onError={() =>
                             setFailedLogoByAccountId((prev) => ({
                               ...prev,
@@ -1898,12 +2081,12 @@ export default function CompaniesPage() {
                           }
                         />
                       ) : (
-                        <div className="relative z-[1] flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white font-manrope text-2xl font-semibold text-arcova-teal shadow-sm ring-1 ring-black/5">
+                        <div className="relative z-[1] flex h-[54px] w-[54px] shrink-0 items-center justify-center rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white font-manrope text-[19px] font-semibold text-arcova-teal shadow-sm ring-1 ring-black/5">
                           {(selectedAccount.company_name?.[0] || selectedAccount.domain?.[0] || '?').toUpperCase()}
                         </div>
                       )}
                       <div className="relative z-[1] min-w-0 flex-1">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7d909a]">
                           {panelMode === 'fit'
                             ? 'Fit'
                             : panelMode === 'action'
@@ -1920,10 +2103,25 @@ export default function CompaniesPage() {
                                         ? 'CRM'
                                         : 'Company'}
                         </p>
-                        <h2 className="font-manrope mt-1 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[1.4375rem]">
+                        <h2 className="font-manrope mt-1 break-words text-[23px] font-bold leading-[1.1] tracking-[-0.024em] text-[rgb(13,53,71)]">
                           {selectedAccount.company_name || selectedAccount.domain || 'Company'}
                         </h2>
                       </div>
+                      {agentRect && (
+                        <button
+                          type="button"
+                          onClick={() => setAgentDocked((d) => !d)}
+                          className="relative z-[1] grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px] border border-[rgba(13,53,71,0.08)] bg-white/70 text-[#7d909a] transition-colors hover:bg-white hover:text-[#0d3547]"
+                          aria-label={agentDocked ? 'Expand panel to full height' : 'Share space with the agent'}
+                          title={agentDocked ? 'Expand to full height' : 'Shrink — open the agent above'}
+                        >
+                          {agentDocked ? (
+                            <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />
+                          ) : (
+                            <Minimize2 className="h-3.5 w-3.5" strokeWidth={2} />
+                          )}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={closePanel}
@@ -1988,6 +2186,35 @@ export default function CompaniesPage() {
                         const companyLabel =
                           selectedAccount.company_name || selectedAccount.domain || 'This company';
                         const updatedAt = selectedAccount.last_enriched_at;
+                        // "Why this action" bullets — built from the real fit / coverage /
+                        // CRM signals behind the recommendation (design .bullets card).
+                        const whyFitPct = formatPct(selectedAccount.company_fit_score);
+                        const whyBestContactPct = formatPct(selectedAccount.best_contact_fit);
+                        const whyBullets: string[] = [];
+                        whyBullets.push(
+                          whyFitPct
+                            ? `${companyLabel} is a ${whyFitPct} company fit to your ICP.`
+                            : `${companyLabel} hasn't been scored for ICP fit yet.`,
+                        );
+                        whyBullets.push(
+                          selectedAccount.contact_count > 0
+                            ? whyBestContactPct
+                              ? `${selectedAccount.contact_count} contact${selectedAccount.contact_count === 1 ? '' : 's'} mapped — best contact fit ${whyBestContactPct}.`
+                              : `${selectedAccount.contact_count} contact${selectedAccount.contact_count === 1 ? '' : 's'} mapped at this company.`
+                            : 'No contacts on file yet — source contacts to start working this account.',
+                        );
+                        {
+                          const crm = selectedAccount.crm_status;
+                          if (crm && crm !== 'none' && crm !== 'context_only') {
+                            whyBullets.push(
+                              crm === 'customer'
+                                ? 'Already a closed-won customer in your CRM.'
+                                : crm === 'dormant'
+                                  ? 'A previous deal was lost — held in cooldown for now.'
+                                  : 'An active deal is in motion in your CRM — loop in the owner before reaching out.',
+                            );
+                          }
+                        }
                         return (
                           <div className="flex flex-col gap-3">
                             {/* Recommended action card — pill + updated + rationale (design "Recommended action") */}
@@ -2041,6 +2268,32 @@ export default function CompaniesPage() {
                                   Lead with relevance to their role and therapeutic focus, and tie your message to
                                   signals or milestones when you can.
                                 </p>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAccountReachOut(selectedAccount)}
+                                  disabled={reachOutLoadingId === selectedAccount.id}
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2.5 text-sm font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:opacity-60"
+                                >
+                                  Choose a contact
+                                  <ChevronRight className="h-4 w-4" aria-hidden />
+                                </button>
+                              </div>
+                            )}
+
+                            {action === 'send_outreach' && (
+                              <div className="space-y-3">
+                                <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                  An outreach sequence is staged for the team at <strong>{companyLabel}</strong> but
+                                  hasn&apos;t been sent yet. Review the draft and send it when you&apos;re ready.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => router.push(ROUTES.outreach)}
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition-[filter] hover:brightness-110"
+                                >
+                                  Open outreach
+                                  <ChevronRight className="h-4 w-4" aria-hidden />
+                                </button>
                               </div>
                             )}
 
@@ -2101,17 +2354,17 @@ export default function CompaniesPage() {
                               </div>
                             </div>
 
-                            {/* Fit snapshot — supporting card (design card system) */}
+                            {/* Why this action — bullet rationale (design "Why this action" card) */}
                             <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3.5 py-3.5 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
-                              <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Fit snapshot</p>
-                              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3.5">
-                                <EyebrowField label="Company fit">
-                                  {formatPct(selectedAccount.company_fit_score) ?? '—'}
-                                </EyebrowField>
-                                <EyebrowField label="Best contact fit">
-                                  {formatPct(selectedAccount.best_contact_fit) ?? '—'}
-                                </EyebrowField>
-                              </div>
+                              <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Why this action</p>
+                              <ul className="mt-3 flex flex-col gap-2.5">
+                                {whyBullets.map((b, i) => (
+                                  <li key={i} className="flex gap-2.5 text-[13.5px] leading-[1.45] text-[#4a6470]">
+                                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal" />
+                                    <span>{b}</span>
+                                  </li>
+                                ))}
+                              </ul>
                             </div>
                           </div>
                         );
@@ -2232,7 +2485,7 @@ export default function CompaniesPage() {
                                 <div className="space-y-3.5">
                                   {selectedAccount.company_type && (
                                     <div>
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Company type</p>
+                                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Company type</p>
                                       <TagPillCluster items={[selectedAccount.company_type]} />
                                     </div>
                                   )}
@@ -2246,19 +2499,19 @@ export default function CompaniesPage() {
                                   )}
                                   {(selectedAccount.therapeutic_areas || []).length > 0 && (
                                     <div>
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Therapeutic areas</p>
+                                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Therapeutic areas</p>
                                       <TagPillCluster items={selectedAccount.therapeutic_areas || []} />
                                     </div>
                                   )}
                                   {(selectedAccount.modalities || []).length > 0 && (
                                     <div>
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Modalities</p>
+                                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Modalities</p>
                                       <TagPillCluster items={selectedAccount.modalities || []} />
                                     </div>
                                   )}
                                   {(selectedAccount.development_stages || []).length > 0 && (
                                     <div>
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Development stage</p>
+                                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Development stage</p>
                                       <TagPillCluster items={selectedAccount.development_stages || []} />
                                     </div>
                                   )}
@@ -2266,19 +2519,19 @@ export default function CompaniesPage() {
                                       Shown when the firm's own taxonomy above is empty (or alongside it). */}
                                   {(selectedAccount.customer_therapeutic_areas || []).length > 0 && (
                                     <div>
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Therapeutic areas served</p>
+                                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Therapeutic areas served</p>
                                       <TagPillCluster items={selectedAccount.customer_therapeutic_areas || []} />
                                     </div>
                                   )}
                                   {(selectedAccount.customer_modalities || []).length > 0 && (
                                     <div>
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Modalities served</p>
+                                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Modalities served</p>
                                       <TagPillCluster items={selectedAccount.customer_modalities || []} />
                                     </div>
                                   )}
                                   {(selectedAccount.customer_development_stages || []).length > 0 && (
                                     <div>
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Development stages served</p>
+                                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Development stages served</p>
                                       <TagPillCluster items={selectedAccount.customer_development_stages || []} />
                                     </div>
                                   )}
@@ -2364,14 +2617,14 @@ export default function CompaniesPage() {
                                 Details tab (matches /contacts). Holds Type/Imported +
                                 the Refresh / Stop enrichment controls. */}
                             <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
-                              <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
+                              <p className="mb-3 font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Data source</p>
                               <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                                 <div className="min-w-0">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Type</p>
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Type</p>
                                   <p className="mt-2 text-sm leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Imported</p>
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Imported</p>
                                   <p className="mt-2 text-sm leading-snug text-[#0d3547]">
                                     {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
                                   </p>
@@ -2686,7 +2939,7 @@ export default function CompaniesPage() {
 
                                     <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                                       <div>
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Amount
                                         </p>
                                         <p className="mt-1 text-sm leading-snug text-[#0d3547]">
@@ -2694,7 +2947,7 @@ export default function CompaniesPage() {
                                         </p>
                                       </div>
                                       <div>
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Close date
                                         </p>
                                         <p className="mt-1 text-sm leading-snug text-[#0d3547]">
@@ -2702,7 +2955,7 @@ export default function CompaniesPage() {
                                         </p>
                                       </div>
                                       <div>
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Last synced
                                         </p>
                                         <p className="mt-1 text-sm leading-snug text-[#0d3547]">
@@ -2713,7 +2966,7 @@ export default function CompaniesPage() {
 
                                     {deal.contacts.length > 0 && (
                                       <div className="mt-3 border-t border-[rgba(13,53,71,0.06)] pt-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Involved contacts
                                         </p>
                                         <ul className="mt-2 space-y-1">
@@ -2862,9 +3115,10 @@ export default function CompaniesPage() {
 
                     </div>
 
-                    {/* Panel footer — Edit / Archive company, mirrors the contact card.
-                        Only rendered on the Details tab (matches contacts' Contact tab). */}
-                    {panelMode === 'details' && (
+                    {/* Panel footer — persistent Edit / Archive company on every tab
+                        (matches the Companies Side Panel design's drawer footer).
+                        Refresh enrichment lives in the Details tab's Data source card. */}
+                    {panelMode !== 'reachout' && (
                       <div className="px-4 py-4 border-t border-[rgba(13,53,71,0.08)]">
                         <div className="flex gap-2">
                           <button
@@ -2941,7 +3195,7 @@ export default function CompaniesPage() {
                     column (above the company card) while a card is open. Uses the
                     shared `AgentChatBar` so it matches the side-panel agent input.
                     Submit dismisses the company card and forwards the text to the agent. */}
-                {selectedAccountId && agentRect && (
+                {selectedAccountId && agentRect && !agentDocked && (
                   <div
                     ref={agentBarRef}
                     className={cn(
@@ -2966,6 +3220,15 @@ export default function CompaniesPage() {
                       placeholder="Ask anything about your companies…"
                       className="w-full"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setAgentDocked(true)}
+                      className="ml-1.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-arcova-teal/30 bg-white/70 text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                      aria-label="Expand agent"
+                      title="Open the agent above the panel"
+                    >
+                      <Maximize2 className="h-4 w-4" />
+                    </button>
                   </div>
                 )}
               </div>
@@ -2981,7 +3244,13 @@ export default function CompaniesPage() {
         <AgentPanel
           className={cn(
             'accounts-agent-col min-[1280px]:pl-1.5',
-            selectedAccountId && 'invisible',
+            // While reviewing a company the agent is hidden by default (the floating
+            // chat bar + full-height card take over). `invisible` keeps the column in
+            // layout so agentRect keeps tracking its footprint.
+            selectedAccountId && !agentDocked && 'invisible',
+            // Docked: the agent shrinks to the TOP HALF and the card drops to the
+            // bottom half (50/50 split). self-start stops the grid stretching it.
+            selectedAccountId && agentDocked && 'z-[41] self-start max-h-[calc(50vh-1.25rem)] overflow-hidden',
           )}
           // Reserve the full expanded column width while a company card is open even
           // though the accounts page opens with the agent collapsed. Without this the
