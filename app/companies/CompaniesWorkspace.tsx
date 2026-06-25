@@ -3259,6 +3259,10 @@ export default function CompaniesPage() {
           // layout makes the table reflow (push) and the card mirror the real, wider
           // column — matching the "open agent, then click a row" path.
           forceExpandedLayout={!!selectedAccountId}
+          // When docked beside the card, the agent's own collapse control can't take
+          // effect (forceExpandedLayout pins it open) — so undock here, which hides
+          // the agent and restores the floating chat bar + full-height card.
+          onCollapse={() => setAgentDocked(false)}
           page="accounts"
           pendingMessage={agentTrigger}
           pageContext={

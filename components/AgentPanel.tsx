@@ -99,6 +99,13 @@ export interface AgentPanelProps {
    */
   forceExpandedLayout?: boolean;
   /**
+   * Called when the user clicks the panel's collapse control. Lets a parent that
+   * keeps the agent force-expanded (e.g. a side panel docked beside it) react —
+   * e.g. undock so the collapse is actually visible. Fires in addition to the
+   * panel's own internal collapse.
+   */
+  onCollapse?: () => void;
+  /**
    * 'side-rail' (default) — glass panel fixed to the right edge of the layout.
    * 'central'             — full-width briefing-style chat (used by AgentCentral wrapper).
    */
@@ -265,7 +272,7 @@ function stripMarkdown(text: string): string {
 // surfaces where the user wants the full-width table first.
 const DEFAULT_COLLAPSED_PAGES = new Set<AgentPage>(['accounts', 'leads', 'outreach']);
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, inputPlaceholder, className, forceExpandedLayout, variant = 'side-rail' }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, inputPlaceholder, className, forceExpandedLayout, onCollapse, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -964,7 +971,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               than another flat header icon. Side-rail surface only. */}
           {collapsible && (
             <button
-              onClick={() => setCollapsed(true)}
+              onClick={() => { onCollapse?.(); setCollapsed(true); }}
               className="ml-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[rgba(13,53,71,0.1)] bg-white/55 text-[#7d909a] shadow-[0_1px_2px_rgba(13,53,71,0.06)] transition-all hover:border-arcova-teal/40 hover:bg-white hover:text-arcova-teal"
               aria-label="Collapse agent"
               title="Collapse agent"
