@@ -22,7 +22,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { reconcileMonitoringAfterBillingChange } from '@/lib/billing/monitoring';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { orgIdForStripeCustomer } from '@/lib/billing/customer';
-import { invoiceSubscriptionId } from '@/lib/billing/stripe-invoice';
+import { invoiceSubscriptionCreditPeriod, invoiceSubscriptionId } from '@/lib/billing/stripe-invoice';
 import { expireFreeCreditBucketsForPaidPlan } from '@/lib/billing/credits';
 import {
   CREDIT_PACK_SIZE,
@@ -300,13 +300,12 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
   if (!subscription || !isPlanKey(subscription.plan_key)) return orgId;
   const plan = PLANS[subscription.plan_key];
   const annual = subscription.billing_interval === 'annual';
-  const linePeriod = invoice.lines?.data?.[0]?.period;
-  const validFrom = subscription.current_period_start
-    ?? (linePeriod?.start ? new Date(linePeriod.start * 1000).toISOString() : new Date().toISOString());
-  const expiresAt = subscription.current_period_end
-    ?? (linePeriod?.end
-      ? new Date(linePeriod.end * 1000).toISOString()
-      : new Date(Date.now() + (annual ? 366 : 32) * 86_400_000).toISOString());
+  const { validFrom, expiresAt } = invoiceSubscriptionCreditPeriod({
+    invoice,
+    subscriptionPeriodStart: subscription.current_period_start,
+    subscriptionPeriodEnd: subscription.current_period_end,
+    fallbackDays: annual ? 366 : 32,
+  });
   await expireFreeCreditBucketsForPaidPlan(orgId, validFrom);
   const { error: grantError } = await admin.rpc('grant_org_credit_bucket', {
     p_org_id: orgId,
