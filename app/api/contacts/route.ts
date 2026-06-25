@@ -6,6 +6,7 @@ import {
   canonicalizeTherapeuticArea,
 } from '@/lib/arcova-taxonomy';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser } from '@/lib/org-context';
 import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
@@ -151,6 +152,36 @@ type SupabaseClientLike = {
 
 type LeadRow = Record<string, unknown>;
 type HubSpotLeadState = 'active' | 'customer' | 'dormant' | 'context_only' | 'none';
+
+const PERSON_LIST_SELECT =
+  'id, linkedin_url, email, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, email_status, email_status_reasoning, email_deliverability, enrichment_refresh_status, enrichment_refresh_finished_at, created_at, updated_at, company_id';
+
+type OrgContactStateRow = {
+  person_id: string;
+  company_id: string | null;
+  source: string | null;
+  added_at: string | null;
+  updated_at: string | null;
+  crm_is_suppressed?: boolean | null;
+};
+
+type OrgContactLinkRow = {
+  id: string;
+  user_id: string;
+  person_id: string;
+  company_id: string | null;
+  source: string | null;
+  contact_fit_score: number | null;
+  readiness_score: number | null;
+  priority_score: number | null;
+  crm_is_suppressed: boolean | null;
+  contact_panel_summary: string | null;
+  contact_fit_summary: string | null;
+  fit_score: number | null;
+  overall_fit_score: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
 
 const CONTACT_OVERRIDE_FIELDS = [
   'full_name',
@@ -1061,6 +1092,149 @@ function chunks<T>(values: T[], size: number = 500): T[][] {
   return out;
 }
 
+async function orgMemberIds(admin: ReturnType<typeof createAdminClient>, orgId: string): Promise<string[]> {
+  const { data, error } = await admin
+    .from('org_members')
+    .select('user_id')
+    .eq('org_id', orgId);
+  if (error) throw new Error(`org member lookup failed: ${error.message}`);
+  return dedupe((data ?? []).map((row) => row.user_id as string).filter(Boolean));
+}
+
+function chooseRepresentativeLink(
+  links: OrgContactLinkRow[],
+  userId: string,
+): OrgContactLinkRow | null {
+  const own = links.find((link) => link.user_id === userId);
+  if (own) return own;
+  return [...links].sort((a, b) => {
+    const aUpdated = Date.parse(a.updated_at ?? a.created_at ?? '') || 0;
+    const bUpdated = Date.parse(b.updated_at ?? b.created_at ?? '') || 0;
+    if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+    return a.id.localeCompare(b.id);
+  })[0] ?? null;
+}
+
+function contactMatchesSearch(row: LeadRow, search: string, taxonomyCompanyIds: Set<string>): boolean {
+  if (!search) return true;
+  const normalizedSearch = search.trim().toLowerCase();
+  const fields = [row.full_name, row.company_name, row.job_title]
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.toLowerCase());
+  if (fields.some((value) => value.includes(normalizedSearch))) return true;
+  return typeof row.company_id === 'string' && taxonomyCompanyIds.has(row.company_id);
+}
+
+async function listOrgContactRows(params: {
+  orgId: string | null;
+  userId: string;
+  search: string;
+  companyId: string;
+  taxonomyCompanyIds: string[];
+}): Promise<{ rows: LeadRow[]; count: number | null } | null> {
+  if (!params.orgId) return null;
+
+  const admin = createAdminClient();
+  const memberIds = await orgMemberIds(admin, params.orgId);
+  if (memberIds.length === 0) return { rows: [], count: 0 };
+
+  let stateQuery = admin
+    .from('org_contact_state')
+    .select('person_id, company_id, source, added_at, updated_at')
+    .eq('org_id', params.orgId)
+    .is('archived_at', null);
+  if (params.companyId) {
+    stateQuery = stateQuery.eq('company_id', params.companyId);
+  }
+
+  const { data: stateRows, error: stateError } = await stateQuery;
+  if (stateError) throw new Error(`org contacts lookup failed: ${stateError.message}`);
+
+  const states = ((stateRows ?? []) as OrgContactStateRow[])
+    .filter((row) => typeof row.person_id === 'string');
+  if (states.length === 0) return { rows: [], count: 0 };
+
+  const personIds = dedupe(states.map((row) => row.person_id));
+  const stateByPersonId = new Map(states.map((row) => [row.person_id, row]));
+
+  const [peopleResult, linksResult] = await Promise.all([
+    admin.from('people').select(PERSON_LIST_SELECT).in('id', personIds),
+    admin
+      .from('user_contacts')
+      .select(
+        'id, user_id, person_id, company_id, source, contact_fit_score, readiness_score, priority_score, crm_is_suppressed, contact_panel_summary, contact_fit_summary, fit_score, overall_fit_score, created_at, updated_at',
+      )
+      .in('user_id', memberIds)
+      .in('person_id', personIds)
+      .is('archived_at', null),
+  ]);
+
+  if (peopleResult.error) throw new Error(`people lookup failed: ${peopleResult.error.message}`);
+  if (linksResult.error) throw new Error(`org contact links lookup failed: ${linksResult.error.message}`);
+
+  const linksByPersonId = new Map<string, OrgContactLinkRow[]>();
+  for (const link of (linksResult.data ?? []) as OrgContactLinkRow[]) {
+    if (!link.person_id) continue;
+    const current = linksByPersonId.get(link.person_id) ?? [];
+    current.push(link);
+    linksByPersonId.set(link.person_id, current);
+  }
+
+  const companyIds = dedupe(
+    states
+      .map((row) => row.company_id)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const companiesById = new Map<string, Record<string, unknown>>();
+  if (companyIds.length > 0) {
+    const { data: companies } = await admin
+      .from('companies')
+      .select('id, company_name, domain, company_type, funding_stage')
+      .in('id', companyIds);
+    for (const company of (companies ?? []) as Array<Record<string, unknown>>) {
+      if (typeof company.id === 'string') companiesById.set(company.id, company);
+    }
+  }
+
+  const taxonomySet = new Set(params.taxonomyCompanyIds);
+  const rows = ((peopleResult.data ?? []) as Array<Record<string, unknown>>)
+    .map((person): LeadRow | null => {
+      const personId = person.id as string;
+      const state = stateByPersonId.get(personId);
+      const link = chooseRepresentativeLink(linksByPersonId.get(personId) ?? [], params.userId);
+      if (!state || !link) return null;
+
+      const companyId = state.company_id ?? link.company_id ?? (person.company_id as string | null) ?? null;
+      const company = companyId ? companiesById.get(companyId) ?? null : null;
+      const row: LeadRow = {
+        ...person,
+        id: link.id,
+        person_id: personId,
+        user_id: params.userId,
+        owner_user_id: link.user_id,
+        company_id: companyId,
+        source: state.source ?? link.source ?? person.source ?? null,
+        created_at: state.added_at ?? link.created_at ?? person.created_at ?? null,
+        updated_at: state.updated_at ?? link.updated_at ?? person.updated_at ?? null,
+        contact_fit_score: link.contact_fit_score ?? null,
+        readiness_score: link.readiness_score ?? null,
+        priority_score: link.priority_score ?? null,
+        crm_is_suppressed: link.crm_is_suppressed ?? false,
+        contact_panel_summary: link.contact_panel_summary ?? null,
+        contact_fit_summary: link.contact_fit_summary ?? null,
+        fit_score: link.fit_score ?? null,
+        overall_fit_score: link.overall_fit_score ?? null,
+        upload_batches: null,
+        companies: company,
+      };
+      return row;
+    })
+    .filter((row): row is LeadRow => Boolean(row))
+    .filter((row) => contactMatchesSearch(row, params.search, taxonomySet));
+
+  return { rows, count: rows.length };
+}
+
 export async function GET(request: Request) {
   try {
     const supabase = await createClient();
@@ -1189,9 +1363,30 @@ export async function GET(request: Request) {
     const fallbackSelect =
       'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, crm_is_suppressed, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
 
-    let { data, error, count } = await runQuery(primarySelect);
+    let data: unknown[] | null = null;
+    let error: { message: string } | null = null;
+    let count: number | null = null;
 
-    if (error && isMissingColumnError(error)) {
+    const orgContactResult = await listOrgContactRows({
+      orgId,
+      userId: user.id,
+      search,
+      companyId,
+      taxonomyCompanyIds,
+    });
+
+    if (orgContactResult) {
+      const sortedRows = sortContactsForList(orgContactResult.rows);
+      data = sortedRows.slice(offset, offset + pageSize);
+      count = orgContactResult.count;
+    } else {
+      const primaryResult = await runQuery(primarySelect);
+      data = primaryResult.data;
+      error = primaryResult.error;
+      count = primaryResult.count;
+    }
+
+    if (!orgContactResult && error && isMissingColumnError(error)) {
       const secondaryResult = await runQuery(secondarySelect);
 
       if (secondaryResult.error && isMissingColumnError(secondaryResult.error)) {
