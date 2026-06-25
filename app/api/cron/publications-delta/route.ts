@@ -20,14 +20,13 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runPublicationsMonitor } from '@/lib/signals/run-publications-monitor';
+import { markAccountSubscriberSweeps, markContactSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   accountSweepSubscribersForTargets,
   contactSweepSubscribersForTargets,
   listDueAccountSweepTargets,
   listDueContactSweepTargets,
-  markAccountSubscriberSourceSweep,
   markAccountSourceSweep,
-  markContactSubscriberSourceSweep,
   markContactSourceSweep,
 } from '@/lib/billing/monitoring';
 
@@ -83,6 +82,8 @@ async function runCron(request: Request) {
 
     const failedCompanies = new Set<string>();
     const failedPersons = new Set<string>();
+    const unmarkedCompanies = new Set<string>();
+    const unmarkedPersons = new Set<string>();
     const subscriberCompanyIds = new Set(accountSubscribers.map((item) => item.companyId));
     const subscriberPersonIds = new Set(contactSubscribers.map((item) => item.personId));
     for (const [userId, work] of byUser) {
@@ -111,6 +112,24 @@ async function runCron(request: Request) {
             if (personId) failedPersons.add(personId);
           }
         }
+        const unmarkedAccountSweeps = await markAccountSubscriberSweeps({
+          items: work.accounts,
+          statusForItem: (item) => failedCompanies.has(item.companyId) ? 'failed' : 'succeeded',
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, error: failure.error });
+            console.error('[cron/publications-delta] account subscriber source mark failed:', failure);
+          },
+        });
+        const unmarkedContactSweeps = await markContactSubscriberSweeps({
+          items: work.contacts,
+          statusForItem: (item) => failedPersons.has(item.personId) ? 'failed' : 'succeeded',
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, error: failure.error });
+            console.error('[cron/publications-delta] contact subscriber source mark failed:', failure);
+          },
+        });
+        for (const companyId of unmarkedAccountSweeps) unmarkedCompanies.add(companyId);
+        for (const personId of unmarkedContactSweeps) unmarkedPersons.add(personId);
         await persistRunHistory(admin, {
           userId,
           signalKey: 'publications_all',
@@ -130,10 +149,28 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
-        for (const item of work.accounts) failedCompanies.add(item.companyId);
-        for (const item of work.contacts) failedPersons.add(item.personId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/publications-delta] monitor failed for user ${userId}:`, error);
+        for (const item of work.accounts) failedCompanies.add(item.companyId);
+        for (const item of work.contacts) failedPersons.add(item.personId);
+        const unmarkedAccountSweeps = await markAccountSubscriberSweeps({
+          items: work.accounts,
+          statusForItem: () => 'failed',
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, error: failure.error });
+            console.error('[cron/publications-delta] account subscriber source mark failed:', failure);
+          },
+        });
+        const unmarkedContactSweeps = await markContactSubscriberSweeps({
+          items: work.contacts,
+          statusForItem: () => 'failed',
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, error: failure.error });
+            console.error('[cron/publications-delta] contact subscriber source mark failed:', failure);
+          },
+        });
+        for (const companyId of unmarkedAccountSweeps) unmarkedCompanies.add(companyId);
+        for (const personId of unmarkedContactSweeps) unmarkedPersons.add(personId);
         await persistRunHistory(admin, {
           userId,
           signalKey: 'publications_all',
@@ -148,30 +185,18 @@ async function runCron(request: Request) {
     if (byUser.size === 0) monitorSkipped = accountTargets.length + contactTargets.length;
 
     await Promise.all([
-      ...accountSubscribers.map((item) => markAccountSubscriberSourceSweep({
-        orgId: item.orgId,
-        companyId: item.companyId,
-        source: item.source,
-        cadenceDays: item.cadenceDays,
-        status: failedCompanies.has(item.companyId) ? 'failed' : 'succeeded',
-        providerCostUsd: 0,
-      })),
-      ...contactSubscribers.map((item) => markContactSubscriberSourceSweep({
-        orgId: item.orgId,
-        personId: item.personId,
-        source: item.source,
-        cadenceDays: item.cadenceDays,
-        status: failedPersons.has(item.personId) ? 'failed' : 'succeeded',
-        providerCostUsd: 0,
-      })),
-      ...accountTargets.filter((target) => subscriberCompanyIds.has(target.companyId)).map((target) => markAccountSourceSweep({
+      ...accountTargets.filter((target) => (
+        subscriberCompanyIds.has(target.companyId) && !unmarkedCompanies.has(target.companyId)
+      )).map((target) => markAccountSourceSweep({
         companyId: target.companyId,
         source: 'publications',
         cadenceDays: target.cadenceDays,
         status: failedCompanies.has(target.companyId) ? 'failed' : 'succeeded',
         providerCostUsd: 0,
       })),
-      ...contactTargets.filter((target) => subscriberPersonIds.has(target.personId)).map((target) => markContactSourceSweep({
+      ...contactTargets.filter((target) => (
+        subscriberPersonIds.has(target.personId) && !unmarkedPersons.has(target.personId)
+      )).map((target) => markContactSourceSweep({
         personId: target.personId,
         source: 'publications',
         cadenceDays: target.cadenceDays,
@@ -197,6 +222,10 @@ async function runCron(request: Request) {
       subscribers_due: {
         accounts: accountSubscribers.length,
         contacts: contactSubscribers.length,
+      },
+      unmarked_targets: {
+        accounts: unmarkedCompanies.size,
+        contacts: unmarkedPersons.size,
       },
       overdue: {
         accounts: overdueAccounts ?? 0,

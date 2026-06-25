@@ -11,12 +11,12 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runFdaRegulatoryMonitor } from '@/lib/signals/run-fda-regulatory-monitor';
 import { syncFdaDelta } from '@/lib/signals/sync-fda-delta';
 import { observeCron } from '@/lib/cron-observability';
+import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
+import { markAccountSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   accountSweepSubscribersForTargets,
   listDueAccountSweepTargets,
-  markAccountSubscriberSourceSweep,
   markAccountSourceSweep,
-  refreshAllMonitoringUniverses,
 } from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
@@ -34,9 +34,13 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   try {
+    const { searchParams } = new URL(request.url);
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.FDA_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const refreshFailures = await refreshAllMonitoringUniverses();
+    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
+      searchParams,
+      envName: 'FDA_REFRESH_MONITORING_UNIVERSE',
+    });
     const targets = await listDueAccountSweepTargets({ source: 'fda_regulatory', limit: dispatcherLimit });
     const subscribers = await accountSweepSubscribersForTargets({
       companyIds: targets.map((target) => target.companyId),
@@ -57,6 +61,7 @@ async function runCron(request: Request) {
       byUser.set(item.userId, list);
     }
     const failedCompanies = new Set<string>();
+    const unmarkedCompanies = new Set<string>();
     const resultCountsByCompany = new Map<string, number>();
     for (const [userId, items] of byUser) {
       try {
@@ -71,6 +76,17 @@ async function runCron(request: Request) {
         for (const companyId of new Set(items.map((item) => item.companyId))) {
           resultCountsByCompany.set(companyId, result.processed);
         }
+        const failedIds = new Set(result.failures.map((item) => item.company_id));
+        const unmarked = await markAccountSubscriberSweeps({
+          items,
+          statusForItem: (item) => failedIds.has(item.companyId) ? 'failed' : 'succeeded',
+          resultCountForItem: (item) => resultCountsByCompany.get(item.companyId) ?? 0,
+          onFailure: (failure) => {
+            failures.push(failure);
+            console.error('[cron/fda-delta] subscriber source mark failed:', failure);
+          },
+        });
+        for (const companyId of unmarked) unmarkedCompanies.add(companyId);
         await persistRunHistory(admin, {
           userId,
           signalKey: 'fda_regulatory_all',
@@ -93,6 +109,16 @@ async function runCron(request: Request) {
         for (const item of items) failedCompanies.add(item.companyId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/fda-delta] monitor failed for user ${userId}:`, error);
+        for (const item of items) failedCompanies.add(item.companyId);
+        const unmarked = await markAccountSubscriberSweeps({
+          items,
+          statusForItem: () => 'failed',
+          onFailure: (failure) => {
+            failures.push(failure);
+            console.error('[cron/fda-delta] subscriber source mark failed:', failure);
+          },
+        });
+        for (const companyId of unmarked) unmarkedCompanies.add(companyId);
         await persistRunHistory(admin, {
           userId,
           signalKey: 'fda_regulatory_all',
@@ -105,17 +131,10 @@ async function runCron(request: Request) {
       }
     }
     if (byUser.size === 0) monitorSkipped = targets.length;
-    await Promise.all(subscribers.map((item) => markAccountSubscriberSourceSweep({
-      orgId: item.orgId,
-      companyId: item.companyId,
-      source: item.source,
-      cadenceDays: item.cadenceDays,
-      status: failedCompanies.has(item.companyId) ? 'failed' : 'succeeded',
-      resultCount: resultCountsByCompany.get(item.companyId) ?? 0,
-      providerCostUsd: 0,
-    })));
     const subscriberCompanyIds = new Set(subscribers.map((item) => item.companyId));
-    await Promise.all(targets.filter((target) => subscriberCompanyIds.has(target.companyId)).map((target) => markAccountSourceSweep({
+    await Promise.all(targets.filter((target) => (
+      subscriberCompanyIds.has(target.companyId) && !unmarkedCompanies.has(target.companyId)
+    )).map((target) => markAccountSourceSweep({
       companyId: target.companyId,
       source: 'fda_regulatory',
       cadenceDays: target.cadenceDays,
@@ -133,7 +152,8 @@ async function runCron(request: Request) {
       targets_due: targets.length,
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
-      refresh_failures: refreshFailures,
+      unmarked_targets: unmarkedCompanies.size,
+      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,

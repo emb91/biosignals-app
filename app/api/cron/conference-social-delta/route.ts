@@ -12,15 +12,15 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
+import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runConferenceSocialMonitor } from '@/lib/signals/conference/social/run-social-monitor';
 import { syncConferenceSocialDelta } from '@/lib/signals/conference/social/sync-social-delta';
+import { markContactSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   contactSweepSubscribersForTargets,
   listDueContactSweepTargets,
-  markContactSubscriberSourceSweep,
   markContactSourceSweep,
-  refreshAllMonitoringUniverses,
 } from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
@@ -38,9 +38,13 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   try {
+    const { searchParams } = new URL(request.url);
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.CONFERENCE_SOCIAL_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const refreshFailures = await refreshAllMonitoringUniverses();
+    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
+      searchParams,
+      envName: 'CONFERENCE_SOCIAL_REFRESH_MONITORING_UNIVERSE',
+    });
     const targets = await listDueContactSweepTargets({ source: 'conference_social', limit: dispatcherLimit });
     const subscribers = await contactSweepSubscribersForTargets({
       personIds: targets.map((target) => target.personId),
@@ -61,6 +65,7 @@ async function runCron(request: Request) {
       byUser.set(item.userId, list);
     }
     const failedPersons = new Set<string>();
+    const unmarkedPersons = new Set<string>();
     for (const [userId, items] of byUser) {
       try {
         const result = await runConferenceSocialMonitor({
@@ -71,6 +76,15 @@ async function runCron(request: Request) {
         if (result.failed_conferences > 0) {
           for (const item of items) failedPersons.add(item.personId);
         }
+        const unmarked = await markContactSubscriberSweeps({
+          items,
+          statusForItem: (item) => failedPersons.has(item.personId) ? 'failed' : 'succeeded',
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, error: failure.error });
+            console.error('[cron/conference-social-delta] subscriber source mark failed:', failure);
+          },
+        });
+        for (const personId of unmarked) unmarkedPersons.add(personId);
         await persistRunHistory(admin, {
           userId,
           signalKey: 'conference_social_all',
@@ -93,6 +107,16 @@ async function runCron(request: Request) {
         for (const item of items) failedPersons.add(item.personId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/conference-social-delta] monitor failed for user ${userId}:`, error);
+        for (const item of items) failedPersons.add(item.personId);
+        const unmarked = await markContactSubscriberSweeps({
+          items,
+          statusForItem: () => 'failed',
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, error: failure.error });
+            console.error('[cron/conference-social-delta] subscriber source mark failed:', failure);
+          },
+        });
+        for (const personId of unmarked) unmarkedPersons.add(personId);
         await persistRunHistory(admin, {
           userId,
           signalKey: 'conference_social_all',
@@ -105,16 +129,10 @@ async function runCron(request: Request) {
       }
     }
     if (byUser.size === 0) monitorSkipped = targets.length;
-    await Promise.all(subscribers.map((item) => markContactSubscriberSourceSweep({
-      orgId: item.orgId,
-      personId: item.personId,
-      source: item.source,
-      cadenceDays: item.cadenceDays,
-      status: failedPersons.has(item.personId) ? 'failed' : 'succeeded',
-      providerCostUsd: 0,
-    })));
     const subscriberPersonIds = new Set(subscribers.map((item) => item.personId));
-    await Promise.all(targets.filter((target) => subscriberPersonIds.has(target.personId)).map((target) => markContactSourceSweep({
+    await Promise.all(targets.filter((target) => (
+      subscriberPersonIds.has(target.personId) && !unmarkedPersons.has(target.personId)
+    )).map((target) => markContactSourceSweep({
       personId: target.personId,
       source: 'conference_social',
       cadenceDays: target.cadenceDays,
@@ -131,7 +149,8 @@ async function runCron(request: Request) {
       targets_due: targets.length,
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
-      refresh_failures: refreshFailures,
+      unmarked_targets: unmarkedPersons.size,
+      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,

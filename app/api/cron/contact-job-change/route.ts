@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { runJobChangeMonitor } from '@/lib/signals/run-job-change-monitor';
+import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
+import { markContactSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   contactSweepSubscribersForTargets,
   listDueContactSweepTargets,
-  markContactSubscriberSourceSweep,
   markContactSourceSweep,
-  markContactSweep,
-  refreshMonitoringUniverse,
 } from '@/lib/billing/monitoring';
 import { observeCron } from '@/lib/cron-observability';
 
@@ -23,23 +22,15 @@ async function runCron(request: Request) {
   }
 
   const admin = createAdminClient();
-  const { data: orgRows, error } = await admin.from('organizations').select('id');
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const { searchParams } = new URL(request.url);
   const dispatcherLimit = Math.max(1, Number(process.env.CONTACT_MONITOR_DISPATCH_LIMIT ?? '1500'));
   let processed = 0;
   let failed = 0;
-  const failures: Array<{ org_id: string; error: string }> = [];
-
-  for (const org of orgRows ?? []) {
-    const orgId = org.id as string;
-    try {
-      await refreshMonitoringUniverse(orgId);
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      failures.push({ org_id: orgId, error: message });
-      console.error(`[cron/contact-job-change] org ${orgId} failed:`, caught);
-    }
-  }
+  const failures: Array<{ org_id?: string; user_id?: string; contact_ids?: string[]; error: string }> = [];
+  const monitoringRefresh = await maybeRefreshMonitoringUniverses({
+    searchParams,
+    envName: 'CONTACT_JOB_CHANGE_REFRESH_MONITORING_UNIVERSE',
+  });
 
   const targets = await listDueContactSweepTargets({ source: 'job_change', limit: dispatcherLimit });
   const subscribers = await contactSweepSubscribersForTargets({
@@ -54,42 +45,59 @@ async function runCron(request: Request) {
   }
 
   const failedPersons = new Set<string>();
+  const unmarkedPersons = new Set<string>();
   const subscriberPersonIds = new Set(subscribers.map((item) => item.personId));
   for (const [userId, items] of byUser) {
     for (let index = 0; index < items.length; index += CHUNK_SIZE) {
       const chunk = items.slice(index, index + CHUNK_SIZE);
-      const result = await runJobChangeMonitor({
-        userId,
-        contactIds: chunk.map((item) => item.contactId),
-        limit: CHUNK_SIZE,
-      });
-      const failedIds = new Set(result.failures.map((item) => item.contact_id));
-      await Promise.all(chunk.map(async (item) => {
-        const didFail = failedIds.has(item.contactId);
-        if (didFail) failedPersons.add(item.personId);
-        if (item.monitorId) {
-          await markContactSweep({
-            monitorId: item.monitorId,
-            cadenceDays: item.cadenceDays,
-            status: didFail ? 'failed' : 'succeeded',
-            providerCostUsd: 0.004,
-            markSharedTarget: false,
-          });
-        }
-        await markContactSubscriberSourceSweep({
-          orgId: item.orgId,
-          personId: item.personId,
-          source: item.source,
-          cadenceDays: item.cadenceDays,
-          status: didFail ? 'failed' : 'succeeded',
-          providerCostUsd: 0.004,
+      const contactIds = chunk.map((item) => item.contactId);
+      try {
+        const result = await runJobChangeMonitor({
+          userId,
+          contactIds,
+          limit: CHUNK_SIZE,
         });
-        if (didFail) failed += 1;
-        else processed += 1;
-      }));
+        const failedIds = new Set(result.failures.map((item) => item.contact_id));
+        const unmarked = await markContactSubscriberSweeps({
+          items: chunk,
+          statusForItem: (item) => failedIds.has(item.contactId) ? 'failed' : 'succeeded',
+          providerCostUsdForItem: () => 0.004,
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, contact_ids: [failure.contact_id], error: failure.error });
+            console.error('[cron/contact-job-change] subscriber source mark failed:', failure);
+          },
+        });
+        for (const personId of unmarked) unmarkedPersons.add(personId);
+        for (const item of chunk) {
+          const didFail = failedIds.has(item.contactId);
+          if (didFail || unmarked.has(item.personId)) {
+            failedPersons.add(item.personId);
+            failed += 1;
+          } else {
+            processed += 1;
+          }
+        }
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : String(caught);
+        failures.push({ user_id: userId, contact_ids: contactIds, error: message });
+        console.error(`[cron/contact-job-change] monitor failed for user ${userId}:`, caught);
+        for (const item of chunk) failedPersons.add(item.personId);
+        const unmarked = await markContactSubscriberSweeps({
+          items: chunk,
+          statusForItem: () => 'failed',
+          onFailure: (failure) => {
+            failures.push({ user_id: failure.user_id, contact_ids: [failure.contact_id], error: failure.error });
+            console.error('[cron/contact-job-change] subscriber source mark failed:', failure);
+          },
+        });
+        for (const personId of unmarked) unmarkedPersons.add(personId);
+        failed += chunk.length;
+      }
     }
   }
-  await Promise.all(targets.filter((target) => subscriberPersonIds.has(target.personId)).map((target) => markContactSourceSweep({
+  await Promise.all(targets.filter((target) => (
+    subscriberPersonIds.has(target.personId) && !unmarkedPersons.has(target.personId)
+  )).map((target) => markContactSourceSweep({
     personId: target.personId,
     source: 'job_change',
     cadenceDays: target.cadenceDays,
@@ -108,6 +116,8 @@ async function runCron(request: Request) {
     subscribers_due: subscribers.length,
     overdue: overdue ?? 0,
     dispatcherLimit,
+    unmarked_targets: unmarkedPersons.size,
+    refresh_monitoring_universe: monitoringRefresh,
     failures,
   });
 }
