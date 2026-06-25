@@ -12,6 +12,7 @@ import {
   planPriceId,
 } from '@/lib/billing/config';
 import { creditBalanceBySource } from '@/lib/billing/credits';
+import { canBuyCreditPacksWithStripe } from '@/lib/billing/checkout-eligibility';
 
 export async function GET() {
   const ctx = await getOrgContext();
@@ -36,6 +37,8 @@ export async function GET() {
     waitlistedContactsResult,
     activeIcpsResult,
     periodUsageResult,
+    orgBillingResult,
+    subscriptionResult,
   ] = await Promise.all([
     admin.from('org_members').select('user_id').eq('org_id', ctx.orgId),
     creditBalanceBySource(ctx.orgId).catch(() => null),
@@ -50,6 +53,12 @@ export async function GET() {
       .eq('org_id', ctx.orgId),
     admin.from('org_usage_events').select('action_type, quantity')
       .eq('org_id', ctx.orgId).gte('occurred_at', usageStart),
+    admin.from('organizations').select('stripe_customer_id').eq('id', ctx.orgId)
+      .maybeSingle<{ stripe_customer_id: string | null }>(),
+    admin.from('org_subscriptions')
+      .select('stripe_subscription_id, status, plan_key')
+      .eq('org_id', ctx.orgId)
+      .maybeSingle<{ stripe_subscription_id: string | null; status: string | null; plan_key: string | null }>(),
   ]);
 
   const monthly = usageMap(periodUsageResult.data);
@@ -59,7 +68,15 @@ export async function GET() {
       .in('user_id', userIds).is('archived_at', null)
     : { count: 0 };
   const selectedPlan = entitlements.planKey === 'free' ? null : PLANS[entitlements.planKey];
-  const packAvailable = selectedPlan ? Boolean(creditPackPriceId(selectedPlan.key)) : false;
+  const stripeAccount = {
+    stripeCustomerId: orgBillingResult.data?.stripe_customer_id,
+    stripeSubscriptionId: subscriptionResult.data?.stripe_subscription_id,
+    subscriptionStatus: subscriptionResult.data?.status,
+    planKey: subscriptionResult.data?.plan_key,
+  };
+  const stripeBackedPaid = canBuyCreditPacksWithStripe(stripeAccount);
+  const packConfigured = selectedPlan ? Boolean(creditPackPriceId(selectedPlan.key)) : false;
+  const packAvailable = Boolean(selectedPlan && packConfigured && stripeBackedPaid);
   const available =
     isBillingConfigured() &&
     Object.values(PLANS).every((plan) => Boolean(planPriceId(plan)));
@@ -91,6 +108,11 @@ export async function GET() {
       renewsAt: entitlements.currentPeriodEnd,
       cancelAtPeriodEnd: entitlements.cancelAtPeriodEnd,
       paymentAccessPaused: entitlements.paymentAccessPaused,
+    },
+    billing: {
+      stripeBacked: stripeBackedPaid,
+      canOpenPortal: Boolean(isBillingConfigured() && orgBillingResult.data?.stripe_customer_id && !entitlements.unlimited),
+      creditPackConfigured: packConfigured,
     },
     seats: {
       used: membersResult.data?.length ?? 1,

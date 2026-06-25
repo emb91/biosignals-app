@@ -16,6 +16,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { getOrCreateStripeCustomerId } from '@/lib/billing/customer';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import { canBuyCreditPacksWithStripe, creditPackBlockReason } from '@/lib/billing/checkout-eligibility';
 import {
   CREDIT_PACK_SIZE,
   PLANS,
@@ -46,10 +47,6 @@ export async function POST(request: Request) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
   const stripe = getStripe();
-  const customerId = await getOrCreateStripeCustomerId({
-    orgId: ctx.orgId,
-    email: ctx.user.email ?? null,
-  });
 
   if (body.kind === 'plan') {
     if (!isPlanKey(body.planKey)) {
@@ -78,6 +75,11 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
+
+    const customerId = await getOrCreateStripeCustomerId({
+      orgId: ctx.orgId,
+      email: ctx.user.email ?? null,
+    });
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -112,10 +114,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Billing is not available yet' }, { status: 503 });
   }
   const quantity = Math.min(20, Math.max(1, Math.floor(body.quantity ?? 1)));
+  const admin = createAdminClient();
+  const [{ data: org }, { data: subscription }] = await Promise.all([
+    admin
+      .from('organizations')
+      .select('stripe_customer_id')
+      .eq('id', ctx.orgId)
+      .maybeSingle<{ stripe_customer_id: string | null }>(),
+    admin
+      .from('org_subscriptions')
+      .select('stripe_subscription_id, status, plan_key')
+      .eq('org_id', ctx.orgId)
+      .maybeSingle<{ stripe_subscription_id: string | null; status: string | null; plan_key: string | null }>(),
+  ]);
+  const account = {
+    stripeCustomerId: org?.stripe_customer_id,
+    stripeSubscriptionId: subscription?.stripe_subscription_id,
+    subscriptionStatus: subscription?.status,
+    planKey: subscription?.plan_key,
+  };
+  if (!canBuyCreditPacksWithStripe(account)) {
+    return NextResponse.json(
+      { error: creditPackBlockReason(account) ?? 'Credit packs require an active paid Stripe subscription.' },
+      { status: 409 },
+    );
+  }
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
-    customer: customerId,
+    customer: org!.stripe_customer_id!,
     client_reference_id: ctx.orgId,
     line_items: [{ price: packPrice, quantity }],
     metadata: {

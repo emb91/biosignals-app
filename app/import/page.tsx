@@ -918,6 +918,8 @@ export default function ImportPage() {
   const awaitingEnrichmentRows = batchDetails?.allRows.filter(
     (row) => row.status === 'awaiting_enrichment' && row.triage_group !== 'low',
   ) ?? [];
+  const contactTriageReviewCount =
+    batchMode === 'contacts' ? awaitingTriageRows.length + awaitingEnrichmentRows.length : 0;
   const expandedBatchTitle =
     expandedBatchSection === 'failed' ? 'Not enriched'
     : expandedBatchSection === 'duplicate' ? 'Duplicates'
@@ -1199,7 +1201,7 @@ export default function ImportPage() {
                           : 'Your companies are in, with a first-pass fit now and a deeper biotech fit landing over the next few minutes. Open Companies to see them — and buy contacts at the good-fit ones whenever you are ready.'
                         : importCancelled
                           ? 'Enriched, scored contacts were added to Leads before stopping.'
-                          : 'Your records are stored and ranked. Choose when to spend credits enriching the strongest matches.'}
+                          : 'Your records were analyzed and prioritized for the included import flow. Review triaged imports, then open Leads as enriched contacts become ready.'}
                     action={
                       <button type="button" onClick={resetBatchView} className="text-xs text-arcova-navy/40 hover:text-arcova-navy/70 mt-1">
                         ← Back
@@ -1207,36 +1209,37 @@ export default function ImportPage() {
                     }
                   />
 
-                  {(awaitingTriageRows.length > 0 || awaitingEnrichmentRows.length > 0) && (
+                  {batchMode === 'contacts' && contactTriageReviewCount > 0 && (
+                    <div className="mb-4 flex flex-col gap-3 rounded-xl border border-arcova-teal/20 bg-arcova-teal/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-arcova-navy">Triaged for included import</p>
+                        <p className="mt-1 text-xs leading-5 text-arcova-navy/60">
+                          {contactTriageReviewCount.toLocaleString()} {contactTriageReviewCount === 1 ? 'record is' : 'records are'} prioritized for this month&apos;s import review. Review or adjust fit before choosing which records to enrich.
+                        </p>
+                      </div>
+                      <Link
+                        href={ROUTES.triage}
+                        className="inline-flex shrink-0 items-center justify-center rounded-lg bg-arcova-teal px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+                      >
+                        Review triaged leads
+                      </Link>
+                    </div>
+                  )}
+
+                  {awaitingTriageRows.length > 0 && (
                     <div className="mb-4 flex flex-wrap gap-2 rounded-xl border border-arcova-teal/20 bg-arcova-teal/5 p-4">
-                      {awaitingTriageRows.length > 0 && (
-                        <button
-                          type="button"
-                          disabled={billingActionBusy}
-                          onClick={() => void runImportBillingAction(
-                            '/api/import-contacts/triage',
-                            awaitingTriageRows.map((row) => row.id),
-                            `Triage ${awaitingTriageRows.length} additional records`,
-                          )}
-                          className="rounded-lg border border-arcova-teal/25 bg-white px-3 py-2 text-xs font-semibold text-arcova-navy disabled:opacity-50"
-                        >
-                          Triage {awaitingTriageRows.length.toLocaleString()} more
-                        </button>
-                      )}
-                      {awaitingEnrichmentRows.length > 0 && (
-                        <button
-                          type="button"
-                          disabled={billingActionBusy}
-                          onClick={() => void runImportBillingAction(
-                            '/api/import-contacts/enrich',
-                            awaitingEnrichmentRows.map((row) => row.id),
-                            `Enrich ${awaitingEnrichmentRows.length} high- and medium-fit records`,
-                          )}
-                          className="rounded-lg bg-arcova-navy px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                        >
-                          Enrich {awaitingEnrichmentRows.length.toLocaleString()} best matches · 4 credits each
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        disabled={billingActionBusy}
+                        onClick={() => void runImportBillingAction(
+                          '/api/import-contacts/triage',
+                          awaitingTriageRows.map((row) => row.id),
+                          `Triage ${awaitingTriageRows.length} additional records`,
+                        )}
+                        className="rounded-lg border border-arcova-teal/25 bg-white px-3 py-2 text-xs font-semibold text-arcova-navy disabled:opacity-50"
+                      >
+                        Triage {awaitingTriageRows.length.toLocaleString()} more
+                      </button>
                     </div>
                   )}
 
@@ -1317,10 +1320,10 @@ export default function ImportPage() {
                   {/* CTA */}
                   <div className="rounded-xl border border-gray-200 bg-white p-5">
                     <Link
-                      href={batchMode === 'companies' ? ROUTES.companies : ROUTES.contacts}
+                      href={batchMode === 'companies' ? ROUTES.companies : contactTriageReviewCount > 0 ? ROUTES.triage : ROUTES.contacts}
                       className="inline-flex px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors"
                     >
-                      {batchMode === 'companies' ? 'View companies' : 'View Leads'}
+                      {batchMode === 'companies' ? 'View companies' : contactTriageReviewCount > 0 ? 'Review triaged leads' : 'View Leads'}
                     </Link>
                   </div>
                 </>
