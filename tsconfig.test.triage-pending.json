@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-triage-pending-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/triage-pending-rows.ts",
+    "lib/triage-pending-rows.test.ts"
+  ]
+}
