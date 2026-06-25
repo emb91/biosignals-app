@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-external-contact-monitor-tests",
+    "rootDir": ".",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/run-external-contact-monitor.ts",
+    "lib/signals/run-external-contact-monitor.test.ts"
+  ]
+}
