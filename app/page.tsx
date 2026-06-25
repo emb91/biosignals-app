@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import LandingPage from "./landing-test-6/LandingPage"
+import LandingPage from "@/components/landing/LandingPage"
 
 export const metadata: Metadata = {
   title: "Arcova | Revenue engine for life science",
