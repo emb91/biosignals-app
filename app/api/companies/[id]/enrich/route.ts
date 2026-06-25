@@ -10,6 +10,7 @@ import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/cred
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
 import { companyEnrichmentCreditDisposition } from '@/lib/company-enrichment-credits';
 import { cancelCompanyEnrichmentForUser } from '@/lib/company-enrichment-cancel';
+import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 // The enrichment runs in an after() job (Apollo + Apify + the parallelized
 // funding/taxonomy/narrative web-search modules). Give it a generous ceiling so
@@ -52,29 +53,38 @@ export async function POST(
     const supabase = createAdminClient();
     const { data: member } = await supabase.from('org_members').select('org_id')
       .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+    if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
     let owned = null as { company_id: string } | null;
-    if (member?.org_id) {
-      const { data } = await supabase.from('org_companies').select('company_id')
-        .eq('org_id', member.org_id).eq('company_id', id).is('archived_at', null).maybeSingle();
-      owned = data;
-    }
+    const { data: orgOwned } = await supabase.from('org_companies').select('company_id')
+      .eq('org_id', member.org_id).eq('company_id', id).is('archived_at', null).maybeSingle();
+    owned = orgOwned;
     if (!owned) {
       const { data } = await supabase.from('user_companies').select('company_id')
         .eq('user_id', user.id).eq('company_id', id).is('archived_at', null).maybeSingle();
       owned = data;
+      if (owned) {
+        await supabase.from('org_companies').upsert({
+          org_id: member.org_id,
+          company_id: id,
+          source: 'legacy_user_company',
+          created_by: user.id,
+          archived_at: null,
+          archived_by: null,
+          archived_reason: null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'org_id,company_id' });
+      }
     }
     if (!owned) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
-    const reservation = member?.org_id
-      ? await reserveCredits({
-          orgId: member.org_id,
-          userId: user.id,
-          action: 'company_enrichment',
-          idempotencyKey: `company-enrichment:${operationId}`,
-          entityType: 'company',
-          entityId: id,
-        })
-      : { ok: true as const, transactionId: null, reserved: 0, idempotent: false };
+    const reservation = await reserveCredits({
+      orgId: member.org_id,
+      userId: user.id,
+      action: 'company_enrichment',
+      idempotencyKey: `company-enrichment:${operationId}`,
+      entityType: 'company',
+      entityId: id,
+    });
     if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
 
     // Flip the row to `running` SYNCHRONOUSLY so the UI sees the new state
@@ -109,7 +119,7 @@ export async function POST(
       } catch (fitErr) {
         console.warn('[api/companies/enrich] syncCompanyFitForCompany failed:', fitErr);
       }
-      if (member?.org_id) await refreshMonitoringUniverse(member.org_id).catch(() => {});
+      await refreshMonitoringUniverse(member.org_id).catch(() => {});
       await settleCredits(reservation.transactionId).catch((error) => {
         console.error('[api/companies/enrich] credit settlement failed:', error);
       });

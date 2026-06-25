@@ -32,6 +32,13 @@ export interface OrgContext {
 /** Roles permitted to edit org-level setup (company profile + shared ICPs) and manage seats. */
 export const ORG_ADMIN_ROLES: OrgRole[] = ['owner', 'admin'];
 
+export const WORKSPACE_REQUIRED_ERROR = {
+  code: 'workspace_required',
+  error: 'Workspace not found',
+  message: 'Finish company setup to continue.',
+  setupPath: '/arcova-setup',
+} as const;
+
 export function canEditOrgSetup(role: OrgRole): boolean {
   return ORG_ADMIN_ROLES.includes(role);
 }

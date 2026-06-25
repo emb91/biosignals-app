@@ -38,6 +38,7 @@ import {
   type OutreachSequenceMessage,
 } from '@/lib/outreach-sequence';
 import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
+import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 export const maxDuration = 300;
 
@@ -170,6 +171,7 @@ export async function POST(request: Request) {
     const admin = createAdminClient();
     const { data: member } = await admin.from('org_members').select('org_id')
       .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+    if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
 
     // Reload the same context as /hooks so the sequence is grounded in
     // the actual data (not just whatever the hook text says).
@@ -300,34 +302,32 @@ export async function POST(request: Request) {
       toneBlock,
     });
 
-    if (member?.org_id) {
-      const entitlements = await getOrgEntitlements(member.org_id);
-      if (entitlements.paymentAccessPaused) {
-        return NextResponse.json({
-          code: 'payment_access_paused',
-          message: 'Paid actions are paused while the billing issue is resolved.',
-          action: 'Update billing in Settings.',
-        }, { status: 402 });
-      }
-      const reservation = await reserveCreditsWithIncludedAllowance({
-        orgId: member.org_id,
-        userId: user.id,
-        action: 'outreach_sequence',
-        operationKey: operationId,
-        window: 'utc_month',
-        windowStart: entitlements.currentPeriodStart,
-        windowEnd: entitlements.currentPeriodEnd,
-        allowanceLimit: entitlements.billingInterval === 'annual'
-          ? entitlements.caps.outreachSequencesIncludedMonthly * 12
-          : entitlements.caps.outreachSequencesIncludedMonthly,
-        idempotencyKey: `sequence:${operationId}`,
-        entityType: 'contact',
-        entityId: contactId,
-      });
-      if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
-      usageContext = { orgId: member.org_id, operationId };
-      creditTransactionId = reservation.transactionId;
+    const entitlements = await getOrgEntitlements(member.org_id);
+    if (entitlements.paymentAccessPaused) {
+      return NextResponse.json({
+        code: 'payment_access_paused',
+        message: 'Paid actions are paused while the billing issue is resolved.',
+        action: 'Update billing in Settings.',
+      }, { status: 402 });
     }
+    const reservation = await reserveCreditsWithIncludedAllowance({
+      orgId: member.org_id,
+      userId: user.id,
+      action: 'outreach_sequence',
+      operationKey: operationId,
+      window: 'utc_month',
+      windowStart: entitlements.currentPeriodStart,
+      windowEnd: entitlements.currentPeriodEnd,
+      allowanceLimit: entitlements.billingInterval === 'annual'
+        ? entitlements.caps.outreachSequencesIncludedMonthly * 12
+        : entitlements.caps.outreachSequencesIncludedMonthly,
+      idempotencyKey: `sequence:${operationId}`,
+      entityType: 'contact',
+      entityId: contactId,
+    });
+    if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+    usageContext = { orgId: member.org_id, operationId };
+    creditTransactionId = reservation.transactionId;
 
     const generateMessages = async (): Promise<Message[]> => {
       const completion = await completeLlm({

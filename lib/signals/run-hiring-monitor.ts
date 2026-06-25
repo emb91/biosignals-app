@@ -643,6 +643,14 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
   const admin = createAdminClient();
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', input.userId).maybeSingle<{ org_id: string }>();
+  if (!member?.org_id) {
+    console.warn(`[hiring-monitor] skipping user ${input.userId}: workspace not found`);
+    return {
+      processed: 0, failed: 0, postings_scanned: 0,
+      candidate_events_before_dedupe: 0, events_skipped_as_duplicates: 0,
+      emitted_signal_types: [], recomputed_companies: [], failures: [], details: [],
+    };
+  }
 
   // 1. Resolve which companies to process
   const ownedRows = (await listActiveCompanyStateForUser(admin, input.userId, 'company_id, company_fit_score'))
@@ -702,7 +710,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
     .filter((n): n is string => Boolean(n));
 
   const { jobs, rawCount, error: atsError } = await fetchJobsFromLinkedIn(companyNames, {
-    orgId: member?.org_id ?? null,
+    orgId: member.org_id,
     userId: input.userId,
   });
 

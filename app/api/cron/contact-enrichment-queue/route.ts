@@ -79,6 +79,25 @@ async function runCron(request: Request) {
 
   for (const row of pendingRows) {
     try {
+      const { data: member } = await admin
+        .from('org_members')
+        .select('org_id')
+        .eq('user_id', row.user_id)
+        .maybeSingle<{ org_id: string }>();
+      if (!member?.org_id) {
+        await admin
+          .from('contacts')
+          .update({
+            enrichment_refresh_status: 'failed',
+            enrichment_refresh_last_error: 'Workspace not found for contact enrichment.',
+            enrichment_refresh_finished_at: new Date().toISOString(),
+          })
+          .eq('id', row.id);
+        failed++;
+        failures.push({ contact_id: row.id, error: 'workspace_required' });
+        continue;
+      }
+
       // The pipeline transitions enrichment_refresh_status itself
       // (requested → running → completed/failed). It also calls
       // runCompanyMonitor for the resolved employer (the new Illumina stub

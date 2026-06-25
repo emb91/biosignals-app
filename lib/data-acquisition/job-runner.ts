@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
-import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { WORKSPACE_REQUIRED_ERROR, scopeIcpsToUser } from '@/lib/org-context';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
 import type { ImportProgressCallback } from '@/lib/import-ingestion';
 import {
@@ -1006,9 +1006,8 @@ async function ingestPeopleAndRunImportPipeline(
   meter: Meter,
   completionNote: string | null,
 ): Promise<void> {
-  const orgId = await orgIdForUser(admin, job.user_id);
   const rawRows = uniquePeople.map((person) =>
-    rawUploadFromPerson(job.user_id, orgId, job.upload_batch_id!, person, job.id),
+    rawUploadFromPerson(job.user_id, job.org_id, job.upload_batch_id!, person, job.id),
   );
   const { data: insertedRows, error: insertError } =
     rawRows.length > 0
@@ -1456,6 +1455,18 @@ export async function runDataAcquisitionJob(jobId: string): Promise<void> {
   if (!job.upload_batch_id) {
     throw new Error(`Data acquisition job ${jobId} is missing upload_batch_id`);
   }
+  if (!job.org_id) {
+    const message = WORKSPACE_REQUIRED_ERROR.message;
+    await updateJob(job.id, { status: 'failed', error: message, completed_at: new Date().toISOString() });
+    await admin
+      .from('upload_batches')
+      .update({ status: 'failed', completed_at: new Date().toISOString() })
+      .eq('id', job.upload_batch_id);
+    await advanceQueueForUser(job.user_id).catch((advanceError) => {
+      console.error('[data-acquisition] queue advancement failed after workspace guard', advanceError);
+    });
+    throw new Error(message);
+  }
 
   const claimed = await claimJobForRun(admin, job.id);
   if (!claimed) return;
@@ -1504,7 +1515,8 @@ async function executeClaimedJob(
   // Service-role client bypasses RLS, so scope the ICP explicitly to what job.user_id may
   // see (company-wide + their own personal). Personas are fetched by the ICP itself
   // (org-scoped) since a company ICP's personas belong to its creator, not the buyer.
-  const jobOrgId = await orgIdForUser(admin, job.user_id);
+  const jobOrgId = job.org_id;
+  if (!jobOrgId) throw new Error(WORKSPACE_REQUIRED_ERROR.message);
   const [{ data: icpData, error: icpError }, { data: personaData, error: personaError }] = await Promise.all([
     scopeIcpsToUser(
       admin
@@ -1517,17 +1529,11 @@ async function executeClaimedJob(
     )
       .eq('id', job.icp_id)
       .maybeSingle(),
-    (jobOrgId
-      ? admin
-          .from('personas')
-          .select('id, name, functions, seniority_levels, job_titles')
-          .eq('org_id', jobOrgId)
-          .eq('icp_id', job.icp_id)
-      : admin
-          .from('personas')
-          .select('id, name, functions, seniority_levels, job_titles')
-          .eq('user_id', job.user_id)
-          .eq('icp_id', job.icp_id)),
+    admin
+      .from('personas')
+      .select('id, name, functions, seniority_levels, job_titles')
+      .eq('org_id', jobOrgId)
+      .eq('icp_id', job.icp_id),
   ]);
 
   if (icpError || !icpData) throw new Error(icpError?.message || 'ICP not found');

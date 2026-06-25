@@ -9,6 +9,7 @@ import {
   settleCredits,
 } from '@/lib/billing/credits';
 import { processQueuedRowsInBackground } from '@/lib/import-queue';
+import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 export async function POST(request: Request) {
   const auth = await createClient();
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
   const admin = createAdminClient();
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-  if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
+  if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
   const { data: candidateRows, error } = await admin.from('raw_uploads')
     .select('id, user_id, batch_id, full_name, email, linkedin_url, company_name, raw_data, status, triage_group, triage_override_group')
     .eq('org_id', member.org_id)

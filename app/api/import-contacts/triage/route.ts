@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
 import { triageContacts, TRIAGE_VERSION } from '@/lib/triage';
+import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 export async function POST(request: Request) {
   const auth = await createClient();
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
   const admin = createAdminClient();
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-  if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
+  if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
 
   const { data: rows, error } = await admin.from('raw_uploads')
     .select('id, job_title, company_name, email')

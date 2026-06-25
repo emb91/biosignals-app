@@ -183,7 +183,7 @@ async function runCron(request: Request) {
         .is('archived_at', null)
         .limit(1)
         .maybeSingle<{ org_id: string }>();
-      const fallbackOrgId = orgLink?.org_id ?? null;
+      let fallbackOrgId = orgLink?.org_id ?? null;
 
       const { data: ucLinks } = await admin
         .from('user_companies')
@@ -193,12 +193,54 @@ async function runCron(request: Request) {
       const userIds = (ucLinks ?? [])
         .map((r) => (r as { user_id: string | null }).user_id)
         .filter((id): id is string => Boolean(id));
+      let fallbackUserId: string | null = userIds[0] ?? null;
+      if (!fallbackOrgId && existingReservationList.length === 0 && userIds.length > 0) {
+        fallbackOrgId = null;
+        fallbackUserId = null;
+        for (const candidateUserId of userIds) {
+          const { data: member } = await admin
+            .from('org_members')
+            .select('org_id')
+            .eq('user_id', candidateUserId)
+            .maybeSingle<{ org_id: string }>();
+          if (member?.org_id) {
+            fallbackOrgId = member.org_id;
+            fallbackUserId = candidateUserId;
+            break;
+          }
+        }
+        if (fallbackOrgId && fallbackUserId) {
+          await admin.from('org_companies').upsert({
+            org_id: fallbackOrgId,
+            company_id: companyId,
+            source: 'legacy_user_company',
+            created_by: fallbackUserId,
+            archived_at: null,
+            archived_by: null,
+            archived_reason: null,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'org_id,company_id' });
+        }
+      }
 
       const billingContexts = existingReservationList.length > 0
         ? existingReservationList
         : fallbackOrgId
-          ? [{ org_id: fallbackOrgId, user_id: userIds[0] ?? null }]
+          ? [{ org_id: fallbackOrgId, user_id: fallbackUserId }]
           : [];
+      if (billingContexts.length === 0) {
+        await admin
+          .from('companies')
+          .update({
+            enrichment_refresh_status: 'failed',
+            enrichment_refresh_last_error: 'Workspace not found for company enrichment.',
+            enrichment_refresh_finished_at: new Date().toISOString(),
+          })
+          .eq('id', companyId);
+        failed++;
+        failures.push({ company_id: companyId, error: 'workspace_required' });
+        continue;
+      }
       for (const context of billingContexts) {
         const reservation = await reserveCredits({
           orgId: context.org_id,
