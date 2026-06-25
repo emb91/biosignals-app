@@ -16,6 +16,7 @@ import type { TodayPriority } from '@/lib/priorities/types';
 import { getDisplayName } from '@/lib/auth-helpers';
 import { healthLabel, type HealthDim } from '@/lib/pipeline-icp-health';
 import { PATENT_SURGE_WINDOW_DAYS } from '@/lib/signals/patent-surge';
+import { conferenceDatePill } from '@/lib/signals/conference-display';
 import { cn } from '@/lib/utils';
 
 type SetupStep = {
@@ -385,37 +386,6 @@ function relativeTime(isoStr: string | null | undefined): string {
   if (diffDays < 7) return `${diffDays}d ago`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
   return `${Math.floor(diffDays / 30)}mo ago`;
-}
-
-const CONF_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** Parse a YYYY-MM-DD string into parts without a timezone shift. */
-function ymd(d: string | null | undefined): { y: number; m: number; day: number } | null {
-  const mm = d?.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return mm ? { y: +mm[1], m: +mm[2] - 1, day: +mm[3] } : null;
-}
-
-/**
- * Compact conference-date pill with a past/upcoming cue, built from the event
- * start/end dates at render time (not the stored phase, which can be stale).
- * Upcoming → bare future date ("Dec 12–15, 2026"); ongoing → "Live · …";
- * recently ended → "Ended · …" (the monitor suppresses anything >21d past).
- */
-function conferenceDatePill(startDate: string | null | undefined, endDate: string | null | undefined): string | null {
-  const s = ymd(startDate);
-  if (!s) return null;
-  const e = ymd(endDate) ?? s;
-  let range: string;
-  if (e.y === s.y && e.m === s.m && e.day === s.day) range = `${CONF_MONTHS[s.m]} ${s.day}, ${s.y}`;
-  else if (e.y === s.y && e.m === s.m) range = `${CONF_MONTHS[s.m]} ${s.day}–${e.day}, ${s.y}`;
-  else if (e.y === s.y) range = `${CONF_MONTHS[s.m]} ${s.day} – ${CONF_MONTHS[e.m]} ${e.day}, ${s.y}`;
-  else range = `${CONF_MONTHS[s.m]} ${s.day}, ${s.y} – ${CONF_MONTHS[e.m]} ${e.day}, ${e.y}`;
-  const startMs = Date.UTC(s.y, s.m, s.day);
-  const endMs = Date.UTC(e.y, e.m, e.day) + 86_400_000;
-  const now = Date.now();
-  if (now < startMs) return range;
-  if (now <= endMs) return `Live · ${range}`;
-  return `Ended · ${range}`;
 }
 
 /**
