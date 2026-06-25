@@ -6016,7 +6016,7 @@ export default function SetupFlow({
                     `Bubble 1: brief glad the company pass went well. ` +
                     `Bubble 2: one line that we are defining ideal target accounts, real companies they sell to. ` +
                     `Bubble 3: examples for different buyer types: ${segmentList}. ` +
-                    `Bubble 4: tap one or paste their own URL; if unsure, suggestions came from their company and any pick is fine. ` +
+                    `Bubble 4: tap one of the suggested companies or paste the URL of a target customer of their own; if unsure, the suggestions came from their company profile and any pick is fine. ` +
                     `Each bubble: 1-3 short sentences.]`,
                 },
               });
@@ -6056,8 +6056,8 @@ export default function SetupFlow({
             'Welcome back. Let’s set up another ICP.',
             'Aim for a target company or account that feels different from your existing profiles — a different sector, size, or buying team works well.',
             remaining.length > 1
-              ? 'Pick one of the suggestions below, or type in your own company.'
-              : 'I’ve put a suggested company below, or you can type in your own company.',
+              ? 'Pick one of the suggestions below, or type in a target company of your own.'
+              : 'I’ve put a suggested company below, or you can type in a target company of your own.',
           ]);
           setPhase('icp_suggestion');
           setInput(true);
