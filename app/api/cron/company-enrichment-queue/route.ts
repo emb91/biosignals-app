@@ -15,8 +15,10 @@
  * Cadence: every 5 minutes. Batch size capped (default 3) for the 300s ceiling.
  *
  * Billing: credits (action `company_enrichment`) are reserved + settled PER
- * COMPANY here, so a company that fails to enrich is refunded — the user is only
- * charged for companies that actually enrich.
+ * COMPANY here. Company import may pre-reserve with the same idempotency key;
+ * reserveCredits then returns that existing reservation instead of charging
+ * twice. A company that fails to enrich is refunded, so the user is only charged
+ * for companies that actually enrich.
  *
  * Idempotency: runCompanyEnrichmentById transitions requested → running →
  * succeeded | failed, so a re-run skips rows already 'running'/'succeeded'.
@@ -33,7 +35,7 @@ import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { runHeadcountSignalForCompany } from '@/lib/signals/run-headcount-monitor';
 import { recomputeAccountReadiness } from '@/lib/signals/readiness-service';
 import { companyEnrichmentCreditDisposition } from '@/lib/company-enrichment-credits';
-import { reserveCredits, refundCredits, settleCredits } from '@/lib/billing/credits';
+import { reserveCredits, refundCredits, settleCredits, type CreditReservation } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
@@ -42,9 +44,75 @@ export const maxDuration = 300;
 // A 'running' row older than this is treated as a crashed invocation and
 // reclaimed back to the queue.
 const STALE_RUNNING_MS = 15 * 60 * 1000;
+const STALE_IDLE_RESERVATION_MS = 20 * 60 * 1000;
 
 function messageFromUnknown(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+async function reconcileFinalizedCompanyReservations(admin: ReturnType<typeof createAdminClient>) {
+  const { data: transactions, error } = await admin
+    .from('org_credit_transactions')
+    .select('id, entity_id, created_at')
+    .eq('action_type', 'company_enrichment')
+    .eq('entity_type', 'company')
+    .eq('status', 'pending')
+    .not('entity_id', 'is', null)
+    .limit(100);
+
+  if (error) {
+    console.error('[cron/company-enrichment-queue] reservation reconciliation fetch failed:', error);
+    return { settled: 0, refunded: 0, stale_refunded: 0 };
+  }
+
+  const pendingReservations = (transactions ?? []) as Array<{ id: string; entity_id: string | null; created_at: string | null }>;
+  const companyIds = [...new Set(pendingReservations.map((tx) => tx.entity_id).filter((id): id is string => Boolean(id)))];
+  if (companyIds.length === 0) return { settled: 0, refunded: 0, stale_refunded: 0 };
+
+  const { data: companies, error: companyError } = await admin
+    .from('companies')
+    .select('id, enrichment_refresh_status')
+    .in('id', companyIds);
+  if (companyError) {
+    console.error('[cron/company-enrichment-queue] reservation reconciliation company fetch failed:', companyError);
+    return { settled: 0, refunded: 0, stale_refunded: 0 };
+  }
+
+  const statusByCompanyId = new Map(
+    ((companies ?? []) as Array<{ id: string; enrichment_refresh_status: string | null }>).map((company) => [
+      company.id,
+      company.enrichment_refresh_status,
+    ]),
+  );
+  let settled = 0;
+  let refunded = 0;
+  let staleRefunded = 0;
+  const staleIdleCutoff = Date.now() - STALE_IDLE_RESERVATION_MS;
+
+  for (const tx of pendingReservations) {
+    const status = tx.entity_id ? statusByCompanyId.get(tx.entity_id) : null;
+    if (status === 'succeeded') {
+      await settleCredits(tx.id).then(() => {
+        settled++;
+      }).catch((settleError) => {
+        console.error('[cron/company-enrichment-queue] reservation reconciliation settle failed:', settleError);
+      });
+    } else if (status === 'failed' || status === 'cancelled') {
+      await refundCredits(tx.id).then(() => {
+        refunded++;
+      }).catch((refundError) => {
+        console.error('[cron/company-enrichment-queue] reservation reconciliation refund failed:', refundError);
+      });
+    } else if ((status == null || status === 'idle') && tx.created_at && new Date(tx.created_at).getTime() < staleIdleCutoff) {
+      await refundCredits(tx.id).then(() => {
+        staleRefunded++;
+      }).catch((refundError) => {
+        console.error('[cron/company-enrichment-queue] stale reservation reconciliation refund failed:', refundError);
+      });
+    }
+  }
+
+  return { settled, refunded, stale_refunded: staleRefunded };
 }
 
 async function runCron(request: Request) {
@@ -56,6 +124,7 @@ async function runCron(request: Request) {
 
   const admin = createAdminClient();
   const batchSize = Math.max(1, Math.min(10, Number(process.env.COMPANY_ENRICHMENT_QUEUE_BATCH ?? '3')));
+  const reservationRecovery = await reconcileFinalizedCompanyReservations(admin);
 
   // Reclaim crashed runs: 'running' rows that have been stuck too long go back
   // to 'requested' so they get another pass.
@@ -80,7 +149,7 @@ async function runCron(request: Request) {
 
   const pendingRows = (pending ?? []) as Array<{ id: string; enrichment_refresh_started_at: string | null }>;
   if (pendingRows.length === 0) {
-    return NextResponse.json({ success: true, processed: 0, queue_empty: true });
+    return NextResponse.json({ success: true, processed: 0, queue_empty: true, reservation_recovery: reservationRecovery });
   }
 
   let processed = 0;
@@ -90,16 +159,31 @@ async function runCron(request: Request) {
 
   for (const row of pendingRows) {
     const companyId = row.id;
+    let reservations: CreditReservation[] = [];
     try {
+      const reservationKey = `company-deep-enrich:${companyId}:${row.enrichment_refresh_started_at ?? 'na'}`;
       // Resolve the owning org (for billing) and linked users (for per-user fit).
-      const { data: orgLink } = await admin
+      const existingReservationResponse = await admin
+        .from('org_credit_transactions')
+        .select('org_id, user_id')
+        .eq('action_type', 'company_enrichment')
+        .eq('entity_type', 'company')
+        .eq('entity_id', companyId)
+        .eq('idempotency_key', reservationKey)
+        .eq('status', 'pending');
+      const existingReservationList = (existingReservationResponse.data ?? []) as Array<{
+        org_id: string;
+        user_id: string | null;
+      }>;
+
+      const { data: orgLink } = existingReservationList.length > 0 ? { data: null } : await admin
         .from('org_companies')
         .select('org_id')
         .eq('company_id', companyId)
         .is('archived_at', null)
         .limit(1)
         .maybeSingle<{ org_id: string }>();
-      const orgId = orgLink?.org_id ?? null;
+      const fallbackOrgId = orgLink?.org_id ?? null;
 
       const { data: ucLinks } = await admin
         .from('user_companies')
@@ -110,25 +194,39 @@ async function runCron(request: Request) {
         .map((r) => (r as { user_id: string | null }).user_id)
         .filter((id): id is string => Boolean(id));
 
-      const reservation = orgId
-        ? await reserveCredits({
-            orgId,
-            userId: userIds[0] ?? null,
-            action: 'company_enrichment',
-            idempotencyKey: `company-deep-enrich:${companyId}:${row.enrichment_refresh_started_at ?? 'na'}`,
-            entityType: 'company',
-            entityId: companyId,
-          })
-        : { ok: true as const, transactionId: null };
-
-      if (!reservation.ok) {
+      const billingContexts = existingReservationList.length > 0
+        ? existingReservationList
+        : fallbackOrgId
+          ? [{ org_id: fallbackOrgId, user_id: userIds[0] ?? null }]
+          : [];
+      for (const context of billingContexts) {
+        const reservation = await reserveCredits({
+          orgId: context.org_id,
+          userId: context.user_id,
+          action: 'company_enrichment',
+          idempotencyKey: reservationKey,
+          entityType: 'company',
+          entityId: companyId,
+        });
+        if (!reservation.ok) {
+          reservations.push(reservation);
+          break;
+        }
+        reservations.push(reservation);
+      }
+      const failedReservation = reservations.find((reservation) => !reservation.ok);
+      if (failedReservation) {
+        const successfulReservations = reservations.filter(
+          (reservation): reservation is Extract<CreditReservation, { ok: true }> => reservation.ok,
+        );
+        await Promise.all(successfulReservations.map((reservation) => refundCredits(reservation.transactionId).catch(() => {})));
         // Not enough credits — leave the firmographic/preliminary data in place,
         // mark the row failed with the reason so it stops looping.
         await admin
           .from('companies')
           .update({
             enrichment_refresh_status: 'failed',
-            enrichment_refresh_last_error: reservation.message || 'Not enough credits to enrich this company.',
+            enrichment_refresh_last_error: failedReservation.message || 'Not enough credits to enrich this company.',
             enrichment_refresh_finished_at: new Date().toISOString(),
           })
           .eq('id', companyId);
@@ -139,11 +237,14 @@ async function runCron(request: Request) {
 
       await markCompanyEnrichmentRunning(admin, companyId);
       const result = await runCompanyEnrichmentById(admin, companyId);
+      const successfulReservations = reservations.filter(
+        (reservation): reservation is Extract<CreditReservation, { ok: true }> => reservation.ok,
+      );
 
       if (companyEnrichmentCreditDisposition(result) === 'refund') {
-        await refundCredits(reservation.transactionId).catch(() => {});
+        await Promise.all(successfulReservations.map((reservation) => refundCredits(reservation.transactionId).catch(() => {})));
       } else {
-        await settleCredits(reservation.transactionId).catch(() => {});
+        await Promise.all(successfulReservations.map((reservation) => settleCredits(reservation.transactionId).catch(() => {})));
       }
 
       // Upgrade each linked user's fit now that taxonomy is populated.
@@ -177,7 +278,7 @@ async function runCron(request: Request) {
           }
         }
       }
-      if (orgId) orgsToRefresh.add(orgId);
+      for (const context of billingContexts) orgsToRefresh.add(context.org_id);
 
       if (result.status === 'succeeded') processed++;
       else {
@@ -187,6 +288,10 @@ async function runCron(request: Request) {
     } catch (err) {
       const msg = messageFromUnknown(err);
       console.error(`[cron/company-enrichment-queue] company ${companyId} failed:`, msg);
+      const successfulReservations = reservations.filter(
+        (reservation): reservation is Extract<CreditReservation, { ok: true }> => reservation.ok,
+      );
+      await Promise.all(successfulReservations.map((reservation) => refundCredits(reservation.transactionId).catch(() => {})));
       failed++;
       failures.push({ company_id: companyId, error: msg });
       try {
@@ -208,7 +313,7 @@ async function runCron(request: Request) {
     await refreshMonitoringUniverse(orgId).catch(() => {});
   }
 
-  return NextResponse.json({ success: true, batch_size: batchSize, processed, failed, failures });
+  return NextResponse.json({ success: true, batch_size: batchSize, processed, failed, failures, reservation_recovery: reservationRecovery });
 }
 
 export const GET = observeCron('company-enrichment-queue', runCron);
