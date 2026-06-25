@@ -9,10 +9,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { ExternalLink, Loader2 } from 'lucide-react';
+import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
 import { fitScoreArcColor, percentDisplayNumber } from '@/lib/fit-gauge';
+import { conferenceDisplay, isConferenceSignal } from '@/lib/signals/conference-display';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,13 @@ type Props = {
   effectiveReadinessScore?: number | null;
   /** Human-readable reason the readiness is capped, shown as a note. */
   crmCappedReason?: string | null;
+  /**
+   * When true, the company-signal list is split into collapsible category
+   * groups (Conferences, Funding & deals, Hiring, Patents, …) instead of one
+   * flat list — the Companies side-panel design. Opt-in so /contacts and
+   * /today keep their existing flat list. Only affects the company-only path.
+   */
+  grouped?: boolean;
 };
 
 // ── Display helpers ────────────────────────────────────────────────────────
@@ -278,8 +286,19 @@ function DealDetails({ rows }: { rows: DealRow[] }) {
 function SignalCard({ item }: { item: SignalItem }) {
   const primaryDim = item.dimensions[0] ?? '';
   const accent = DIMENSION_COLORS[primaryDim] ?? 'bg-slate-300';
-  const excerpt = item.evidenceExcerpt || item.sourceSummary || null;
   const dealRows = extractDealRows(item.signalKey, item.sourceMetadata ?? {});
+
+  // Conference signals are forward-looking: event_at is the show's START date, so
+  // the generic "Xd ago" framing is wrong (an upcoming show reads as "-118d ago").
+  // Mirror /today: show the conference name as the title, booth/date as pills,
+  // no relative-time label, and no source link.
+  const isConference = isConferenceSignal(item.signalKey);
+  const conference = isConference ? conferenceDisplay(item.sourceMetadata ?? {}) : null;
+  const title = conference?.title ?? signalLabel(item.signalKey);
+  // The summary repeats the booth in parentheses; once we surface a booth pill,
+  // drop the excerpt for conferences to avoid showing the booth twice.
+  const excerpt = isConference ? null : (item.evidenceExcerpt || item.sourceSummary || null);
+  const showSource = !isConference && item.sourceUrl;
 
   return (
     <div className="relative flex gap-2.5 rounded-lg border border-slate-100 bg-white px-3 py-2.5 hover:border-slate-200 transition-colors">
@@ -290,15 +309,31 @@ function SignalCard({ item }: { item: SignalItem }) {
         {/* Title row */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[13px] font-semibold text-slate-900 leading-tight">
-            {signalLabel(item.signalKey)}
+            {title}
           </span>
-          <span className="text-[11px] text-slate-400 ml-auto shrink-0">
-            {/* When the event actually happened (event_at), not when we scraped
-                it (observed_at). A patent filed in April shouldn't read as "1w
-                ago" because we detected it last month. */}
-            {relativeTime(item.eventAt ?? item.observedAt)}
-          </span>
+          {!isConference && (
+            <span className="text-[11px] text-slate-400 ml-auto shrink-0">
+              {/* When the event actually happened (event_at), not when we scraped
+                  it (observed_at). A patent filed in April shouldn't read as "1w
+                  ago" because we detected it last month. */}
+              {relativeTime(item.eventAt ?? item.observedAt)}
+            </span>
+          )}
         </div>
+
+        {/* Conference booth / date pills */}
+        {conference && conference.pills.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {conference.pills.map((pill) => (
+              <span
+                key={pill}
+                className="inline-flex items-center rounded-md bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600"
+              >
+                {pill}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Excerpt / rationale */}
         {excerpt && (
@@ -309,9 +344,9 @@ function SignalCard({ item }: { item: SignalItem }) {
         <DealDetails rows={dealRows} />
 
         {/* Source link */}
-        {item.sourceUrl && (
+        {showSource && (
           <a
-            href={item.sourceUrl}
+            href={item.sourceUrl!}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-[11px] text-arcova-teal hover:underline"
@@ -401,12 +436,90 @@ function SignalGroupHeader({ label, count }: { label: string; count: number }) {
   );
 }
 
+// ── Category grouping (Companies side-panel "grouped" mode) ─────────────────
+// Ordered categories; each company signal lands in the FIRST matching bucket,
+// otherwise "Other signals". Only non-empty buckets render, in this order.
+const SIGNAL_CATEGORIES: { key: string; title: string; match: (k: string) => boolean }[] = [
+  { key: 'conf', title: 'Conferences & events', match: (k) => isConferenceSignal(k) || k.includes('conference') },
+  { key: 'deal', title: 'Funding & deals', match: (k) => /fund|ipo|milestone|partnership|ma_event|acquisition|terminated_deal/.test(k) },
+  { key: 'clinical', title: 'Clinical & regulatory', match: (k) => /trial|phase|indication|program_discontinuation|fda|breakthrough|fast_track|priority_review|orphan|complete_response|grant_award/.test(k) },
+  { key: 'patent', title: 'Patents & IP', match: (k) => k.includes('patent') || k.includes('portfolio') },
+  { key: 'hire', title: 'Hiring & people', match: (k) => /hiring|new_to_role|changed_company|promoted|internal_role|title_change|board_or_advisory|leadership_churn|restructuring|key_contact_departed/.test(k) },
+  { key: 'pub', title: 'Publications', match: (k) => k.includes('publication') || k.includes('paper') || k.includes('preprint') },
+  { key: 'crm', title: 'CRM activity', match: (k) => k.includes('crm') || k.startsWith('prior_') },
+];
+
+function categorizeSignal(key: string): string {
+  return SIGNAL_CATEGORIES.find((c) => c.match(key))?.title ?? 'Other signals';
+}
+
+/** One collapsible category card (design SignalGroup). Large groups start collapsed. */
+function SignalCategoryGroup({
+  title,
+  items,
+  defaultOpen,
+}: {
+  title: string;
+  items: SignalItem[];
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-2 px-3.5 py-3 text-left transition-colors hover:bg-white/60"
+      >
+        <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">{title}</span>
+        <span className="inline-flex items-center gap-2">
+          <span className="rounded-full bg-[rgba(13,53,71,0.06)] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#7d909a]">
+            {items.length}
+          </span>
+          <ChevronDown className={cn('h-4 w-4 shrink-0 text-[#7d909a] transition-transform duration-200', open ? '' : '-rotate-90')} />
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-[rgba(13,53,71,0.06)] px-2.5 py-2.5">
+          {items.map((item) => (
+            <SignalCard key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Company signals split into ordered, collapsible category groups. */
+function GroupedCompanySignals({ items, label = 'Company signals' }: { items: SignalItem[]; label?: string }) {
+  const order = [...SIGNAL_CATEGORIES.map((c) => c.title), 'Other signals'];
+  const byCategory = new Map<string, SignalItem[]>();
+  for (const item of items) {
+    const cat = categorizeSignal(item.signalKey);
+    const bucket = byCategory.get(cat);
+    if (bucket) bucket.push(item);
+    else byCategory.set(cat, [item]);
+  }
+  const groups = order
+    .filter((title) => byCategory.has(title))
+    .map((title) => ({ title, items: byCategory.get(title)! }));
+  return (
+    <div className="space-y-2.5">
+      <SignalGroupHeader label={label} count={items.length} />
+      {groups.map((g) => (
+        <SignalCategoryGroup key={g.title} title={g.title} items={g.items} defaultOpen={g.items.length <= 3} />
+      ))}
+    </div>
+  );
+}
+
 export function EntitySignalsList({
   companyId,
   contactId,
   primaryScope = 'company',
   effectiveReadinessScore,
   crmCappedReason,
+  grouped = false,
 }: Props) {
   const [items, setItems] = useState<SignalItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -531,8 +644,12 @@ export function EntitySignalsList({
         ) : null}
       </div>
 
-      {/* Signal list — grouped Contact / Company when both are shown, else a single group. */}
-      {(contactId && companyId) ? (() => {
+      {/* Signal list. `grouped` (side-panel design) takes precedence: all signals
+         split into collapsible category cards. Otherwise: Contact/Company split
+         when both scopes are shown, else a single flat group. */}
+      {grouped ? (
+        <GroupedCompanySignals items={items} label={contactId ? 'Signals' : 'Company signals'} />
+      ) : (contactId && companyId) ? (() => {
         const contactItems = items.filter((i) => i.contactId === contactId);
         const companyItems = items.filter((i) => !contactItems.includes(i));
         const [firstGroup, secondGroup] = primaryScope === 'contact'
