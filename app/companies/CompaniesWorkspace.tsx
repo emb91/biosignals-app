@@ -417,23 +417,6 @@ function InlinePills({
 }
 
 /** Full pills list for the detail panel */
-function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
-  const list = (items || []).filter(Boolean);
-  if (list.length === 0) return <p className="text-xs text-gray-400">—</p>;
-  return (
-    <div className="flex flex-wrap gap-1">
-      {list.map((item) => (
-        <span
-          key={item}
-          className="inline-flex rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
-        >
-          {item}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'contacts', 'priority', 'crm_status', 'action'];
 // Below 1280px the table is space-constrained (sidebar collapses to hamburger at
 // <1280, agent panel is still ~380px until <768). Cramming all 5 columns turns the
@@ -570,6 +553,89 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
     : <ChevronDown className="w-3 h-3 text-arcova-teal shrink-0" />;
 }
 
+/* ── Side-panel design primitives (Companies Side Panel design) ──
+   A single collapsible "card" + an uppercase-eyebrow key/value field, used
+   across the Details / CRM tabs so every section shares one type system:
+   section title = Manrope 13px bold navy; field label = 10px uppercase pale. */
+function DetailCard({
+  title,
+  open,
+  onToggle,
+  count,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-2 px-3.5 py-3 text-left transition-colors hover:bg-white/60"
+      >
+        <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">{title}</span>
+        <span className="inline-flex items-center gap-2">
+          {count != null && (
+            <span className="rounded-full bg-[rgba(13,53,71,0.06)] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#7d909a]">
+              {count}
+            </span>
+          )}
+          <ChevronDown className={cn('h-4 w-4 shrink-0 text-[#7d909a] transition-transform duration-200', open ? '' : '-rotate-90')} />
+        </span>
+      </button>
+      {open && <div className="border-t border-[rgba(13,53,71,0.06)] px-3.5 py-3.5">{children}</div>}
+    </div>
+  );
+}
+
+/** Key/value field — uppercase pale eyebrow label above a navy value (design .field). */
+function EyebrowField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">{label}</p>
+      <p className="mt-1.5 text-[13.5px] leading-[1.4] text-[#0d3547] break-words">{children}</p>
+    </div>
+  );
+}
+
+/** Teal tag-pill cluster — company type, therapeutic areas, modalities, stages (design .tagpills). */
+function TagPillCluster({ items }: { items: (string | null | undefined)[] }) {
+  const list = items.filter((t): t is string => Boolean(t && t.trim()));
+  if (list.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {list.map((t, i) => (
+        <span
+          key={`${t}-${i}`}
+          className="inline-flex items-center whitespace-nowrap rounded-full bg-arcova-teal/10 px-3 py-[5px] text-[12.5px] font-semibold text-[#0a7b88]"
+        >
+          {t}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Products / Services / Technology — one bordered text row per entity (design .ent-row). */
+function EntityRows({ items }: { items: string[] }) {
+  return (
+    <div className="flex flex-col">
+      {items.map((t, i) => (
+        <p
+          key={`${t}-${i}`}
+          className="border-t border-[rgba(13,53,71,0.06)] py-2.5 text-[13px] leading-[1.45] text-[#0d3547] first:border-t-0 first:pt-0"
+        >
+          {t}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export default function CompaniesPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -660,7 +726,8 @@ export default function CompaniesPage() {
   // Details segments are UNFOLDED by default (matches /contacts). The user can
   // still collapse any segment; selecting a new account re-expands them.
   const ALL_DETAILS_EXPANDED = {
-    criteria: true,
+    about: true,
+    classification: true,
     firmographics: true,
     funding: true,
     products: true,
@@ -1792,10 +1859,27 @@ export default function CompaniesPage() {
                         : undefined
                     }
                   >
-                    {/* Panel header — matches the contact-card header on /contacts */}
-                    <div className="flex shrink-0 items-start gap-3 px-4 pb-3 pt-5 border-b border-[rgba(13,53,71,0.08)]">
-                      {/* Name / links (left) */}
-                      <div className="flex-1 min-w-0">
+                    {/* Panel header — logo leads, then eyebrow + name, close trails (design .dh).
+                        Mirrors the shipped /contacts header for cross-panel consistency. */}
+                    <div className="relative flex shrink-0 items-center gap-3 border-b border-[rgba(13,53,71,0.08)] px-4 pb-3.5 pt-[18px] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-0 before:h-24 before:bg-gradient-to-b before:from-[rgba(227,243,241,0.7)] before:via-[rgba(255,255,255,0.2)] before:to-transparent">
+                      {(selectedAccount.logo_cached || selectedAccount.logo_url) && !failedLogoByAccountId[selectedAccount.id] ? (
+                        <img
+                          src={selectedAccount.logo_cached ?? selectedAccount.logo_url ?? ''}
+                          alt=""
+                          className="relative z-[1] h-[3.375rem] w-[3.375rem] shrink-0 rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white object-contain p-1 shadow-sm ring-1 ring-black/5"
+                          onError={() =>
+                            setFailedLogoByAccountId((prev) => ({
+                              ...prev,
+                              [selectedAccount.id]: true,
+                            }))
+                          }
+                        />
+                      ) : (
+                        <div className="relative z-[1] flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white font-manrope text-2xl font-semibold text-arcova-teal shadow-sm ring-1 ring-black/5">
+                          {(selectedAccount.company_name?.[0] || selectedAccount.domain?.[0] || '?').toUpperCase()}
+                        </div>
+                      )}
+                      <div className="relative z-[1] min-w-0 flex-1">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
                           {panelMode === 'fit'
                             ? 'Fit'
@@ -1813,55 +1897,23 @@ export default function CompaniesPage() {
                                         ? 'CRM'
                                         : 'Company'}
                         </p>
-                        <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
+                        <h2 className="font-manrope mt-1 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[1.4375rem]">
                           {selectedAccount.company_name || selectedAccount.domain || 'Company'}
                         </h2>
-                        {(() => {
-                          const ext = externalUrl(selectedAccount);
-                          return (
-                            <div className="mt-1 space-y-1">
-                              {selectedAccount.domain && ext && (
-                                <a href={ext} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-arcova-teal hover:underline">
-                                  {selectedAccount.domain}<ExternalLink className="w-3 h-3 shrink-0" />
-                                </a>
-                              )}
-                              {selectedAccount.linkedin_url && (
-                                <a href={selectedAccount.linkedin_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-arcova-teal hover:underline">
-                                  {selectedAccount.linkedin_url.replace(/^https?:\/\/(www\.)?/, '')}<ExternalLink className="w-3 h-3 shrink-0" />
-                                </a>
-                              )}
-                            </div>
-                          );
-                        })()}
                       </div>
-                      {/* Logo + close (right, matches Leads company panel) */}
-                      <div className="flex items-start gap-2 shrink-0">
-                        {(selectedAccount.logo_cached || selectedAccount.logo_url) && !failedLogoByAccountId[selectedAccount.id] ? (
-                          <img
-                            src={selectedAccount.logo_cached ?? selectedAccount.logo_url ?? ''}
-                            alt=""
-                            className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
-                            onError={() =>
-                              setFailedLogoByAccountId((prev) => ({
-                                ...prev,
-                                [selectedAccount.id]: true,
-                              }))
-                            }
-                          />
-                        ) : (
-                          <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-400">
-                            {(selectedAccount.company_name?.[0] || selectedAccount.domain?.[0] || '?').toUpperCase()}
-                          </div>
-                        )}
-                        <button type="button" onClick={closePanel} className="text-gray-400 hover:text-gray-700 transition-colors" aria-label="Close">
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={closePanel}
+                        className="relative z-[1] grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px] border border-[rgba(13,53,71,0.08)] bg-white/70 text-[#7d909a] transition-colors hover:bg-white hover:text-[#0d3547]"
+                        aria-label="Close"
+                      >
+                        <X className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
                     </div>
 
                     {/* Peer tab strip — teal button style, matching /contacts.
                         Order: Details, Contacts, Fit, Priority, Signals, CRM, Action. */}
-                    <div className="relative z-[1] flex items-center gap-1 overflow-x-auto border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-3 py-1.5">
+                    <div className="relative z-[1] flex items-center gap-0.5 border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-2.5 py-2">
                       {([
                         { mode: 'details', label: 'Details' },
                         { mode: 'contacts', label: 'Contacts' },
@@ -1878,7 +1930,8 @@ export default function CompaniesPage() {
                             type="button"
                             onClick={() => setPanelMode(mode)}
                             className={cn(
-                              'shrink-0 rounded-md px-2 py-1 text-[11.5px] font-semibold transition-colors',
+                              // Equal-width tabs so all 7 fit without horizontal scroll (design .tabs)
+                              'min-w-0 flex-1 whitespace-nowrap rounded-[9px] px-1 py-1.5 text-center text-[11.5px] font-semibold transition-colors',
                               isActive
                                 ? 'bg-arcova-teal/10 text-arcova-teal'
                                 : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700',
@@ -1913,16 +1966,19 @@ export default function CompaniesPage() {
                           selectedAccount.company_name || selectedAccount.domain || 'This company';
                         const updatedAt = selectedAccount.last_enriched_at;
                         return (
-                          <div className="flex flex-col gap-3.5">
-                            {/* Action pill + timestamp — matches the /contacts action tab header */}
-                            <div className="flex flex-wrap items-center gap-2.5">
-                              <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-sm font-medium', config.className)}>
-                                {config.label}
-                              </span>
-                              {updatedAt ? (
-                                <span className="text-[11px] text-[#7d909a]">Updated {formatDate(updatedAt)}</span>
-                              ) : null}
-                            </div>
+                          <div className="flex flex-col gap-3">
+                            {/* Recommended action card — pill + updated + rationale (design "Recommended action") */}
+                            <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3.5 py-3.5 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                              <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Recommended action</p>
+                              <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+                                <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-sm font-medium', config.className)}>
+                                  {config.label}
+                                </span>
+                                {updatedAt ? (
+                                  <span className="text-[11px] text-[#7d909a]">Updated {formatDate(updatedAt)}</span>
+                                ) : null}
+                              </div>
+                              <div className="mt-3 space-y-3">
                             {action === 'monitor' &&
                               (isAccountMonitorAwaitingSignal(selectedAccount) ? (
                                 <div className="space-y-3">
@@ -2019,22 +2075,19 @@ export default function CompaniesPage() {
                                 </p>
                               </div>
                             )}
+                              </div>
+                            </div>
 
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
-                              <p className="text-xs font-semibold text-gray-700 mb-2">Fit snapshot</p>
-                              <div className="grid grid-cols-2 gap-3 text-sm">
-                                <div>
-                                  <p className="text-gray-400 text-xs">Company fit</p>
-                                  <p className="text-gray-900 font-semibold mt-0.5 tabular-nums">
-                                    {formatPct(selectedAccount.company_fit_score) ?? '—'}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-gray-400 text-xs">Best contact fit</p>
-                                  <p className="text-gray-900 font-semibold mt-0.5 tabular-nums">
-                                    {formatPct(selectedAccount.best_contact_fit) ?? '—'}
-                                  </p>
-                                </div>
+                            {/* Fit snapshot — supporting card (design card system) */}
+                            <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3.5 py-3.5 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                              <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Fit snapshot</p>
+                              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3.5">
+                                <EyebrowField label="Company fit">
+                                  {formatPct(selectedAccount.company_fit_score) ?? '—'}
+                                </EyebrowField>
+                                <EyebrowField label="Best contact fit">
+                                  {formatPct(selectedAccount.best_contact_fit) ?? '—'}
+                                </EyebrowField>
                               </div>
                             </div>
                           </div>
@@ -2043,20 +2096,6 @@ export default function CompaniesPage() {
 
                       {panelMode === 'details' && (() => {
                         const aboutText = selectedAccount.bio_summary || selectedAccount.description || null;
-                        const hasCriteria = !!(
-                          aboutText ||
-                          selectedAccount.tagline ||
-                          selectedAccount.company_type ||
-                          selectedAccount.industry ||
-                          selectedAccount.sub_industry ||
-                          selectedAccount.platform_category ||
-                          (selectedAccount.therapeutic_areas || []).length ||
-                          (selectedAccount.modalities || []).length ||
-                          (selectedAccount.development_stages || []).length ||
-                          (selectedAccount.customer_therapeutic_areas || []).length ||
-                          (selectedAccount.customer_modalities || []).length ||
-                          (selectedAccount.customer_development_stages || []).length
-                        );
                         const hasFirmographics = !!(
                           selectedAccount.employee_count != null ||
                           selectedAccount.employee_range ||
@@ -2142,174 +2181,133 @@ export default function CompaniesPage() {
                             {/* Data source / enrichment box is rendered at the BOTTOM of the
                                 Details tab (after all segments) — see below. */}
 
-                            {/* Criteria */}
-                            {hasCriteria && (
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                <button type="button" onClick={() => toggleDetail('criteria')}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors">
-                                  <span className="text-xs font-semibold text-gray-700">Criteria</span>
-                                  <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200', detailPanelOpen.criteria ? '' : '-rotate-90')} />
-                                </button>
-                                {detailPanelOpen.criteria && (
-                                  <div className="px-3 pb-3 space-y-3">
-                                    {aboutText && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Profile summary</p>
-                                        <p className="text-sm text-gray-700 leading-relaxed">{aboutText}</p>
-                                      </div>
-                                    )}
-                                    {selectedAccount.tagline && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Tagline</p>
-                                        <p className="text-sm text-gray-700 leading-relaxed">{selectedAccount.tagline}</p>
-                                      </div>
-                                    )}
-                                    {selectedAccount.company_type && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Company type</p>
-                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-1 text-sm font-medium text-arcova-teal">{selectedAccount.company_type}</span>
-                                      </div>
-                                    )}
-                                    {/* Raw Apollo `industry` intentionally hidden — it's free-text,
-                                        not an ICP/taxonomy criterion (company_type pill covers it). */}
-                                    {selectedAccount.sub_industry && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Sub-industry</p>
-                                        <p className="text-sm text-gray-700">{selectedAccount.sub_industry}</p>
-                                      </div>
-                                    )}
-                                    {selectedAccount.platform_category && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Platform category</p>
-                                        <p className="text-sm text-gray-700">{selectedAccount.platform_category}</p>
-                                      </div>
-                                    )}
-                                    {(selectedAccount.therapeutic_areas || []).length > 0 && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Therapeutic areas</p>
-                                        <TaxonomyPills items={selectedAccount.therapeutic_areas} />
-                                      </div>
-                                    )}
-                                    {(selectedAccount.modalities || []).length > 0 && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Modalities</p>
-                                        <TaxonomyPills items={selectedAccount.modalities} />
-                                      </div>
-                                    )}
-                                    {(selectedAccount.development_stages || []).length > 0 && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Development stage</p>
-                                        <TaxonomyPills items={selectedAccount.development_stages} />
-                                      </div>
-                                    )}
-                                    {/* Customer-facing taxonomy: who a CRO/vendor/services account serves.
-                                        Shown when the firm's own taxonomy above is empty (or alongside it). */}
-                                    {(selectedAccount.customer_therapeutic_areas || []).length > 0 && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Therapeutic areas served</p>
-                                        <TaxonomyPills items={selectedAccount.customer_therapeutic_areas} />
-                                      </div>
-                                    )}
-                                    {(selectedAccount.customer_modalities || []).length > 0 && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Modalities served</p>
-                                        <TaxonomyPills items={selectedAccount.customer_modalities} />
-                                      </div>
-                                    )}
-                                    {(selectedAccount.customer_development_stages || []).length > 0 && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Development stages served</p>
-                                        <TaxonomyPills items={selectedAccount.customer_development_stages} />
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
+                            {/* About — profile summary + tagline (design "About" card) */}
+                            {(aboutText || selectedAccount.tagline) && (
+                              <DetailCard title="About" open={detailPanelOpen.about} onToggle={() => toggleDetail('about')}>
+                                <div className="space-y-3">
+                                  {aboutText && (
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">{aboutText}</p>
+                                  )}
+                                  {selectedAccount.tagline && (
+                                    <EyebrowField label="Tagline">{selectedAccount.tagline}</EyebrowField>
+                                  )}
+                                </div>
+                              </DetailCard>
+                            )}
+
+                            {/* Classification — company type + taxonomy tag-pills (design "Classification" card) */}
+                            {(selectedAccount.company_type ||
+                              selectedAccount.sub_industry ||
+                              selectedAccount.platform_category ||
+                              (selectedAccount.therapeutic_areas || []).length > 0 ||
+                              (selectedAccount.modalities || []).length > 0 ||
+                              (selectedAccount.development_stages || []).length > 0 ||
+                              (selectedAccount.customer_therapeutic_areas || []).length > 0 ||
+                              (selectedAccount.customer_modalities || []).length > 0 ||
+                              (selectedAccount.customer_development_stages || []).length > 0) && (
+                              <DetailCard title="Classification" open={detailPanelOpen.classification} onToggle={() => toggleDetail('classification')}>
+                                <div className="space-y-3.5">
+                                  {selectedAccount.company_type && (
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Company type</p>
+                                      <TagPillCluster items={[selectedAccount.company_type]} />
+                                    </div>
+                                  )}
+                                  {/* Raw Apollo `industry` intentionally hidden — it's free-text,
+                                      not an ICP/taxonomy criterion (company_type pill covers it). */}
+                                  {selectedAccount.sub_industry && (
+                                    <EyebrowField label="Sub-industry">{selectedAccount.sub_industry}</EyebrowField>
+                                  )}
+                                  {selectedAccount.platform_category && (
+                                    <EyebrowField label="Platform category">{selectedAccount.platform_category}</EyebrowField>
+                                  )}
+                                  {(selectedAccount.therapeutic_areas || []).length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Therapeutic areas</p>
+                                      <TagPillCluster items={selectedAccount.therapeutic_areas || []} />
+                                    </div>
+                                  )}
+                                  {(selectedAccount.modalities || []).length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Modalities</p>
+                                      <TagPillCluster items={selectedAccount.modalities || []} />
+                                    </div>
+                                  )}
+                                  {(selectedAccount.development_stages || []).length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Development stage</p>
+                                      <TagPillCluster items={selectedAccount.development_stages || []} />
+                                    </div>
+                                  )}
+                                  {/* Customer-facing taxonomy: who a CRO/vendor/services account serves.
+                                      Shown when the firm's own taxonomy above is empty (or alongside it). */}
+                                  {(selectedAccount.customer_therapeutic_areas || []).length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Therapeutic areas served</p>
+                                      <TagPillCluster items={selectedAccount.customer_therapeutic_areas || []} />
+                                    </div>
+                                  )}
+                                  {(selectedAccount.customer_modalities || []).length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Modalities served</p>
+                                      <TagPillCluster items={selectedAccount.customer_modalities || []} />
+                                    </div>
+                                  )}
+                                  {(selectedAccount.customer_development_stages || []).length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#7d909a]">Development stages served</p>
+                                      <TagPillCluster items={selectedAccount.customer_development_stages || []} />
+                                    </div>
+                                  )}
+                                </div>
+                              </DetailCard>
                             )}
 
                             {/* Firmographics */}
                             {hasFirmographics && (
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                <button type="button" onClick={() => toggleDetail('firmographics')}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors">
-                                  <span className="text-xs font-semibold text-gray-700">Firmographics</span>
-                                  <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200', detailPanelOpen.firmographics ? '' : '-rotate-90')} />
-                                </button>
-                                {detailPanelOpen.firmographics && (
-                                  <div className="px-3 pb-3">
-                                    <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                                      {(selectedAccount.employee_count != null || selectedAccount.employee_range) && (
-                                        <div>
-                                          <p className="text-gray-400 text-xs">Employees</p>
-                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.employee_count != null ? selectedAccount.employee_count.toLocaleString() : selectedAccount.employee_range}</p>
-                                        </div>
-                                      )}
-                                      {/* Size bucket intentionally NOT shown here — it's an ICP
-                                          criterion, not an account firmographic. */}
-                                      {selectedAccount.founded_year != null && (
-                                        <div>
-                                          <p className="text-gray-400 text-xs">Founded</p>
-                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.founded_year}</p>
-                                        </div>
-                                      )}
-                                      {selectedAccount.headquarters_city && (
-                                        <div>
-                                          <p className="text-gray-400 text-xs">City</p>
-                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.headquarters_city}</p>
-                                        </div>
-                                      )}
-                                      {selectedAccount.headquarters_state && (
-                                        <div>
-                                          <p className="text-gray-400 text-xs">State</p>
-                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.headquarters_state}</p>
-                                        </div>
-                                      )}
-                                      {selectedAccount.headquarters_country && (
-                                        <div>
-                                          <p className="text-gray-400 text-xs">Country</p>
-                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.headquarters_country}</p>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
+                              <DetailCard title="Firmographics" open={detailPanelOpen.firmographics} onToggle={() => toggleDetail('firmographics')}>
+                                <div className="grid grid-cols-2 items-start gap-x-4 gap-y-3.5">
+                                  {(selectedAccount.employee_count != null || selectedAccount.employee_range) && (
+                                    <EyebrowField label="Employees">
+                                      {selectedAccount.employee_count != null ? selectedAccount.employee_count.toLocaleString() : selectedAccount.employee_range}
+                                    </EyebrowField>
+                                  )}
+                                  {/* Size bucket intentionally NOT shown here — it's an ICP
+                                      criterion, not an account firmographic. */}
+                                  {selectedAccount.founded_year != null && (
+                                    <EyebrowField label="Founded">{selectedAccount.founded_year}</EyebrowField>
+                                  )}
+                                  {selectedAccount.headquarters_city && (
+                                    <EyebrowField label="City">{selectedAccount.headquarters_city}</EyebrowField>
+                                  )}
+                                  {selectedAccount.headquarters_state && (
+                                    <EyebrowField label="State">{selectedAccount.headquarters_state}</EyebrowField>
+                                  )}
+                                  {selectedAccount.headquarters_country && (
+                                    <EyebrowField label="Country">{selectedAccount.headquarters_country}</EyebrowField>
+                                  )}
+                                </div>
+                              </DetailCard>
                             )}
 
                             {/* Funding */}
                             {hasFunding && (
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                <button type="button" onClick={() => toggleDetail('funding')}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors">
-                                  <span className="text-xs font-semibold text-gray-700">Funding</span>
-                                  <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200', detailPanelOpen.funding ? '' : '-rotate-90')} />
-                                </button>
-                                {detailPanelOpen.funding && (
-                                  <div className="px-3 pb-3 space-y-1.5">
-                                    {(selectedAccount.funding_stage || selectedAccount.funding_status_label) && (
-                                      <div className="flex items-baseline gap-2">
-                                        <span className="text-xs text-gray-400 w-24 shrink-0">Stage</span>
-                                        <span className="text-xs text-gray-900">{selectedAccount.funding_stage ?? selectedAccount.funding_status_label}</span>
-                                      </div>
-                                    )}
-                                    {selectedAccount.total_funding_usd != null && (
-                                      <div className="flex items-baseline gap-2">
-                                        <span className="text-xs text-gray-400 w-24 shrink-0">Total raised</span>
-                                        <span className="text-xs text-gray-900">{formatCurrencyShort(selectedAccount.total_funding_usd)}</span>
-                                      </div>
-                                    )}
-                                    {selectedAccount.latest_funding_date && (
-                                      <div className="flex items-baseline gap-2">
-                                        <span className="text-xs text-gray-400 w-24 shrink-0">Latest round</span>
-                                        <span className="text-xs text-gray-900">{formatDate(selectedAccount.latest_funding_date)}</span>
-                                      </div>
-                                    )}
-                                    {selectedAccount.funding_resolution_summary && (
-                                      <p className="text-xs text-gray-500 leading-snug pt-1">{selectedAccount.funding_resolution_summary}</p>
-                                    )}
-                                  </div>
+                              <DetailCard title="Funding" open={detailPanelOpen.funding} onToggle={() => toggleDetail('funding')}>
+                                <div className="grid grid-cols-2 items-start gap-x-4 gap-y-3.5">
+                                  {(selectedAccount.funding_stage || selectedAccount.funding_status_label) && (
+                                    <EyebrowField label="Stage">{selectedAccount.funding_stage ?? selectedAccount.funding_status_label}</EyebrowField>
+                                  )}
+                                  {selectedAccount.total_funding_usd != null && (
+                                    <EyebrowField label="Total raised">{formatCurrencyShort(selectedAccount.total_funding_usd)}</EyebrowField>
+                                  )}
+                                  {selectedAccount.latest_funding_date && (
+                                    <EyebrowField label="Latest round">{formatDate(selectedAccount.latest_funding_date)}</EyebrowField>
+                                  )}
+                                </div>
+                                {selectedAccount.funding_resolution_summary && (
+                                  <p className="mt-3.5 text-[13px] leading-[1.55] text-[#4a6470]">{selectedAccount.funding_resolution_summary}</p>
                                 )}
-                              </div>
+                              </DetailCard>
                             )}
 
                             {/* Products */}
@@ -2319,63 +2317,24 @@ export default function CompaniesPage() {
                               if (!hasProducts && !hasSpecialties) return null;
                               const items = hasProducts ? selectedAccount.products_services! : selectedAccount.specialties!;
                               return (
-                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                  <button type="button" onClick={() => toggleDetail('products')}
-                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors">
-                                    <span className="text-xs font-semibold text-gray-700">Products</span>
-                                    <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200', detailPanelOpen.products ? '' : '-rotate-90')} />
-                                  </button>
-                                  {detailPanelOpen.products && (
-                                    <div className="px-3 pb-3">
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {items.map((p, i) => (
-                                          <span key={i} className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">{p}</span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
+                                <DetailCard title="Products" open={detailPanelOpen.products} onToggle={() => toggleDetail('products')}>
+                                  <EntityRows items={items} />
+                                </DetailCard>
                               );
                             })()}
 
                             {/* Services */}
                             {(selectedAccount.services?.length ?? 0) > 0 && (
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                <button type="button" onClick={() => toggleDetail('services')}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors">
-                                  <span className="text-xs font-semibold text-gray-700">Services</span>
-                                  <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200', detailPanelOpen.services ? '' : '-rotate-90')} />
-                                </button>
-                                {detailPanelOpen.services && (
-                                  <div className="px-3 pb-3">
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {selectedAccount.services!.map((s, i) => (
-                                        <span key={i} className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">{s}</span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
+                              <DetailCard title="Services" open={detailPanelOpen.services} onToggle={() => toggleDetail('services')}>
+                                <EntityRows items={selectedAccount.services!} />
+                              </DetailCard>
                             )}
 
                             {/* Technology */}
                             {(selectedAccount.technologies?.length ?? 0) > 0 && (
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                <button type="button" onClick={() => toggleDetail('technology')}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors">
-                                  <span className="text-xs font-semibold text-gray-700">Technology</span>
-                                  <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200', detailPanelOpen.technology ? '' : '-rotate-90')} />
-                                </button>
-                                {detailPanelOpen.technology && (
-                                  <div className="px-3 pb-3">
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {selectedAccount.technologies!.map((t, i) => (
-                                        <span key={i} className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">{t}</span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
+                              <DetailCard title="Technology" open={detailPanelOpen.technology} onToggle={() => toggleDetail('technology')}>
+                                <EntityRows items={selectedAccount.technologies!} />
+                              </DetailCard>
                             )}
 
                             {/* Data source / enrichment box — pinned to the BOTTOM of the
@@ -2544,31 +2503,31 @@ export default function CompaniesPage() {
                                 return (
                                   <div
                                     key={contact.id}
-                                    className="rounded-xl border border-arcova-teal/20 bg-gray-50/60 overflow-hidden"
+                                    className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]"
                                   >
-                                    {/* Contact header */}
-                                    <div className="px-3 py-2.5">
-                                      <div className="flex items-start justify-between gap-2">
+                                    {/* Contact header (design .cocard) */}
+                                    <div className="px-3.5 py-3.5">
+                                      <div className="flex items-start justify-between gap-2.5">
                                         <div className="min-w-0">
-                                          <p className="text-sm font-medium text-gray-900 truncate">{contact.full_name || '—'}</p>
-                                          {title && <p className="text-xs text-gray-500 truncate mt-0.5">{title}</p>}
-                                          {contact.email && <p className="text-xs text-gray-400 truncate mt-0.5">{contact.email}</p>}
+                                          <p className="truncate font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">{contact.full_name || '—'}</p>
+                                          {title && <p className="mt-0.5 text-[12.5px] leading-[1.35] text-[#4a6470]">{title}</p>}
+                                          {contact.email && <p className="mt-1 break-all text-[12.5px] text-[#7d909a]">{contact.email}</p>}
                                         </div>
                                         {fitPct && (
-                                          <span className="text-sm font-semibold tabular-nums text-gray-900 shrink-0">{fitPct}</span>
+                                          <span className="shrink-0 font-manrope text-base font-bold tabular-nums text-[#0d3547]">{fitPct}</span>
                                         )}
                                       </div>
                                       <button
                                         type="button"
                                         onClick={() => router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(contact.id)}`))}
-                                        className="mt-2 inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
+                                        className="mt-3 inline-flex items-center rounded-[9px] border border-arcova-teal/30 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10"
                                       >
                                         View contact
                                       </button>
                                     </div>
 
                                     {/* Fit breakdown — always visible */}
-                                    <div className="border-t border-gray-100 px-3 py-3 space-y-2.5">
+                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-3.5 py-3.5 space-y-2.5">
                                       {fitLoading ? (
                                         <p className="text-xs text-gray-400">Loading fit…</p>
                                       ) : fit?.winning_breakdown ? (
@@ -2624,6 +2583,7 @@ export default function CompaniesPage() {
                       {panelMode === 'signals' && (
                         <EntitySignalsList
                           companyId={selectedAccount.id}
+                          grouped
                           effectiveReadinessScore={selectedAccount.readiness_score ?? null}
                           crmCappedReason={(() => {
                             const companyLabel = selectedAccount.company_name || 'This company';
@@ -2645,10 +2605,16 @@ export default function CompaniesPage() {
 
                       {panelMode === 'crm' && (
                         <div className="space-y-4">
-                          <div className="space-y-2">
+                          <div className="space-y-1.5">
                             <div className="flex items-center gap-2">
                               <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[#ff7a59]" />
-                              <h2 className="text-lg font-semibold leading-tight text-gray-900">HubSpot CRM</h2>
+                              <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">HubSpot CRM</span>
+                              {hubspotCrmPanel.data?.deals.length ? (
+                                <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-[#7d909a]">
+                                  <span className="inline-flex h-[7px] w-[7px] rounded-full bg-[#2d8a8a]" />
+                                  Connected
+                                </span>
+                              ) : null}
                             </div>
                             <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
                               Every HubSpot deal tied to a contact at this company, rolled up in one view.
@@ -2680,7 +2646,7 @@ export default function CompaniesPage() {
                                   >
                                     <div className="flex items-start justify-between gap-3">
                                       <div className="min-w-0">
-                                        <p className="text-base font-semibold text-[#0d3547]">
+                                        <p className="font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                           {deal.deal_name || 'HubSpot deal'}
                                         </p>
                                         <p className="mt-1 text-xs text-[#7d909a]">
@@ -2690,7 +2656,7 @@ export default function CompaniesPage() {
                                           </span>
                                         </p>
                                       </div>
-                                      <span className="inline-flex shrink-0 items-center rounded-full border border-[rgba(13,53,71,0.10)] bg-[rgba(13,53,71,0.04)] px-2 py-0.5 text-[11px] font-medium text-[#4a6470]">
+                                      <span className="inline-flex shrink-0 items-center rounded-full bg-[#fff1ec] px-2.5 py-1 text-[11px] font-semibold text-[#cc5b3f]">
                                         {stageLabel}
                                       </span>
                                     </div>
@@ -2774,27 +2740,33 @@ export default function CompaniesPage() {
                           return v > 1 ? v / 100 : v;
                         })();
                         const readinessNorm = selectedAccount.readiness_score ?? null;
-                        const rawReadinessNorm = selectedAccount.raw_readiness_score ?? selectedAccount.readiness_score ?? null;
                         const priorityNorm = selectedAccount.priority_score ?? null;
+                        const bestContactFitNorm = selectedAccount.best_contact_fit ?? null;
                         const priorityPct = percentDisplayNumber(priorityNorm);
                         const fitPct = percentDisplayNumber(fitNorm);
                         const readinessPct = percentDisplayNumber(readinessNorm);
-                        const rawReadinessPct = percentDisplayNumber(rawReadinessNorm);
+                        const bestContactFitPct = percentDisplayNumber(bestContactFitNorm);
+                        // Design score-row: mini ring + label + chevron, rows divided inside one card.
                         const ScoreRow = ({
                           label,
                           pct,
                           arcColor,
                           onOpen,
+                          divider,
                         }: {
                           label: string;
                           pct: number | null;
                           arcColor: string;
                           onOpen: () => void;
+                          divider?: boolean;
                         }) => (
                           <button
                             type="button"
                             onClick={onOpen}
-                            className="w-full rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 flex items-center gap-4 text-left transition-colors hover:bg-arcova-teal/5"
+                            className={cn(
+                              'flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-white/70',
+                              divider && 'border-t border-[rgba(13,53,71,0.06)]',
+                            )}
                           >
                             <AnimatedCircularProgressBar
                               value={pct ?? 0}
@@ -2803,26 +2775,20 @@ export default function CompaniesPage() {
                               animateOnMount
                               deferAnimationMs={160}
                               label={
-                                <span className="block text-xs font-semibold text-gray-800 leading-snug tabular-nums">
+                                <span className="block text-[11px] font-bold leading-snug tabular-nums text-[#0d3547]">
                                   {pct != null ? pct : '—'}
                                 </span>
                               }
-                              className="size-12 shrink-0 [--transition-length:0.95s]"
+                              className="size-9 shrink-0 [--transition-length:0.95s]"
                             />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
-                                {label}
-                              </p>
-                              <p className="mt-1 text-[11px] font-semibold text-arcova-teal">
-                                See details →
-                              </p>
-                            </div>
+                            <span className="flex-1 text-[13.5px] font-semibold text-[#0d3547]">{label}</span>
+                            <ChevronRight className="h-4 w-4 shrink-0 text-[#b6c2c8]" aria-hidden />
                           </button>
                         );
                         return (
                           <div className="space-y-3">
-                            {/* Priority — large gauge, number only */}
-                            <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-6">
+                            {/* Priority — large gauge hero with caption + supporting line */}
+                            <div className="flex flex-col items-center justify-center rounded-[14px] border border-[rgba(13,53,71,0.06)] bg-[rgba(246,250,250,0.7)] px-4 py-6 text-center">
                               <AnimatedCircularProgressBar
                                 value={priorityPct ?? 0}
                                 gaugePrimaryColor={priorityScoreArcColor(priorityPct)}
@@ -2830,29 +2796,43 @@ export default function CompaniesPage() {
                                 animateOnMount
                                 deferAnimationMs={160}
                                 label={
-                                  <span className="block text-xl font-semibold text-[#0d3547] leading-snug tabular-nums">
+                                  <span className="block text-xl font-semibold leading-snug tabular-nums text-[#0d3547]">
                                     {priorityPct != null ? priorityPct : '—'}
                                   </span>
                                 }
                                 className="size-24 [--transition-length:0.95s]"
                               />
-                              <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                              <p className="mt-3 font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                 Priority score
+                              </p>
+                              <p className="mt-2 text-[12.5px] leading-[1.55] text-[#1f475a]">
+                                Priority blends this company&apos;s fit with its best mapped contact and live readiness signals.
                               </p>
                             </div>
 
-                            <ScoreRow
-                              label="Fit score"
-                              pct={fitPct}
-                              arcColor={fitScoreArcColor(fitPct)}
-                              onOpen={() => setPanelMode('fit')}
-                            />
-                            <ScoreRow
-                              label="Signal readiness"
-                              pct={readinessPct}
-                              arcColor={fitScoreArcColor(readinessPct)}
-                              onOpen={() => setPanelMode('signals')}
-                            />
+                            {/* Score breakdown — fit / best contact fit / readiness, one card */}
+                            <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                              <ScoreRow
+                                label="Company fit"
+                                pct={fitPct}
+                                arcColor={fitScoreArcColor(fitPct)}
+                                onOpen={() => setPanelMode('fit')}
+                              />
+                              <ScoreRow
+                                label="Best contact fit"
+                                pct={bestContactFitPct}
+                                arcColor={fitScoreArcColor(bestContactFitPct)}
+                                onOpen={() => setPanelMode('contacts')}
+                                divider
+                              />
+                              <ScoreRow
+                                label="Readiness score"
+                                pct={readinessPct}
+                                arcColor={fitScoreArcColor(readinessPct)}
+                                onOpen={() => setPanelMode('signals')}
+                                divider
+                              />
+                            </div>
                           </div>
                         );
                       })()}
