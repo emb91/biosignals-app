@@ -61,7 +61,7 @@ export async function findPendingTriageRowForOrg(
     .eq('id', id)
     .eq('org_id', orgId)
     .in('status', PENDING_TRIAGE_STATUSES)
-    .maybeSingle<{ id: string; org_id: string | null }>();
+    .maybeSingle();
 
   return {
     data: (data as { id: string; org_id: string | null } | null) ?? null,
