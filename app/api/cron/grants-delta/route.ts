@@ -1,11 +1,10 @@
 /**
- * Daily NIH grants delta sync + per-user grants monitor — Vercel cron entrypoint.
+ * NIH grants delta sync + shared target subscriber monitor — Vercel cron entrypoint.
  *
  * Step 1: pull the last N days (default 14) of NIH RePORTER awards into the
  *         local nih_grants_local mirror.
- * Step 2: walk every user with non-archived companies and run runGrantsMonitor
- *         against the fresh mirror so signals land in their feeds without
- *         them having to press the admin test button.
+ * Step 2: dispatch due subscribers of active shared targets by plan cadence,
+ *         then run runGrantsMonitor against the fresh mirror.
  *
  * Per-user monitor failures are isolated — one user's failure doesn't block
  * the others.
@@ -13,7 +12,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runGrantsMonitor } from '@/lib/signals/run-grants-monitor';
 import { syncNihGrantsDelta } from '@/lib/signals/sync-nih-grants-delta';
@@ -44,10 +42,6 @@ async function runCron(request: Request) {
     const overlapDays = overlapDaysRaw ? Math.max(1, Math.trunc(Number(overlapDaysRaw) || 14)) : 14;
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.GRANTS_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-      searchParams,
-      envName: 'GRANTS_REFRESH_MONITORING_UNIVERSE',
-    });
     const targets = await listDueAccountSweepTargets({ source: 'grants', limit: dispatcherLimit });
     const subscribers = await accountSweepSubscribersForTargets({
       companyIds: targets.map((target) => target.companyId),
@@ -160,7 +154,6 @@ async function runCron(request: Request) {
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
       unmarked_targets: unmarkedCompanies.size,
-      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,

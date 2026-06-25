@@ -1,9 +1,9 @@
 /**
- * Weekly FDA delta sync + per-user monitor — Vercel cron entrypoint.
+ * FDA delta sync + shared target subscriber monitor — Vercel cron entrypoint.
  *
  * Same pattern as patents-delta: pulls fresh drugsfda / 510k / PMA into the
- * local mirrors, then runs runFdaRegulatoryMonitor for every user with
- * non-archived companies.
+ * local mirrors, then runs runFdaRegulatoryMonitor for due subscribers of
+ * active shared targets.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
@@ -11,7 +11,6 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runFdaRegulatoryMonitor } from '@/lib/signals/run-fda-regulatory-monitor';
 import { syncFdaDelta } from '@/lib/signals/sync-fda-delta';
 import { observeCron } from '@/lib/cron-observability';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { markAccountSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   accountSweepSubscribersForTargets,
@@ -34,13 +33,8 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   try {
-    const { searchParams } = new URL(request.url);
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.FDA_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-      searchParams,
-      envName: 'FDA_REFRESH_MONITORING_UNIVERSE',
-    });
     const targets = await listDueAccountSweepTargets({ source: 'fda_regulatory', limit: dispatcherLimit });
     const subscribers = await accountSweepSubscribersForTargets({
       companyIds: targets.map((target) => target.companyId),
@@ -152,7 +146,6 @@ async function runCron(request: Request) {
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
       unmarked_targets: unmarkedCompanies.size,
-      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,

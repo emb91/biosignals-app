@@ -1,18 +1,17 @@
 /**
- * Conference social-intent sync + per-user social monitor — Vercel cron.
+ * Conference social-intent sync + shared target subscriber monitor — Vercel cron.
  *
  * Step 1: sweep each in-window conference's LinkedIn hashtag(s) into
  *         conference_social_attendees_local (syncConferenceSocialDelta) — windowed,
  *         confidence-filtered, cost-capped. Standalone from profile enrichment.
- * Step 2: walk every active user and, when due (monitorDueForUser, runner
- *         'conference-social'), run the contact-scoped runConferenceSocialMonitor.
+ * Step 2: dispatch due subscribers of active shared targets by plan cadence,
+ *         then run the contact-scoped runConferenceSocialMonitor.
  *
  * Mirrors app/api/cron/conference-delta/route.ts. Per-user failures isolated.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runConferenceSocialMonitor } from '@/lib/signals/conference/social/run-social-monitor';
 import { syncConferenceSocialDelta } from '@/lib/signals/conference/social/sync-social-delta';
@@ -38,13 +37,8 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   try {
-    const { searchParams } = new URL(request.url);
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.CONFERENCE_SOCIAL_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-      searchParams,
-      envName: 'CONFERENCE_SOCIAL_REFRESH_MONITORING_UNIVERSE',
-    });
     const targets = await listDueContactSweepTargets({ source: 'conference_social', limit: dispatcherLimit });
     const subscribers = await contactSweepSubscribersForTargets({
       personIds: targets.map((target) => target.personId),
@@ -153,7 +147,6 @@ async function runCron(request: Request) {
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
       unmarked_targets: unmarkedPersons.size,
-      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,

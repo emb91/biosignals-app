@@ -1,19 +1,17 @@
 /**
- * Conference exhibitor delta sync + per-user conference monitor — Vercel cron.
+ * Conference exhibitor delta sync + shared target subscriber monitor — Vercel cron.
  *
  * Step 1: refresh the shared conference_exhibitors_local mirror from each active
  *         conference's platform adapter (syncConferenceDelta), resolving
  *         exhibitor names to canonical companies once.
- * Step 2: walk every user with active companies and, when their plan cadence is
- *         due (monitorDueForUser, runner 'conferences' — growth weekly /
- *         starter+free monthly), run runConferenceMonitor against the mirror.
+ * Step 2: dispatch due subscribers of active shared targets according to plan
+ *         cadence, then run runConferenceMonitor against the mirror.
  *
  * Per-user failures are isolated. Mirrors app/api/cron/grants-delta/route.ts.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runConferenceMonitor } from '@/lib/signals/conference/run-conference-monitor';
 import { syncConferenceDelta } from '@/lib/signals/conference/sync-conference-delta';
@@ -39,13 +37,8 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   try {
-    const { searchParams } = new URL(request.url);
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.CONFERENCE_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-      searchParams,
-      envName: 'CONFERENCE_REFRESH_MONITORING_UNIVERSE',
-    });
     const targets = await listDueAccountSweepTargets({ source: 'conferences', limit: dispatcherLimit });
     const subscribers = await accountSweepSubscribersForTargets({
       companyIds: targets.map((target) => target.companyId),
@@ -160,7 +153,6 @@ async function runCron(request: Request) {
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
       unmarked_targets: unmarkedCompanies.size,
-      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,

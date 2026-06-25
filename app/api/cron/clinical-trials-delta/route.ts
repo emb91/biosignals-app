@@ -1,8 +1,8 @@
 /**
- * Daily clinical-trials delta sync + per-user monitor — Vercel cron entrypoint.
+ * Clinical-trials delta sync + shared target subscriber monitor — Vercel cron entrypoint.
  *
  * Pulls recently-updated trials into the local clinical_trials mirror, then
- * runs runClinicalTrialsMonitor for every user with non-archived companies.
+ * runs runClinicalTrialsMonitor for due subscribers of active shared targets.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
@@ -10,7 +10,6 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { runClinicalTrialsMonitor } from '@/lib/signals/run-clinical-trials-monitor';
 import { syncCtDelta } from '@/lib/signals/sync-ct-delta';
 import { observeCron } from '@/lib/cron-observability';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { markAccountSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   accountSweepSubscribersForTargets,
@@ -40,10 +39,6 @@ async function runCron(request: Request) {
       : undefined;
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.CLINICAL_TRIALS_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-      searchParams,
-      envName: 'CLINICAL_TRIALS_REFRESH_MONITORING_UNIVERSE',
-    });
     const targets = await listDueAccountSweepTargets({ source: 'clinical_trials', limit: dispatcherLimit });
     const subscribers = await accountSweepSubscribersForTargets({
       companyIds: targets.map((target) => target.companyId),
@@ -156,7 +151,6 @@ async function runCron(request: Request) {
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
       unmarked_targets: unmarkedCompanies.size,
-      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,
