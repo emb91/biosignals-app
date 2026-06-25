@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent, type ReactNode } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentLeadsFilter, type AgentPendingMessage } from '@/components/AgentPanel';
 import { AgentChatBar } from '@/components/AgentChatBar';
@@ -3338,22 +3338,6 @@ export function ContactsWorkspace() {
     );
   };
 
-  const buildActionContactFitCriteria = (): ActionFitCriterion[] => {
-    const fitBreakdown = selectedContactFit?.winning_breakdown;
-    if (!fitBreakdown) return [];
-    const out: ActionFitCriterion[] = [];
-    for (const key of CONTACT_FIT_COMPONENT_ORDER) {
-      const c = fitBreakdown.components[key];
-      if (!c?.active) continue;
-      out.push({
-        ok: score01ToFitOk(c.score01, c.matchStatus ?? null),
-        text: c.label,
-        val: formatPercentValue(c.score01) ?? '—',
-      });
-    }
-    return out;
-  };
-
   const renderOverallFitActionCard = () => {
     const overall =
       selectedLead &&
@@ -5429,9 +5413,6 @@ export function ContactsWorkspace() {
                               [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
                               selectedLead.full_name;
 
-                            const contactLoading = Boolean(selectedContactFitState?.loading);
-                            const contactCriteria = contactLoading ? [] : buildActionContactFitCriteria();
-
                             const actionConfig = LEAD_ACTION_PILL_CLASS[action];
                             const updatedIso =
                               selectedContactFit?.contact_fit_scored_at ??
@@ -5440,75 +5421,74 @@ export function ContactsWorkspace() {
                               null;
                             const updatedRel = actionDrawerRelativeTime(updatedIso);
 
-                            return (
-                              <div className="flex flex-col gap-3.5">
-                                {/* Action pill + timestamp */}
-                                <div className="flex flex-wrap items-center gap-2.5">
-                                  <span
-                                    className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${actionConfig.className}`}
-                                  >
-                                    {actionConfig.label}
-                                  </span>
-                                  {updatedRel ? (
-                                    <span className="text-[11px] text-[#7d909a]">Updated {updatedRel}</span>
-                                  ) : null}
-                                </div>
-                                {/* Action explanation */}
-                                {action === 'monitor' &&
-                                  (isLeadReadyAwaitingContactSignal(selectedLead) ? (
-                                    <div className="space-y-3">
-                                      <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                            // Per-action content mapped into the design's two-card layout
+                            // (Recommended action + Why this action). All states, conditions,
+                            // CTAs and handlers are preserved — only the presentation changed.
+                            const navyCta =
+                              'inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition hover:brightness-110';
+                            const detail: { lede: ReactNode; cta?: ReactNode; why?: ReactNode } = (() => {
+                              if (action === 'monitor') {
+                                if (isLeadReadyAwaitingContactSignal(selectedLead)) {
+                                  return {
+                                    lede: (
+                                      <>
                                         {contactName ? `${contactName} is` : 'This lead is'} a strong match on both the
                                         company and the persona. Keep the account on your radar and wait for a buying
                                         signal before reaching out.
-                                      </p>
-                                    </div>
-                                  ) : (
-                                    <div className="space-y-3">
-                                      <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
-                                        {contactName ? `${contactName} sits` : 'This lead sits'} in the watch band:
-                                        company fit is promising but not yet high enough for sourcing the ideal persona.
-                                        Keep the account visible and revisit when enrichment or the company moves.
-                                      </p>
-                                      <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                        <button
-                                          type="button"
-                                          onClick={() => router.push(ROUTES.contacts)}
-                                          className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
-                                        >
-                                          View Signals
-                                          <ChevronRight className="w-4 h-4" aria-hidden />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))}
-
-                                {action === 'reach_out' && (
-                                  <div className="space-y-3">
-                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
-                                      This contact has a strong fit and at least one tracked buying signal. It is a
-                                      good moment for personalised outreach.
-                                    </p>
-                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      </>
+                                    ),
+                                  };
+                                }
+                                return {
+                                  lede: (
+                                    <>
+                                      {contactName ? `${contactName} sits` : 'This lead sits'} in the watch band: company
+                                      fit is promising but not yet high enough for sourcing the ideal persona. Keep the
+                                      account visible and revisit when enrichment or the company moves.
+                                    </>
+                                  ),
+                                  cta: (
+                                    <button
+                                      type="button"
+                                      onClick={() => router.push(ROUTES.contacts)}
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                    >
+                                      View Signals
+                                      <ChevronRight className="h-4 w-4" aria-hidden />
+                                    </button>
+                                  ),
+                                };
+                              }
+                              if (action === 'reach_out') {
+                                return {
+                                  lede: (
+                                    <>
+                                      This contact has a strong fit and at least one tracked buying signal. It is a good
+                                      moment for personalised outreach.
+                                    </>
+                                  ),
+                                  why: (
+                                    <>
                                       Lead with relevance to their role and therapeutic focus, and tie your message to
                                       signals or milestones when you can.
-                                    </p>
-                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                      <button
-                                        type="button"
-                                        onClick={() => setSelectedPreview('outreach')}
-                                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
-                                      >
-                                        Generate outreach sequence
-                                        <ChevronRight className="w-4 h-4" aria-hidden />
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {action === 'source_contact' && (
-                                  <div className="space-y-3">
-                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                    </>
+                                  ),
+                                  cta: (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedPreview('outreach')}
+                                      className={navyCta}
+                                    >
+                                      Generate outreach sequence
+                                      <ChevronRight className="h-4 w-4" aria-hidden />
+                                    </button>
+                                  ),
+                                };
+                              }
+                              if (action === 'source_contact') {
+                                return {
+                                  lede: (
+                                    <>
                                       {selectedLead.companies?.company_name ? (
                                         <>
                                           <strong>{selectedLead.companies.company_name}</strong> is a strong ICP fit
@@ -5516,107 +5496,145 @@ export function ContactsWorkspace() {
                                       ) : (
                                         'The company is a strong ICP fit'
                                       )}
-                                      , but {contactName || 'this contact'} isn&apos;t the right persona to approach
-                                      this account. Source a better-matched contact before you reach out.
-                                    </p>
-                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      , but {contactName || 'this contact'} isn&apos;t the right persona to approach this
+                                      account. Source a better-matched contact before you reach out.
+                                    </>
+                                  ),
+                                  why: (
+                                    <>
                                       Open the Data page to request more contacts for this account. This company and ICP
                                       context are passed through so the agent can help you queue the right acquisition
                                       job.
+                                    </>
+                                  ),
+                                  cta: selectedLead.company_id ? (
+                                    <button
+                                      type="button"
+                                      onClick={openContactAcquisitionFromLead}
+                                      className={navyCta}
+                                    >
+                                      <Users className="h-4 w-4 shrink-0" aria-hidden />
+                                      Find buyer-persona contacts
+                                    </button>
+                                  ) : (
+                                    <p className="text-[13px] leading-snug text-amber-800">
+                                      This contact is not linked to a company record yet, so we cannot start a data
+                                      request. Link or enrich the company first, then return here.
                                     </p>
-                                    {selectedLead.company_id ? (
-                                      <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                        <button
-                                          type="button"
-                                          onClick={openContactAcquisitionFromLead}
-                                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
-                                        >
-                                          <Users className="h-4 w-4 shrink-0" aria-hidden />
-                                          Find buyer-persona contacts
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <p className="text-[13px] leading-snug text-amber-800">
-                                        This contact is not linked to a company record yet, so we cannot start a data
-                                        request. Link or enrich the company first, then return here.
-                                      </p>
-                                    )}
-                                  </div>
-                                )}
-
-                                {action === 'send_outreach' && (
-                                  <div className="space-y-3">
-                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                  ),
+                                };
+                              }
+                              if (action === 'send_outreach') {
+                                return {
+                                  lede: (
+                                    <>
                                       An outreach sequence is staged for {contactName || 'this contact'} but hasn&apos;t
-                                      been sent yet. Go to the outreach tab and send it when you&apos;re ready.
-                                    </p>
-                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                      <button
-                                        type="button"
-                                        onClick={() => router.push(ROUTES.outreach)}
-                                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
-                                      >
-                                        Open outreach
-                                        <ChevronRight className="w-4 h-4" aria-hidden />
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {action === 'await_reply' && (
-                                  <div className="space-y-3">
-                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      been sent yet. Review the draft and send it when you&apos;re ready.
+                                    </>
+                                  ),
+                                  cta: (
+                                    <button
+                                      type="button"
+                                      onClick={() => router.push(ROUTES.outreach)}
+                                      className={navyCta}
+                                    >
+                                      Open outreach
+                                      <ChevronRight className="h-4 w-4" aria-hidden />
+                                    </button>
+                                  ),
+                                };
+                              }
+                              if (action === 'await_reply') {
+                                return {
+                                  lede: (
+                                    <>
                                       Outreach has been sent to {contactName || 'this contact'}. Waiting on a reply — no
                                       action needed right now.
-                                    </p>
-                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
-                                      If they reply we&apos;ll surface it; if the deal closes or is lost in your CRM,
-                                      this action will flip to Deprioritise automatically.
-                                    </p>
-                                  </div>
-                                )}
-
-                                {action === 'deprioritize' && (
-                                  <div className="space-y-3">
-                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
-                                      Company or contact fit sits below your thresholds. Leave this one aside for now.
-                                    </p>
-                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                    </>
+                                  ),
+                                  why: (
+                                    <>
+                                      If they reply we&apos;ll surface it; if the deal closes or is lost in your CRM, this
+                                      action will flip to Deprioritise automatically.
+                                    </>
+                                  ),
+                                };
+                              }
+                              if (action === 'deprioritize') {
+                                return {
+                                  lede: (
+                                    <>Company or contact fit sits below your thresholds. Leave this one aside for now.</>
+                                  ),
+                                  why: (
+                                    <>
                                       This doesn&apos;t mean they are permanently out. If their company situation changes
                                       or you revisit your ICP criteria, they may score higher in a future run.
-                                    </p>
+                                    </>
+                                  ),
+                                };
+                              }
+                              if (action === 'fix') {
+                                const reason = contactSyncIssueReason(selectedLead);
+                                return {
+                                  lede: (
+                                    <>
+                                      {contactName || 'This contact'} can&apos;t be synced to HubSpot yet because{' '}
+                                      {reason === 'no_email'
+                                        ? 'they have no email address on file'
+                                        : 'their email address looks invalid'}
+                                      . Add a valid work email (e.g. name@company.com) to unblock CRM sync and outreach.
+                                    </>
+                                  ),
+                                  cta: (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedPreview('contact');
+                                        startEditingLead(selectedLead);
+                                      }}
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#e8a07e] bg-white px-4 py-2.5 text-sm font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
+                                    >
+                                      Edit contact email
+                                      <ChevronRight className="h-4 w-4" aria-hidden />
+                                    </button>
+                                  ),
+                                };
+                              }
+                              return { lede: null };
+                            })();
+
+                            return (
+                              <div className="space-y-3">
+                                {/* Recommended action — pill + lede + CTA in one card (design TabAction) */}
+                                <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] p-3.5 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                  <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
+                                    Recommended action
+                                  </p>
+                                  <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+                                    <span
+                                      className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${actionConfig.className}`}
+                                    >
+                                      {actionConfig.label}
+                                    </span>
+                                    {updatedRel ? (
+                                      <span className="text-[11px] text-[#7d909a]">Updated {updatedRel}</span>
+                                    ) : null}
                                   </div>
-                                )}
+                                  {detail.lede ? (
+                                    <p className="mt-3 text-[13.5px] leading-[1.55] text-[#0d3547]">{detail.lede}</p>
+                                  ) : null}
+                                  {detail.cta ? <div className="mt-3.5">{detail.cta}</div> : null}
+                                </div>
 
-                                {action === 'fix' && (() => {
-                                  const reason = contactSyncIssueReason(selectedLead);
-                                  return (
-                                    <div className="space-y-3">
-                                      <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
-                                        {contactName || 'This contact'} can&apos;t be synced to HubSpot yet because{' '}
-                                        {reason === 'no_email'
-                                          ? 'they have no email address on file'
-                                          : 'their email address looks invalid'}
-                                        . Add a valid work email (e.g. name@company.com) to unblock CRM sync and
-                                        outreach.
-                                      </p>
-                                      <div className="rounded-xl border border-[#f6c3ac] bg-[#ffe7dd]/40 p-4">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setSelectedPreview('contact');
-                                            startEditingLead(selectedLead);
-                                          }}
-                                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#e8a07e] bg-white px-4 py-2.5 text-sm font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
-                                        >
-                                          Edit contact email
-                                          <ChevronRight className="w-4 h-4" aria-hidden />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
-
+                                {/* Why this action — secondary rationale in its own card */}
+                                {detail.why ? (
+                                  <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] p-3.5 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                    <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
+                                      Why this action
+                                    </p>
+                                    <p className="mt-2.5 text-[13.5px] leading-[1.55] text-[#4a6470]">{detail.why}</p>
+                                  </div>
+                                ) : null}
                               </div>
                             );
                           })()
