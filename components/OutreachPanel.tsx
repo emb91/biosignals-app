@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Copy, Check, ChevronLeft, Send, Linkedin, Mail, UserPlus } from 'lucide-react';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
+import { useCreditConfirm } from '@/context/CreditConfirmContext';
 
 // Hooks are deterministic for a given contact + day (signal events flow in
 // at most daily). Cache for 24h — the "Re-query" button bypasses the cache
@@ -164,6 +165,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // multi-step channel selection + lemlist dispatch.
   const [staging, setStaging] = useState(false);
   const router = useRouter();
+  const confirmCredits = useCreditConfirm();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -230,7 +232,14 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // when the rep deliberately generates for a not-ready contact).
   const generateSequence = useCallback(
     async (override: boolean) => {
-      if (!window.confirm('Generate this outreach sequence for 5 credits?')) return;
+      const ok = await confirmCredits({
+        title: 'Generate outreach sequence?',
+        description:
+          'Arcova drafts a multichannel sequence for this contact and stages it in Outreach for your review.',
+        cost: 5,
+        confirmLabel: 'Generate',
+      });
+      if (!ok) return;
       if (
         override &&
         !window.confirm(
@@ -278,7 +287,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
         if (mountedRef.current) setSequenceLoading(false);
       }
     },
-    [contactId, userAngle, router],
+    [contactId, userAngle, router, confirmCredits],
   );
 
   const backToPicker = useCallback(() => {

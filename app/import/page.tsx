@@ -5,6 +5,7 @@ import { RotateCw, Unlink, ChevronDown, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
+import { useCreditConfirm } from '@/context/CreditConfirmContext';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { PageHeader } from '@/components/PageHeader';
@@ -234,6 +235,7 @@ const inferFieldFromHeader = (header: string): ImportField => {
 export default function ImportPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const confirmCredits = useCreditConfirm();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
@@ -703,11 +705,13 @@ export default function ImportPage() {
       if (alreadyImported > 0) skipped.push(`${alreadyImported.toLocaleString()} already in your companies`);
       if (invalid > 0) skipped.push(`${invalid.toLocaleString()} with no usable name or domain`);
       const skipNote = skipped.length ? `\n\nSkipped: ${skipped.join(', ')}.` : '';
-      if (
-        !window.confirm(
-          `Enrich and score ${importable.toLocaleString()} ${importable === 1 ? 'company' : 'companies'} for ${credits.toLocaleString()} credits?${skipNote}`,
-        )
-      ) {
+      const ok = await confirmCredits({
+        title: `Enrich ${importable.toLocaleString()} ${importable === 1 ? 'company' : 'companies'}?`,
+        description: `Finds and scores the strongest matches.${skipNote ? ' ' + skipNote.replace(/\s+/g, ' ').trim() : ''}`,
+        cost: credits,
+        confirmLabel: 'Enrich',
+      });
+      if (!ok) {
         return;
       }
 
@@ -861,7 +865,13 @@ export default function ImportPage() {
       const preflight = await preflightResponse.json();
       if (!preflightResponse.ok) throw new Error(preflight.error || 'Could not price this action.');
       const credits = Number(preflight.preflight?.estimatedCredits ?? 0);
-      if (!window.confirm(`${label} for up to ${credits.toLocaleString()} credits?`)) return;
+      const ok = await confirmCredits({
+        title: label,
+        cost: credits,
+        upTo: true,
+        confirmLabel: 'Continue',
+      });
+      if (!ok) return;
       const response = await fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

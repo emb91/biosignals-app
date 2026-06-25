@@ -1,6 +1,7 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
+import { useCreditConfirm } from '@/context/CreditConfirmContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import AppSidebar from '@/components/AppSidebar';
@@ -1428,6 +1429,7 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
 export function ContactsWorkspace() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const confirmCredits = useCreditConfirm();
   const searchParams = useSearchParams();
 
   const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
@@ -1859,7 +1861,13 @@ export function ContactsWorkspace() {
 
   const handleFindNewEmail = useCallback(async (leadId: string) => {
     if (findingEmailLeadId) return;
-    if (!window.confirm('Find and validate a new email for 11 credits?')) return;
+    const ok = await confirmCredits({
+      title: 'Find a new email?',
+      description: 'Finds and validates a current work email for this contact.',
+      cost: 11,
+      confirmLabel: 'Find email',
+    });
+    if (!ok) return;
     setFindingEmailLeadId(leadId);
     setFindEmailErrorByLeadId((prev) => {
       const next = { ...prev };
@@ -1915,11 +1923,17 @@ export function ContactsWorkspace() {
     } finally {
       setFindingEmailLeadId(null);
     }
-  }, [findingEmailLeadId, fetchLeads]);
+  }, [findingEmailLeadId, fetchLeads, confirmCredits]);
 
   const handleRevealPhone = useCallback(async (leadId: string) => {
     if (revealingPhoneLeadId) return;
-    if (!window.confirm('Reveal a phone number for 20 credits?')) return;
+    const ok = await confirmCredits({
+      title: 'Reveal a phone number?',
+      description: 'Finds a direct phone number for this contact.',
+      cost: 20,
+      confirmLabel: 'Reveal phone',
+    });
+    if (!ok) return;
     setRevealingPhoneLeadId(leadId);
     try {
       const response = await fetch(`/api/contacts/${encodeURIComponent(leadId)}/reveal-phone`, {
@@ -1935,7 +1949,7 @@ export function ContactsWorkspace() {
     } finally {
       setRevealingPhoneLeadId(null);
     }
-  }, [revealingPhoneLeadId, fetchLeads]);
+  }, [revealingPhoneLeadId, fetchLeads, confirmCredits]);
 
   const handleDownloadCsv = useCallback(async () => {
     // Fetch all leads (loop pages)
@@ -2463,7 +2477,13 @@ export function ContactsWorkspace() {
     }
 
     try {
-      if (!window.confirm('Refresh this contact for 4 credits?')) {
+      const ok = await confirmCredits({
+        title: 'Refresh this contact?',
+        description: 'Re-runs enrichment to pull the latest role, signals and fit.',
+        cost: 4,
+        confirmLabel: 'Refresh',
+      });
+      if (!ok) {
         await fetchLeads(true);
         return;
       }
