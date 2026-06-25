@@ -11,6 +11,8 @@
   "include": [
     "lib/billing/config.ts",
     "lib/billing/checkout-eligibility.ts",
-    "lib/billing/checkout-eligibility.test.ts"
+    "lib/billing/checkout-eligibility.test.ts",
+    "lib/billing/portal-config.ts",
+    "lib/billing/portal-config.test.ts"
   ]
 }

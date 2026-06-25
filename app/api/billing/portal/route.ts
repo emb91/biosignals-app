@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
+import { billingPortalConfigurationId, isBillingPortalConfigured } from '@/lib/billing/portal-config';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 
 export async function POST(request: Request) {
@@ -26,6 +27,9 @@ export async function POST(request: Request) {
   if (!isBillingConfigured()) {
     return NextResponse.json({ error: 'Billing is not available yet' }, { status: 503 });
   }
+  if (!isBillingPortalConfigured()) {
+    return NextResponse.json({ error: 'Stripe Customer Portal is not configured yet' }, { status: 503 });
+  }
 
   const admin = createAdminClient();
   const { data: org } = await admin
@@ -39,8 +43,10 @@ export async function POST(request: Request) {
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
+  const configuration = billingPortalConfigurationId();
   const session = await getStripe().billingPortal.sessions.create({
     customer: org.stripe_customer_id,
+    ...(configuration ? { configuration } : {}),
     return_url: `${appUrl}/settings`,
   });
   return NextResponse.json({ url: session.url });
