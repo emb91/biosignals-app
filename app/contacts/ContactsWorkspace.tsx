@@ -4509,13 +4509,8 @@ export function ContactsWorkspace() {
                         })}
                       </div>
 
-                      {/* Panel body */}
-                      <div
-                        className={cn(
-                          'min-h-0 flex-1 overflow-auto',
-                          selectedPreview === 'contact' ? 'space-y-4 px-4 py-4' : 'space-y-5 px-5 py-4',
-                        )}
-                      >
+                      {/* Panel body — design .db: 16px padding, 13px gap (uniform across tabs) */}
+                      <div className="min-h-0 flex-1 overflow-auto space-y-[13px] p-[16px]">
                         {selectedPreview === 'contact' ? (
                           isEditingSelected ? (
                             /* ── Edit mode ── */
@@ -4864,11 +4859,11 @@ export function ContactsWorkspace() {
                               )}
 
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
-                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                   <button
                                     type="button"
                                     onClick={() => setContactPanelOpen((s) => ({ ...s, about: !s.about }))}
-                                    className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                    className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                   >
                                     <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                       About
@@ -4880,15 +4875,15 @@ export function ContactsWorkspace() {
                                     />
                                   </button>
                                   {contactPanelOpen.about && (
-                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-3">
+                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-[14px] pb-[13px] pt-[13px]">
                                       {selectedLead.contact_bio.length === 1 ? (
-                                        <p className="text-sm leading-[1.55] text-[#4a6470]">
+                                        <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
                                           {selectedLead.contact_bio[0]}
                                         </p>
                                       ) : (
                                         <ul className="space-y-3">
                                           {selectedLead.contact_bio.map((bullet, i) => (
-                                            <li key={i} className="flex gap-3 text-sm leading-snug text-[#4a6470]">
+                                            <li key={i} className="flex gap-3 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                               <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal" />
                                               {bullet}
                                             </li>
@@ -4900,11 +4895,11 @@ export function ContactsWorkspace() {
                                 </div>
                               )}
 
-                              <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                 <button
                                   type="button"
                                   onClick={() => setContactPanelOpen((s) => ({ ...s, details: !s.details }))}
-                                  className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                  className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                 >
                                   <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                     Role &amp; contact
@@ -4916,7 +4911,7 @@ export function ContactsWorkspace() {
                                   />
                                 </button>
                                 {contactPanelOpen.details && (
-                                  <div className="border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-3">
+                                  <div className="border-t border-[rgba(13,53,71,0.06)] px-[14px] pb-[13px] pt-[13px]">
                                     <div className="min-w-0 space-y-5">
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
@@ -5108,13 +5103,13 @@ export function ContactsWorkspace() {
 
                               {selectedLead.resolved_employment_history &&
                                 selectedLead.resolved_employment_history.length > 0 && (
-                                  <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                  <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                     <button
                                       type="button"
                                       onClick={() =>
                                         setContactPanelOpen((s) => ({ ...s, workHistory: !s.workHistory }))
                                       }
-                                      className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                      className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                     >
                                       <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                         Work history
@@ -5150,7 +5145,7 @@ export function ContactsWorkspace() {
                                                 <p className="text-sm font-semibold leading-snug text-[#0d3547]">
                                                   {job.title || '—'}
                                                 </p>
-                                                <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                                <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                                   {job.company_name || '—'}
                                                 </p>
                                                 <p className="mt-1.5 text-xs tabular-nums text-[#7d909a]">
@@ -5185,7 +5180,7 @@ export function ContactsWorkspace() {
                                   </div>
                                 )}
 
-                              <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                 <p className="mb-3 font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Data source</p>
                                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                                   <div className="min-w-0">
@@ -5318,7 +5313,7 @@ export function ContactsWorkspace() {
 
                             {selectedHubSpotCrmState?.loading ? (
                               <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
-                                <p className="text-sm leading-snug text-[#4a6470]">Loading HubSpot CRM…</p>
+                                <p className="text-[13.5px] leading-[1.45] text-[#4a6470]">Loading HubSpot CRM…</p>
                               </div>
                             ) : selectedHubSpotCrmState?.error ? (
                               <div className="rounded-xl border border-[#ffd8c7] bg-[#fff7f3] px-4 py-4">
@@ -5345,7 +5340,7 @@ export function ContactsWorkspace() {
                                   return (
                                     <div
                                       key={deal.hubspot_deal_id}
-                                      className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]"
+                                      className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]"
                                     >
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
@@ -5452,7 +5447,7 @@ export function ContactsWorkspace() {
                               </div>
                             ) : (
                               <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
-                                <p className="text-sm leading-snug text-[#4a6470]">
+                                <p className="text-[13.5px] leading-[1.45] text-[#4a6470]">
                                   No mirrored HubSpot deal activity on this contact yet.
                                 </p>
                               </div>
@@ -5470,12 +5465,12 @@ export function ContactsWorkspace() {
                                   </p>
                                   <div className="rounded-xl border border-[rgba(45,138,138,0.22)] bg-[rgba(45,138,138,0.07)] p-4">
                                     <p className="text-sm font-semibold text-[#2d8a8a]">Customer state</p>
-                                    <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                    <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                       Keep the CRM history for attribution and future customer workflows, but avoid
                                       spending more lead-enrichment budget on it from this queue.
                                     </p>
                                   </div>
-                                  <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                  <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                                     <p className="text-sm font-semibold text-[#0d3547]">Arcova attribution</p>
                                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
@@ -5530,7 +5525,7 @@ export function ContactsWorkspace() {
                                   </p>
                                   <div className="rounded-xl border border-[rgba(125,144,154,0.2)] bg-[rgba(125,144,154,0.08)] p-4">
                                     <p className="text-sm font-semibold text-[#5f7480]">Dormant for now</p>
-                                    <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                    <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                       Let fresh budget, a new decision-maker, or a strategic shift reactivate this
                                       lead later.
                                     </p>
