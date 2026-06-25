@@ -4,6 +4,7 @@ import { creditEnforcementEnabled } from '@/lib/billing/credits';
 import { FREE_TIER } from '@/lib/billing/config';
 import { SWEEP_FIT_THRESHOLD } from '@/lib/signals/sweep-fit-gate';
 import { lookbackDaysForCadence } from '@/lib/signals/monitor-cadence-rules';
+import { pickSharedNextSweepAt } from '@/lib/billing/shared-sweep-cadence';
 import {
   ACCOUNT_SWEEP_SOURCES,
   CONTACT_SWEEP_SOURCES,
@@ -17,6 +18,7 @@ export {
   type AccountSweepSource,
   type ContactSweepSource,
 } from '@/lib/billing/monitoring-sources';
+export { pickSharedNextSweepAt } from '@/lib/billing/shared-sweep-cadence';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -174,7 +176,20 @@ export async function refreshMonitoringUniverse(orgId: string): Promise<{
   }
   const { data: members } = await admin.from('org_members').select('user_id').eq('org_id', orgId);
   const userIds = (members ?? []).map((row) => row.user_id as string);
-  if (!userIds.length) return { activeContacts: 0, waitlistedContacts: 0, activeAccounts: 0, waitlistedAccounts: 0 };
+  if (!userIds.length) {
+    // Org has no members (e.g. last member removed without deleting the org).
+    // Retire any lingering monitored rows so their subscriber sweeps stop
+    // driving shared targets, then reconcile the shared cadence to drop them.
+    const retiredAt = new Date().toISOString();
+    await Promise.all([
+      admin.from('org_monitored_contacts').update({ status: 'ineligible', updated_at: retiredAt }).eq('org_id', orgId),
+      admin.from('org_monitored_accounts').update({ status: 'ineligible', updated_at: retiredAt }).eq('org_id', orgId),
+    ]);
+    await reconcileSharedMonitoringCadenceForOrg(admin, orgId).catch((error) => {
+      console.warn('[monitoring] shared cadence reconciliation skipped for memberless org:', error);
+    });
+    return { activeContacts: 0, waitlistedContacts: 0, activeAccounts: 0, waitlistedAccounts: 0 };
+  }
 
   const { data: rows, error } = await admin.from('user_contacts')
     .select('id, user_id, person_id, company_id, contact_fit_score, priority_score')
@@ -892,11 +907,25 @@ export async function markAccountSourceSweep(params: {
   providerCostUsd?: number;
 }): Promise<void> {
   const now = new Date();
-  const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
   const admin = createAdminClient();
+  // Subscriber sweeps are marked before the shared target, so this reflects the
+  // post-run state: advance the shared target to the earliest subscriber due
+  // date rather than overshooting slower subscribers with the fastest cadence.
+  const { data: subscriberNexts, error: subscriberNextsError } = await admin
+    .from('account_source_subscriber_sweeps')
+    .select('next_sweep_at')
+    .eq('company_id', params.companyId)
+    .eq('source', params.source)
+    .eq('status', 'active');
+  if (subscriberNextsError) throw new Error(`account subscriber next sweep read failed: ${subscriberNextsError.message}`);
+  const fallbackNext = new Date(now.getTime() + params.cadenceDays * 86_400_000).toISOString();
+  const next = pickSharedNextSweepAt(
+    (subscriberNexts ?? []).map((row) => row.next_sweep_at as string | null),
+    fallbackNext,
+  );
   const { error } = await admin.from('account_source_sweep_targets').update({
     last_sweep_at: now.toISOString(),
-    next_sweep_at: next.toISOString(),
+    next_sweep_at: next,
     last_sweep_status: params.status,
     last_result_count: params.resultCount ?? null,
     last_provider_cost_usd: params.providerCostUsd ?? null,
@@ -942,11 +971,25 @@ export async function markContactSourceSweep(params: {
   providerCostUsd?: number;
 }): Promise<void> {
   const now = new Date();
-  const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
   const admin = createAdminClient();
+  // Subscriber sweeps are marked before the shared target, so this reflects the
+  // post-run state: advance the shared target to the earliest subscriber due
+  // date rather than overshooting slower subscribers with the fastest cadence.
+  const { data: subscriberNexts, error: subscriberNextsError } = await admin
+    .from('contact_source_subscriber_sweeps')
+    .select('next_sweep_at')
+    .eq('person_id', params.personId)
+    .eq('source', params.source)
+    .eq('status', 'active');
+  if (subscriberNextsError) throw new Error(`contact subscriber next sweep read failed: ${subscriberNextsError.message}`);
+  const fallbackNext = new Date(now.getTime() + params.cadenceDays * 86_400_000).toISOString();
+  const next = pickSharedNextSweepAt(
+    (subscriberNexts ?? []).map((row) => row.next_sweep_at as string | null),
+    fallbackNext,
+  );
   const { error } = await admin.from('contact_source_sweep_targets').update({
     last_sweep_at: now.toISOString(),
-    next_sweep_at: next.toISOString(),
+    next_sweep_at: next,
     last_sweep_status: params.status,
     last_provider_cost_usd: params.providerCostUsd ?? null,
     updated_at: now.toISOString(),

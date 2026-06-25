@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-shared-sweep-cadence-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/billing/shared-sweep-cadence.ts",
+    "lib/billing/shared-sweep-cadence.test.ts"
+  ]
+}
