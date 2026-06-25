@@ -116,7 +116,7 @@ export async function GET() {
         isBillingConfigured() &&
           isBillingPortalConfigured() &&
           orgBillingResult.data?.stripe_customer_id &&
-          !entitlements.unlimited,
+          !entitlements.complimentary,
       ),
       creditPackConfigured: packConfigured,
     },

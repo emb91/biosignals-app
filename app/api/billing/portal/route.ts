@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Only an owner or admin can manage billing' }, { status: 403 });
   }
   const entitlements = await getOrgEntitlements(ctx.orgId);
-  if (entitlements.unlimited) {
+  if (entitlements.complimentary) {
     return NextResponse.json(
       { error: 'This Arcova workspace is complimentary and has nothing to manage.' },
       { status: 400 },

@@ -103,7 +103,7 @@ export async function POST(request: Request) {
   }
 
   // Credit pack (one-time payment).
-  if (entitlements.unlimited) {
+  if (entitlements.complimentary) {
     return NextResponse.json({ error: 'Credit packs are not needed on complimentary workspaces. Choose a paid plan first.' }, { status: 400 });
   }
   if (!isPlanKey(entitlements.planKey)) {
