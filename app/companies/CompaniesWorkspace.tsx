@@ -714,6 +714,29 @@ export default function CompaniesPage() {
     };
   }, []);
 
+  // Measured height of the floating agent chat bar that sits ABOVE the company
+  // card. The card is seated just below the bar's real bottom (+ a small gap) so
+  // the spacing stays tight regardless of the bar's exact rendered height — a
+  // hardcoded offset drifts whenever the bar's padding/contents change.
+  const AGENT_BAR_GAP = 8;
+  const agentBarRef = useRef<HTMLDivElement | null>(null);
+  const [agentBarHeight, setAgentBarHeight] = useState(56);
+  useEffect(() => {
+    if (!selectedAccountId || !agentRect) return;
+    const measure = () => {
+      const h = agentBarRef.current?.offsetHeight;
+      if (h && Math.abs(h - agentBarHeight) > 0.5) setAgentBarHeight(h);
+    };
+    measure();
+    const raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(measure);
+    if (agentBarRef.current) ro.observe(agentBarRef.current);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [selectedAccountId, agentRect, agentBarHeight]);
+
   // Contacts panel
   const [contacts, setContacts] = useState<ContactAtCompany[]>([]);
   /** Ranked contacts shown in the "Choose a contact to reach out to" picker
@@ -1849,12 +1872,12 @@ export default function CompaniesPage() {
                     style={
                       agentRect
                         ? {
-                            // Pushed down 64px to leave room at the TOP for the floating
-                            // chat bar, which now sits above the card.
-                            top: agentRect.top + 64,
+                            // Seat the card just below the floating chat bar's measured
+                            // bottom (+ a small gap) so the spacing stays tight.
+                            top: agentRect.top + agentBarHeight + AGENT_BAR_GAP,
                             left: agentRect.left,
                             width: agentRect.width,
-                            height: Math.max(0, agentRect.height - 64),
+                            height: Math.max(0, agentRect.height - agentBarHeight - AGENT_BAR_GAP),
                           }
                         : undefined
                     }
@@ -2920,6 +2943,7 @@ export default function CompaniesPage() {
                     Submit dismisses the company card and forwards the text to the agent. */}
                 {selectedAccountId && agentRect && (
                   <div
+                    ref={agentBarRef}
                     className={cn(
                       'fixed z-[51] flex items-center rounded-[1.3125rem] border border-arcova-teal/60 bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] ring-1 ring-arcova-teal/10 backdrop-blur-2xl backdrop-saturate-150',
                     )}
