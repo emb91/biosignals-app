@@ -109,7 +109,6 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
-        for (const item of items) failedCompanies.add(item.companyId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/clinical-trials-delta] monitor failed for user ${userId}:`, error);
         for (const item of items) failedCompanies.add(item.companyId);

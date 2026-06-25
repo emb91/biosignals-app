@@ -105,16 +105,24 @@ async function runCron(request: Request) {
         });
         monitorOk += 1;
         const contactIdToPersonId = new Map(work.contacts.map((item) => [item.contactId, item.personId]));
+        const failedCompaniesForUser = new Set<string>();
+        const failedPersonsForUser = new Set<string>();
         for (const failure of result.failures) {
-          if (failure.entity_type === 'company') failedCompanies.add(failure.entity_id);
+          if (failure.entity_type === 'company') {
+            failedCompanies.add(failure.entity_id);
+            failedCompaniesForUser.add(failure.entity_id);
+          }
           if (failure.entity_type === 'contact') {
             const personId = contactIdToPersonId.get(failure.entity_id);
-            if (personId) failedPersons.add(personId);
+            if (personId) {
+              failedPersons.add(personId);
+              failedPersonsForUser.add(personId);
+            }
           }
         }
         const unmarkedAccountSweeps = await markAccountSubscriberSweeps({
           items: work.accounts,
-          statusForItem: (item) => failedCompanies.has(item.companyId) ? 'failed' : 'succeeded',
+          statusForItem: (item) => failedCompaniesForUser.has(item.companyId) ? 'failed' : 'succeeded',
           onFailure: (failure) => {
             failures.push({ user_id: failure.user_id, error: failure.error });
             console.error('[cron/publications-delta] account subscriber source mark failed:', failure);
@@ -122,7 +130,7 @@ async function runCron(request: Request) {
         });
         const unmarkedContactSweeps = await markContactSubscriberSweeps({
           items: work.contacts,
-          statusForItem: (item) => failedPersons.has(item.personId) ? 'failed' : 'succeeded',
+          statusForItem: (item) => failedPersonsForUser.has(item.personId) ? 'failed' : 'succeeded',
           onFailure: (failure) => {
             failures.push({ user_id: failure.user_id, error: failure.error });
             console.error('[cron/publications-delta] contact subscriber source mark failed:', failure);

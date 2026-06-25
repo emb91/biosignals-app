@@ -75,15 +75,19 @@ async function runCron(request: Request) {
           companyIds: [...new Set(items.map((item) => item.companyId))],
         });
         monitorOk += 1;
+        const failedCompaniesForUser = new Set<string>();
         if (result.failed_conferences > 0) {
-          for (const item of items) failedCompanies.add(item.companyId);
+          for (const item of items) {
+            failedCompanies.add(item.companyId);
+            failedCompaniesForUser.add(item.companyId);
+          }
         }
         for (const companyId of new Set(items.map((item) => item.companyId))) {
           resultCountsByCompany.set(companyId, result.processed_conferences);
         }
         const unmarked = await markAccountSubscriberSweeps({
           items,
-          statusForItem: (item) => failedCompanies.has(item.companyId) ? 'failed' : 'succeeded',
+          statusForItem: (item) => failedCompaniesForUser.has(item.companyId) ? 'failed' : 'succeeded',
           resultCountForItem: (item) => resultCountsByCompany.get(item.companyId) ?? 0,
           onFailure: (failure) => {
             failures.push(failure);
@@ -110,7 +114,6 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
-        for (const item of items) failedCompanies.add(item.companyId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/conference-delta] monitor failed for user ${userId}:`, error);
         for (const item of items) failedCompanies.add(item.companyId);

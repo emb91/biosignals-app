@@ -894,35 +894,6 @@ export async function markAccountSourceSweep(params: {
   const now = new Date();
   const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
   const admin = createAdminClient();
-  const { data: subscriberRows, error: subscriberReadError } = await admin
-    .from('account_source_subscriber_sweeps')
-    .select('org_id, cadence_days')
-    .eq('company_id', params.companyId)
-    .eq('source', params.source)
-    .eq('status', 'active')
-    .lte('next_sweep_at', now.toISOString());
-  if (subscriberReadError) {
-    throw new Error(`account subscriber source sweeps read failed: ${subscriberReadError.message}`);
-  }
-  await Promise.all(((subscriberRows ?? []) as Array<{ org_id: string; cadence_days: number }>).map(async (row) => {
-    const subscriberNext = new Date(now.getTime() + Number(row.cadence_days) * 86_400_000);
-    const { error: subscriberError } = await admin
-      .from('account_source_subscriber_sweeps')
-      .update({
-        last_sweep_at: now.toISOString(),
-        next_sweep_at: subscriberNext.toISOString(),
-        last_sweep_status: params.status,
-        last_result_count: params.resultCount ?? null,
-        last_provider_cost_usd: params.providerCostUsd ?? null,
-        updated_at: now.toISOString(),
-      })
-      .eq('org_id', row.org_id)
-      .eq('company_id', params.companyId)
-      .eq('source', params.source);
-    if (subscriberError) {
-      throw new Error(`account subscriber source sweeps mark failed: ${subscriberError.message}`);
-    }
-  }));
   const { error } = await admin.from('account_source_sweep_targets').update({
     last_sweep_at: now.toISOString(),
     next_sweep_at: next.toISOString(),
@@ -973,34 +944,6 @@ export async function markContactSourceSweep(params: {
   const now = new Date();
   const next = new Date(now.getTime() + params.cadenceDays * 86_400_000);
   const admin = createAdminClient();
-  const { data: subscriberRows, error: subscriberReadError } = await admin
-    .from('contact_source_subscriber_sweeps')
-    .select('org_id, cadence_days')
-    .eq('person_id', params.personId)
-    .eq('source', params.source)
-    .eq('status', 'active')
-    .lte('next_sweep_at', now.toISOString());
-  if (subscriberReadError) {
-    throw new Error(`contact subscriber source sweeps read failed: ${subscriberReadError.message}`);
-  }
-  await Promise.all(((subscriberRows ?? []) as Array<{ org_id: string; cadence_days: number }>).map(async (row) => {
-    const subscriberNext = new Date(now.getTime() + Number(row.cadence_days) * 86_400_000);
-    const { error: subscriberError } = await admin
-      .from('contact_source_subscriber_sweeps')
-      .update({
-        last_sweep_at: now.toISOString(),
-        next_sweep_at: subscriberNext.toISOString(),
-        last_sweep_status: params.status,
-        last_provider_cost_usd: params.providerCostUsd ?? null,
-        updated_at: now.toISOString(),
-      })
-      .eq('org_id', row.org_id)
-      .eq('person_id', params.personId)
-      .eq('source', params.source);
-    if (subscriberError) {
-      throw new Error(`contact subscriber source sweeps mark failed: ${subscriberError.message}`);
-    }
-  }));
   const { error } = await admin.from('contact_source_sweep_targets').update({
     last_sweep_at: now.toISOString(),
     next_sweep_at: next.toISOString(),
