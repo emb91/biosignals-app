@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { assignFunctionWeights } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import { getOrgContext } from '@/lib/org-context';
+import { normalizePersonaTaxonomyPayload } from '@/lib/persona-taxonomy';
 
 export async function GET(
   _request: Request,
@@ -64,12 +65,13 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const weightedFunctions = assignFunctionWeights(body.functions || []);
+    const personaTaxonomy = normalizePersonaTaxonomyPayload(body);
+    const weightedFunctions = assignFunctionWeights(personaTaxonomy.functions);
 
     const personaData = {
       name: body.name,
       functions: weightedFunctions.map(f => JSON.stringify(f)),
-      seniority_levels: body.seniorityLevels || [],
+      seniority_levels: personaTaxonomy.seniority_levels,
       job_titles: body.jobTitles || [],
       updated_at: new Date().toISOString(),
     };

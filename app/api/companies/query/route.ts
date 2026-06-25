@@ -45,7 +45,7 @@ const SYSTEM_PROMPT = `${TASK_AGENT_OPENING} Interpret natural language queries 
 
 Company data available:
 - company_name and domain
-- company_type: "CDMO", "Biotech", "CRO", "Pharma", "Academic", "Hospital", "MedTech", "AgBio"
+- company_type: "Biotech / Biopharma", "Pharma", "CDMO", "CRO", "Medical Device", "Diagnostics", "Academic / Research Institute", "Hospital / Health System", "SaaS"
 - company_fit_score: 0-1, where higher means a better ICP fit
 - contact_count: number of known contacts at the company
 - best_contact_fit, avg_contact_fit, worst_contact_fit: 0-1 contact/persona fit scores
