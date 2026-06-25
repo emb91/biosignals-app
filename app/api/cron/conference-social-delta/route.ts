@@ -73,12 +73,16 @@ async function runCron(request: Request) {
           contactIds: [...new Set(items.map((item) => item.contactId))],
         });
         monitorOk += 1;
+        const failedPersonsForUser = new Set<string>();
         if (result.failed_conferences > 0) {
-          for (const item of items) failedPersons.add(item.personId);
+          for (const item of items) {
+            failedPersons.add(item.personId);
+            failedPersonsForUser.add(item.personId);
+          }
         }
         const unmarked = await markContactSubscriberSweeps({
           items,
-          statusForItem: (item) => failedPersons.has(item.personId) ? 'failed' : 'succeeded',
+          statusForItem: (item) => failedPersonsForUser.has(item.personId) ? 'failed' : 'succeeded',
           onFailure: (failure) => {
             failures.push({ user_id: failure.user_id, error: failure.error });
             console.error('[cron/conference-social-delta] subscriber source mark failed:', failure);
@@ -104,7 +108,6 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
-        for (const item of items) failedPersons.add(item.personId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/conference-social-delta] monitor failed for user ${userId}:`, error);
         for (const item of items) failedPersons.add(item.personId);
