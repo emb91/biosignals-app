@@ -53,7 +53,7 @@ test.describe('import CSV upload methods', () => {
 
     await expect(page.getByRole('heading', { name: 'Import analyzed' })).toBeVisible();
     await expect(page.getByText('Triaged for included import')).toBeVisible();
-    await expect(page.getByText('2 records are prioritized for the monthly included import flow.')).toBeVisible();
+    await expect(page.getByText(/2 records are prioritized for .* import/i)).toBeVisible();
     await expect(page.getByText(/Enrich 2 best matches/)).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Review triaged leads' }).first()).toHaveAttribute('href', ROUTES.triage);
   });

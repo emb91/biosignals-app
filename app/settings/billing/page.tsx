@@ -272,7 +272,7 @@ export default function BillingPage() {
               </button>
               {!canOpenPortal && canManage && (
                 <p className="basis-full text-sm text-[#7d909a]">
-                  This plan is not connected to a Stripe customer yet. Choose a hosted plan checkout before managing billing.
+                  Stripe Customer Portal is not available for this workspace yet. Choose a hosted plan checkout first, or finish the portal setup in Stripe.
                 </p>
               )}
             </section>

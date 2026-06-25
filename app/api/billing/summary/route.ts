@@ -13,6 +13,7 @@ import {
 } from '@/lib/billing/config';
 import { creditBalanceBySource } from '@/lib/billing/credits';
 import { canBuyCreditPacksWithStripe } from '@/lib/billing/checkout-eligibility';
+import { isBillingPortalConfigured } from '@/lib/billing/portal-config';
 
 export async function GET() {
   const ctx = await getOrgContext();
@@ -111,7 +112,12 @@ export async function GET() {
     },
     billing: {
       stripeBacked: stripeBackedPaid,
-      canOpenPortal: Boolean(isBillingConfigured() && orgBillingResult.data?.stripe_customer_id && !entitlements.unlimited),
+      canOpenPortal: Boolean(
+        isBillingConfigured() &&
+          isBillingPortalConfigured() &&
+          orgBillingResult.data?.stripe_customer_id &&
+          !entitlements.unlimited,
+      ),
       creditPackConfigured: packConfigured,
     },
     seats: {
