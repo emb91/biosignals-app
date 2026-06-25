@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:latest": "node scripts/dev-latest-worktree.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
