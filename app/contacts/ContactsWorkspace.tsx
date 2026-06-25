@@ -4428,7 +4428,7 @@ export function ContactsWorkspace() {
                           </div>
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7d909a]">
                             {selectedPreview === 'contact'
                               ? 'Details'
                               : selectedPreview === 'hubspot'
@@ -4864,13 +4864,13 @@ export function ContactsWorkspace() {
                               )}
 
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
-                                <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                   <button
                                     type="button"
                                     onClick={() => setContactPanelOpen((s) => ({ ...s, about: !s.about }))}
                                     className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                   >
-                                    <span className="font-manrope text-xs font-semibold text-[#0d3547]">
+                                    <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                       About
                                     </span>
                                     <ChevronDown
@@ -4900,13 +4900,13 @@ export function ContactsWorkspace() {
                                 </div>
                               )}
 
-                              <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                 <button
                                   type="button"
                                   onClick={() => setContactPanelOpen((s) => ({ ...s, details: !s.details }))}
                                   className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                 >
-                                  <span className="font-manrope text-xs font-semibold text-[#0d3547]">
+                                  <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                     Role &amp; contact
                                   </span>
                                   <ChevronDown
@@ -4919,10 +4919,10 @@ export function ContactsWorkspace() {
                                   <div className="border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-3">
                                     <div className="min-w-0 space-y-5">
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Job title
                                         </p>
-                                        <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                        <p className="mt-2 break-words text-[13.5px] leading-[1.4] text-[#0d3547]">
                                           {selectedLead.resolved_current_job_title ||
                                             selectedLead.job_title ||
                                             '—'}
@@ -4945,17 +4945,17 @@ export function ContactsWorkspace() {
                                         if (cells.length === 0) cells.push({ label: 'Location', value: '—' });
                                         return cells.map((c) => (
                                           <div key={c.label} className="min-w-0">
-                                            <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                               {c.label}
                                             </p>
-                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                            <p className="mt-2 break-words text-[13.5px] leading-[1.4] text-[#0d3547]">
                                               {c.value}
                                             </p>
                                           </div>
                                         ));
                                       })()}
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Emails
                                         </p>
                                         <div className="mt-2 space-y-2">
@@ -4967,7 +4967,7 @@ export function ContactsWorkspace() {
                                             );
                                             if (emailRows.length === 0) {
                                               return (
-                                                <p className="break-words text-sm leading-snug text-[#0d3547]">—</p>
+                                                <p className="break-words text-[13.5px] leading-[1.4] text-[#0d3547]">—</p>
                                               );
                                             }
                                             return emailRows.map((r, i) => {
@@ -4981,7 +4981,7 @@ export function ContactsWorkspace() {
                                               return (
                                                 <div
                                                   key={`${r.label}-${r.email}-${i}`}
-                                                  className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm leading-snug text-[#0d3547]"
+                                                  className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[13.5px] leading-[1.4] text-[#0d3547]"
                                                 >
                                                   <p className="min-w-0 break-all">
                                                     <span className="font-medium text-[#7d909a]">{r.label}: </span>
@@ -5035,7 +5035,7 @@ export function ContactsWorkspace() {
                                       </div>
                                       {/* Phone row — show numbers on file, else offer the singular reveal (20 credits) */}
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Phone
                                         </p>
                                         {(() => {
@@ -5044,7 +5044,7 @@ export function ContactsWorkspace() {
                                             return (
                                               <div className="mt-2 space-y-1">
                                                 {phones.map((p) => (
-                                                  <p key={p.id} className="break-all text-sm leading-snug text-[#0d3547]">
+                                                  <p key={p.id} className="break-all text-[13.5px] leading-[1.4] text-[#0d3547]">
                                                     {p.phone}
                                                   </p>
                                                 ))}
@@ -5072,7 +5072,7 @@ export function ContactsWorkspace() {
                                         })()}
                                       </div>
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           LinkedIn
                                         </p>
                                         {selectedLead.linkedin_url ? (
@@ -5088,7 +5088,7 @@ export function ContactsWorkspace() {
                                             <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-arcova-teal" />
                                           </a>
                                         ) : (
-                                          <p className="mt-2 text-sm leading-snug text-[#0d3547]">—</p>
+                                          <p className="mt-2 text-[13.5px] leading-[1.4] text-[#0d3547]">—</p>
                                         )}
                                       </div>
                                     </div>
@@ -5108,7 +5108,7 @@ export function ContactsWorkspace() {
 
                               {selectedLead.resolved_employment_history &&
                                 selectedLead.resolved_employment_history.length > 0 && (
-                                  <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                  <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -5116,7 +5116,7 @@ export function ContactsWorkspace() {
                                       }
                                       className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                     >
-                                      <span className="font-manrope text-xs font-semibold text-[#0d3547]">
+                                      <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                         Work history
                                       </span>
                                       <ChevronDown
@@ -5185,22 +5185,22 @@ export function ContactsWorkspace() {
                                   </div>
                                 )}
 
-                              <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
-                                <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
+                              <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                <p className="mb-3 font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Data source</p>
                                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                       Type
                                     </p>
-                                    <p className="mt-2 text-sm leading-snug text-[#0d3547]">
+                                    <p className="mt-2 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                       {selectedLeadDataSourceTypeLabel}
                                     </p>
                                   </div>
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                       Imported
                                     </p>
-                                    <p className="mt-2 text-sm leading-snug text-[#0d3547]">
+                                    <p className="mt-2 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                       {formatProvenanceImportedAt(selectedLead.data_provenance_imported_at)}
                                     </p>
                                   </div>
@@ -5368,34 +5368,34 @@ export function ContactsWorkspace() {
 
                                       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Company
                                           </p>
-                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {arcovaCompanyName || '—'}
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Domain
                                           </p>
-                                          <p className="mt-1 break-all text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 break-all text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {arcovaCompanyDomain || '—'}
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Amount
                                           </p>
-                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {formatUsdValue(deal.amount) || '—'}
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Last synced
                                           </p>
-                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          <p className="mt-1 text-[13.5px] leading-[1.4] text-[#0d3547]">
                                             {formatLastUpdated(deal.synced_at)}
                                           </p>
                                         </div>
@@ -5475,11 +5475,11 @@ export function ContactsWorkspace() {
                                       spending more lead-enrichment budget on it from this queue.
                                     </p>
                                   </div>
-                                  <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                  <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                     <p className="text-sm font-semibold text-[#0d3547]">Arcova attribution</p>
                                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Sourced
                                         </p>
                                         <p className="mt-2 text-sm font-medium text-[#0d3547]">
@@ -5490,7 +5490,7 @@ export function ContactsWorkspace() {
                                         </p>
                                       </div>
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Enriched
                                         </p>
                                         <p className="mt-2 text-sm font-medium text-[#0d3547]">
@@ -5503,7 +5503,7 @@ export function ContactsWorkspace() {
                                         </p>
                                       </div>
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Outcome
                                         </p>
                                         <p className="mt-2 text-sm font-medium text-[#0d3547]">
