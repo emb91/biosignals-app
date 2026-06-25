@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { WORKSPACE_REQUIRED_ERROR, orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { computeCriteriaHash } from '@/lib/data-acquisition/criteria-hash';
 import type { PipelineDataRequestType } from '@/lib/pipeline-icp-health';
 import {
@@ -154,6 +154,9 @@ export async function POST(request: Request) {
     // The ICP must be visible to this user (company-wide or their own personal) — a
     // member can buy data against a company ICP; billing is org-level.
     const reqOrgId = await orgIdForUser(supabase, user.id);
+    if (!reqOrgId) {
+      return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
+    }
     const { data: icp, error: icpErr } = await scopeIcpsToUser(
       supabase.from('icps').select('id'),
       reqOrgId,
@@ -175,7 +178,7 @@ export async function POST(request: Request) {
     let creditTransactionId: string | null = null;
     let customerUsageOperationId: string | null = null;
     const requestedLeadCount = estimate.targetContactCount ?? 0;
-    if (reqOrgId && requestedLeadCount > 0) {
+    if (requestedLeadCount > 0) {
       const entitlements = await getOrgEntitlements(reqOrgId);
       const admin = createAdminClient();
       const { data: members } = await admin.from('org_members').select('user_id').eq('org_id', reqOrgId);

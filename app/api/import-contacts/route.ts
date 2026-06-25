@@ -8,7 +8,7 @@ import {
   processQueuedRowsInBackground,
 } from '@/lib/import-queue';
 import { getPostHogClient } from '@/lib/posthog-server';
-import { orgIdForUser } from '@/lib/org-context';
+import { WORKSPACE_REQUIRED_ERROR, orgIdForUser } from '@/lib/org-context';
 
 type ImportField =
   | 'first_name'
@@ -150,8 +150,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No rows to import' }, { status: 400 });
     }
 
-    const normalizedRows = normalizeIncomingRows(headers, rows, columnMappings);
     const orgId = await orgIdForUser(supabase, user.id);
+    if (!orgId) {
+      return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
+    }
+    const normalizedRows = normalizeIncomingRows(headers, rows, columnMappings);
 
     const { data: batch, error: batchError } = await supabase
       .from('upload_batches')

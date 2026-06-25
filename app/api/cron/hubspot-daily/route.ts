@@ -31,7 +31,7 @@ import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspo
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 import { denormalizeCrmSuppressionState } from '@/lib/crm-suppression-denormalize';
 import { ensureBaselineSnapshot } from '@/lib/backup/hubspot-snapshot';
-import { orgIdForUser } from '@/lib/org-context';
+import { WORKSPACE_REQUIRED_ERROR, orgIdForUser } from '@/lib/org-context';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -320,6 +320,12 @@ async function pullNewFromHubSpot(
   const contacts = await fetchUnenrichedHubSpotContacts(accessToken);
   if (!contacts.length) return { pulled: 0, batchId: null };
 
+  const orgId = await orgIdForUser(admin, userId);
+  if (!orgId) {
+    console.warn(`[cron] Skipping HubSpot pull for user ${userId}: ${WORKSPACE_REQUIRED_ERROR.message}`);
+    return { pulled: 0, batchId: null };
+  }
+
   const filename = `hubspot-auto-${new Date().toISOString().slice(0, 10)}.csv`;
 
   const { data: batch, error: batchError } = await admin
@@ -335,7 +341,6 @@ async function pullNewFromHubSpot(
 
   const batchId = batch.id as string;
 
-  const orgId = await orgIdForUser(admin, userId);
   const insertPayload = contacts.map((c) => {
     const p = c.properties;
     const location = [p.city, p.country].filter(Boolean).join(', ');

@@ -12,6 +12,7 @@ import { triageContacts, TRIAGE_VERSION, type TriageGroup, type TriageIcpContext
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { checkAndIncrementUsage } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
+import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -261,28 +262,46 @@ export async function processQueuedRowsInBackground(params: {
 
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', userId).maybeSingle<{ org_id: string }>();
+  if (!member?.org_id) {
+    const failedAt = new Date().toISOString();
+    await admin
+      .from('raw_uploads')
+      .update({
+        status: 'failed',
+        failure_reason: WORKSPACE_REQUIRED_ERROR.message,
+        enriched_at: failedAt,
+      })
+      .in('id', allQueuedIds);
+    await admin
+      .from('upload_batches')
+      .update({
+        status: 'failed',
+        completed_at: failedAt,
+      })
+      .eq('id', batchId);
+    await refreshBatchProgress(admin, batchId);
+    return;
+  }
   let triageRows = queuedRows;
   let overflowRows: QueuedRow[] = [];
-  if (member?.org_id) {
-    const entitlements = await getOrgEntitlements(member.org_id);
-    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
-    const { data: usageRows } = await admin.from('org_usage_events').select('quantity')
-      .eq('org_id', member.org_id).eq('action_type', 'import_triage').gte('occurred_at', monthStart);
-    const used = (usageRows ?? []).reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
-    const remaining = Math.max(0, entitlements.caps.importedRecordsTriagedMonthly - used);
-    triageRows = queuedRows.slice(0, remaining);
-    overflowRows = queuedRows.slice(remaining);
-    if (triageRows.length) {
-      await checkAndIncrementUsage({
-        orgId: member.org_id,
-        userId,
-        action: 'import_triage',
-        quantity: triageRows.length,
-        operationKey: `import-triage:${batchId}`,
-        limit: entitlements.caps.importedRecordsTriagedMonthly,
-        window: 'utc_month',
-      });
-    }
+  const entitlements = await getOrgEntitlements(member.org_id);
+  const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+  const { data: usageRows } = await admin.from('org_usage_events').select('quantity')
+    .eq('org_id', member.org_id).eq('action_type', 'import_triage').gte('occurred_at', monthStart);
+  const used = (usageRows ?? []).reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
+  const remaining = Math.max(0, entitlements.caps.importedRecordsTriagedMonthly - used);
+  triageRows = queuedRows.slice(0, remaining);
+  overflowRows = queuedRows.slice(remaining);
+  if (triageRows.length) {
+    await checkAndIncrementUsage({
+      orgId: member.org_id,
+      userId,
+      action: 'import_triage',
+      quantity: triageRows.length,
+      operationKey: `import-triage:${batchId}`,
+      limit: entitlements.caps.importedRecordsTriagedMonthly,
+      window: 'utc_month',
+    });
   }
 
   if (overflowRows.length) {
@@ -297,7 +316,7 @@ export async function processQueuedRowsInBackground(params: {
   // classifier scores each row against who we actually target, not a generic
   // biotech yardstick. 'low'-classified rows are stored with minimal identity
   // data only (no enrichment).
-  const icpContext = await loadIcpTriageContext(admin, { orgId: member?.org_id, userId });
+  const icpContext = await loadIcpTriageContext(admin, { orgId: member.org_id, userId });
   const triageMap = await triageContacts(
     triageRows.map((r) => ({
       id: r.id,
@@ -574,11 +593,9 @@ export async function processQueuedRowsInBackground(params: {
     }
 
     await refreshBatchProgress(admin, batchId);
-    if (member?.org_id) {
-      await refreshMonitoringUniverse(member.org_id).catch((error) => {
-        console.error('[import-queue] monitoring refresh failed:', error);
-      });
-    }
+    await refreshMonitoringUniverse(member.org_id).catch((error) => {
+      console.error('[import-queue] monitoring refresh failed:', error);
+    });
   } catch (outerError) {
     console.error('Background enrichment worker crashed — marking remaining rows as failed', outerError);
     const processedIds = [

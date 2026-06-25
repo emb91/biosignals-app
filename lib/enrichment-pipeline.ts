@@ -28,7 +28,7 @@ import { ensureCompanyCik } from '@/lib/signals/company-cik';
 import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncContactCompanyLink } from '@/lib/contact-company-link';
-import { orgIdForUser } from '@/lib/org-context';
+import { WORKSPACE_REQUIRED_ERROR, orgIdForUser } from '@/lib/org-context';
 import { runApifyActor } from '@/lib/apify';
 
 type MinimalSupabase = {
@@ -1255,8 +1255,12 @@ export async function runContactResolutionPipelineForContact(
 
     const { data: orgMember } = await supabase.from('org_members').select('org_id')
       .eq('user_id', userId).maybeSingle();
+    const profileOrgId = (orgMember as { org_id?: string } | null)?.org_id ?? null;
+    if (!profileOrgId) {
+      throw new Error(WORKSPACE_REQUIRED_ERROR.message);
+    }
     const apifyContext = {
-      orgId: (orgMember as { org_id?: string } | null)?.org_id ?? null,
+      orgId: profileOrgId,
       userId,
     };
     const apifyProfile = await runApifyProfileEnrichment(resolvedLinkedin.linkedin_url, apifyContext);

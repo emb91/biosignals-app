@@ -2,7 +2,7 @@ import { after, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
 import { getPostHogClient } from '@/lib/posthog-server';
-import { orgIdForUser } from '@/lib/org-context';
+import { WORKSPACE_REQUIRED_ERROR, orgIdForUser } from '@/lib/org-context';
 import { refreshBatchProgress } from '@/lib/import-queue';
 import {
   type CompanyImportField,
@@ -64,6 +64,10 @@ export async function POST(request: Request) {
     }
 
     const admin = createAdminClient();
+    const orgId = await orgIdForUser(supabase, user.id);
+    if (!orgId) {
+      return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
+    }
 
     // Partition: invalid (no usable identifier), in-file duplicates,
     // already-owned, and importable. This is validation only; company-only
@@ -93,8 +97,6 @@ export async function POST(request: Request) {
         estimatedCredits: partition.importable.length * COMPANY_IMPORT_CREDITS_PER_COMPANY,
       });
     }
-
-    const orgId = await orgIdForUser(supabase, user.id);
 
     const uploadedCount = partition.importable.length + partition.alreadyImported.length;
     const { data: batch, error: batchError } = await supabase
@@ -184,21 +186,17 @@ export async function POST(request: Request) {
         let transactionId: string | null = null;
 
         if (startedAt) {
-          const reservation = orgId
-            ? await reserveCredits({
-                orgId,
-                userId: user.id,
-                action: 'company_enrichment',
-                idempotencyKey: `company-deep-enrich:${companyId}:${startedAt}`,
-                entityType: 'company',
-                entityId: companyId,
-              })
-            : { ok: true as const, transactionId: null };
+          const reservation = await reserveCredits({
+            orgId,
+            userId: user.id,
+            action: 'company_enrichment',
+            idempotencyKey: `company-deep-enrich:${companyId}:${startedAt}`,
+            entityType: 'company',
+            entityId: companyId,
+          });
 
           if (!reservation.ok) {
-            if (orgId) {
-              await admin.from('org_companies').delete().eq('org_id', orgId).eq('company_id', companyId);
-            }
+            await admin.from('org_companies').delete().eq('org_id', orgId).eq('company_id', companyId);
             await admin.from('user_companies').delete().eq('user_id', user.id).eq('company_id', companyId);
             if (created) {
               await admin.from('companies').delete().eq('id', companyId);
@@ -227,9 +225,7 @@ export async function POST(request: Request) {
         acceptedCompanies.map((accepted) => refundCredits(accepted.transactionId).catch(() => {})),
       );
       for (const accepted of acceptedCompanies) {
-        if (orgId) {
-          await admin.from('org_companies').delete().eq('org_id', orgId).eq('company_id', accepted.companyId);
-        }
+        await admin.from('org_companies').delete().eq('org_id', orgId).eq('company_id', accepted.companyId);
         await admin.from('user_companies').delete().eq('user_id', user.id).eq('company_id', accepted.companyId);
         if (accepted.created) {
           await admin.from('companies').delete().eq('id', accepted.companyId);

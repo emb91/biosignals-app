@@ -22,6 +22,7 @@ import {
 } from '@/lib/provider-usage';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
+import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 type ContactForVerification = {
   id: string;
@@ -307,17 +308,16 @@ export async function POST(request: Request) {
       const admin = createAdminClient();
       const { data: member } = await admin.from('org_members').select('org_id')
         .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-      if (member?.org_id) {
-        const reservation = await reserveCredits({
-          orgId: member.org_id,
-          userId: user.id,
-          action: 'email_validation',
-          quantity: maxValidationRequests,
-          idempotencyKey: `bulk-email-validation:${body.operationId?.trim() || crypto.randomUUID()}`,
-        });
-        if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
-        creditTransactionId = reservation.transactionId;
-      }
+      if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
+      const reservation = await reserveCredits({
+        orgId: member.org_id,
+        userId: user.id,
+        action: 'email_validation',
+        quantity: maxValidationRequests,
+        idempotencyKey: `bulk-email-validation:${body.operationId?.trim() || crypto.randomUUID()}`,
+      });
+      if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+      creditTransactionId = reservation.transactionId;
     }
 
     const result: RefreshResult = {

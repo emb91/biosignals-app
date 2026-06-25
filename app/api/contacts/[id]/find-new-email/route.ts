@@ -20,6 +20,7 @@ import {
   settleUsage,
   settleCredits,
 } from '@/lib/billing/credits';
+import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 type ContactForFinder = {
   id: string;
@@ -188,28 +189,27 @@ export async function POST(
     const admin = createAdminClient();
     const { data: member } = await admin.from('org_members').select('org_id')
       .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-    if (member?.org_id) {
-      const entitlements = await getOrgEntitlements(member.org_id);
-      const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
-      const reservation = await reserveCreditsWithIncludedAllowance({
-        orgId: member.org_id,
-        userId: user.id,
-        action: 'email_finder',
-        operationKey: operationId,
-        window: 'utc_month',
-        windowStart: entitlements.currentPeriodStart,
-        windowEnd: entitlements.currentPeriodEnd,
-        allowanceLimit: entitlements.billingInterval === 'annual'
-          ? entitlements.caps.emailFinderRequestsIncludedMonthly * 12
-          : entitlements.caps.emailFinderRequestsIncludedMonthly,
-        idempotencyKey: `email-finder:${operationId}`,
-        entityType: 'contact',
-        entityId: id,
-      });
-      if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
-      usageContext = { orgId: member.org_id, operationId };
-      creditTransactionId = reservation.transactionId;
-    }
+    if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
+    const entitlements = await getOrgEntitlements(member.org_id);
+    const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
+    const reservation = await reserveCreditsWithIncludedAllowance({
+      orgId: member.org_id,
+      userId: user.id,
+      action: 'email_finder',
+      operationKey: operationId,
+      window: 'utc_month',
+      windowStart: entitlements.currentPeriodStart,
+      windowEnd: entitlements.currentPeriodEnd,
+      allowanceLimit: entitlements.billingInterval === 'annual'
+        ? entitlements.caps.emailFinderRequestsIncludedMonthly * 12
+        : entitlements.caps.emailFinderRequestsIncludedMonthly,
+      idempotencyKey: `email-finder:${operationId}`,
+      entityType: 'contact',
+      entityId: id,
+    });
+    if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+    usageContext = { orgId: member.org_id, operationId };
+    creditTransactionId = reservation.transactionId;
 
     const finder = await findEmailWithZeroBounce(typedContact);
     const email = finder.email?.trim() || null;

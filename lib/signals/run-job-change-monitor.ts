@@ -37,7 +37,6 @@ import { resolveCadenceDaysForUser } from '@/lib/signals/job-change-cadence';
 import { runApifyActor } from '@/lib/apify';
 import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
 import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
-import { orgIdForUser } from '@/lib/org-context';
 import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -259,6 +258,7 @@ function extractCurrentEmployment(
 async function resolveOrCreateCompanyId(
   admin: ReturnType<typeof createAdminClient>,
   userId: string,
+  orgId: string,
   companyName: string | null,
   fallbackCompanyId: string | null,
   currentCompanyName: string | null,
@@ -275,51 +275,40 @@ async function resolveOrCreateCompanyId(
     return fallbackCompanyId;
   }
 
-  const orgId = await orgIdForUser(admin, userId);
-
   // 2. Already linked under the org-scoped account layer.
-  const linkedQuery = orgId
-    ? admin
-        .from('org_companies')
-        .select('company_id, companies!inner(company_name)')
-        .eq('org_id', orgId)
-        .ilike('companies.company_name', trimmed)
-        .limit(1)
-        .maybeSingle()
-    : admin
-        .from('user_companies')
-        .select('company_id, companies!inner(company_name)')
-        .eq('user_id', userId)
-        .ilike('companies.company_name', trimmed)
-        .limit(1)
-        .maybeSingle();
-  const { data: linkedRow } = await linkedQuery;
+  const { data: linkedRow } = await admin
+    .from('org_companies')
+    .select('company_id, companies!inner(company_name)')
+    .eq('org_id', orgId)
+    .ilike('companies.company_name', trimmed)
+    .limit(1)
+    .maybeSingle();
   if (linkedRow && typeof linkedRow.company_id === 'string') {
     return linkedRow.company_id;
   }
 
   const linkCompany = async (companyId: string) => {
     const now = new Date().toISOString();
-    if (orgId) {
-      const { error: orgLinkErr } = await admin
-        .from('org_companies')
-        .upsert(
-          {
-            org_id: orgId,
-            company_id: companyId,
-            source: 'job_change_monitor',
-            created_by: userId,
-            updated_at: now,
-            archived_at: null,
-          },
-          { onConflict: 'org_id,company_id' },
-        );
-      if (orgLinkErr) {
-        console.warn(
-          `[job-change-monitor] failed to link company ${companyId} to org ${orgId}:`,
-          orgLinkErr,
-        );
-      }
+    const { error: orgLinkErr } = await admin
+      .from('org_companies')
+      .upsert(
+        {
+          org_id: orgId,
+          company_id: companyId,
+          source: 'job_change_monitor',
+          created_by: userId,
+          updated_at: now,
+          archived_at: null,
+          archived_by: null,
+          archived_reason: null,
+        },
+        { onConflict: 'org_id,company_id' },
+      );
+    if (orgLinkErr) {
+      console.warn(
+        `[job-change-monitor] failed to link company ${companyId} to org ${orgId}:`,
+        orgLinkErr,
+      );
     }
 
     await admin
@@ -330,6 +319,8 @@ async function resolveOrCreateCompanyId(
           company_id: companyId,
           source: 'job_change_monitor',
           archived_at: null,
+          archived_by: null,
+          archived_reason: null,
         },
         { onConflict: 'user_id,company_id' },
       );
@@ -828,6 +819,10 @@ export async function runJobChangeMonitor(
   const admin = createAdminClient();
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', input.userId).maybeSingle<{ org_id: string }>();
+  if (!member?.org_id) {
+    console.warn(`[job-change-monitor] skipping user ${input.userId}: workspace not found`);
+    return emptyJobChangeResult();
+  }
   // input.limit is the per-run ceiling (cron-tunable via JOB_CHANGE_BATCH); the
   // sweep narrows this down to the plan-cadence target below.
   const perRunCeiling = Math.min(Math.max(input.limit ?? DEFAULT_BATCH, 1), MAX_BATCH);
@@ -912,7 +907,7 @@ export async function runJobChangeMonitor(
   const failures: { contact_id: string; error: string }[] = [];
   const contactRows = (contacts ?? []) as unknown as ContactRecord[];
   const profiles = await scrapeLinkedInProfiles(contactRows, {
-    orgId: member?.org_id ?? null,
+    orgId: member.org_id,
     userId: input.userId,
   });
 
@@ -934,6 +929,7 @@ export async function runJobChangeMonitor(
       const newCompanyId = await resolveOrCreateCompanyId(
         admin,
         row.user_id,
+        member.org_id,
         scraped.companyName,
         row.company_id,
         row.resolved_current_company_name,

@@ -23,6 +23,17 @@ export type ExternalContactMonitorResult = {
   failures: Array<{ contact_id: string; error: string }>;
 };
 
+function emptyExternalContactMonitorResult(): ExternalContactMonitorResult {
+  return {
+    processed: 0,
+    skipped_running: 0,
+    failed: 0,
+    emitted_signal_types: [],
+    recomputed_companies: [],
+    failures: [],
+  };
+}
+
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === 'object') {
@@ -45,6 +56,12 @@ export async function runExternalContactMonitor(
   input: ExternalContactMonitorInput,
 ): Promise<ExternalContactMonitorResult> {
   const admin = createAdminClient();
+  const { data: member } = await admin.from('org_members').select('org_id')
+    .eq('user_id', input.userId).maybeSingle<{ org_id: string }>();
+  if (!member?.org_id) {
+    console.warn(`[external-contact-monitor] skipping user ${input.userId}: workspace not found`);
+    return emptyExternalContactMonitorResult();
+  }
 
   const query = admin
     .from('contacts')
