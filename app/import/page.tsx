@@ -689,12 +689,14 @@ export default function ImportPage() {
 
       const importable = Number(preview.importable ?? 0);
       const credits = Number(preview.estimatedCredits ?? 0);
+      const creditsPerCompany = Number(preview.creditsPerCompany ?? (importable > 0 ? credits / importable : 0));
+      const duplicateRows = Number(preview.duplicateRows ?? 0);
       const alreadyImported = Number(preview.alreadyImported ?? 0);
       const invalid = Number(preview.invalid ?? 0);
 
       if (importable === 0) {
         setErrorMessage(
-          alreadyImported > 0
+          alreadyImported > 0 || duplicateRows > 0
             ? 'Every company in this file is already in your companies.'
             : 'No companies with a usable name or domain to import.',
         );
@@ -702,12 +704,13 @@ export default function ImportPage() {
       }
 
       const skipped: string[] = [];
+      if (duplicateRows > 0) skipped.push(`${duplicateRows.toLocaleString()} duplicate ${duplicateRows === 1 ? 'row' : 'rows'}`);
       if (alreadyImported > 0) skipped.push(`${alreadyImported.toLocaleString()} already in your companies`);
       if (invalid > 0) skipped.push(`${invalid.toLocaleString()} with no usable name or domain`);
-      const skipNote = skipped.length ? `\n\nSkipped: ${skipped.join(', ')}.` : '';
+      const skipNote = skipped.length ? ` Not charged: ${skipped.join(', ')}.` : '';
       const ok = await confirmCredits({
         title: `Enrich ${importable.toLocaleString()} ${importable === 1 ? 'company' : 'companies'}?`,
-        description: `Finds and scores the strongest matches.${skipNote ? ' ' + skipNote.replace(/\s+/g, ' ').trim() : ''}`,
+        description: `Enrich and score these companies at ${creditsPerCompany.toLocaleString()} credits per company.${skipNote}`,
         cost: credits,
         confirmLabel: 'Enrich',
       });
@@ -731,14 +734,15 @@ export default function ImportPage() {
       setExpandedBatchSection(null);
       setProgress({
         total: result.totalUploaded || 0,
-        processed: result.duplicatesRemoved || 0,
-        remaining: result.beingEnriched || 0,
+        processed: result.totalUploaded || 0,
+        remaining: 0,
         duplicates: result.duplicatesRemoved || 0,
-        enriching: result.beingEnriched || 0,
-        enriched: 0,
-        notEnriched: 0,
-        batchStatus: 'processing',
+        enriching: 0,
+        enriched: result.beingEnriched || 0,
+        notEnriched: result.failed || 0,
+        batchStatus: 'complete',
       });
+      router.push(ROUTES.companies);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to start import.');
     } finally {
@@ -917,8 +921,8 @@ export default function ImportPage() {
   const expandedBatchTitle =
     expandedBatchSection === 'failed' ? 'Not enriched'
     : expandedBatchSection === 'duplicate' ? 'Duplicates'
-    : expandedBatchSection === 'enriched' ? 'Enriched contacts'
-    : expandedBatchSection === 'uploaded' ? 'All uploaded contacts'
+    : expandedBatchSection === 'enriched' ? (batchMode === 'companies' ? 'Enriched companies' : 'Enriched contacts')
+    : expandedBatchSection === 'uploaded' ? (batchMode === 'companies' ? 'All uploaded companies' : 'All uploaded contacts')
     : '';
 
   const HubSpotLogo = () => (
@@ -1262,7 +1266,7 @@ export default function ImportPage() {
                     ))}
                   </div>
 
-                  {/* Expanded contact list */}
+                  {/* Expanded import list */}
                   {(expandedBatchSection || batchDetailsError) && (
                     <div className="mb-6 rounded-xl border border-gray-200 bg-white overflow-hidden">
                       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
@@ -1274,7 +1278,9 @@ export default function ImportPage() {
                       ) : batchDetailsError ? (
                         <p className="px-4 py-6 text-sm text-red-600 text-center">{batchDetailsError}</p>
                       ) : visibleBatchRows.length === 0 ? (
-                        <p className="px-4 py-6 text-sm text-gray-400 text-center">No contacts to show.</p>
+                        <p className="px-4 py-6 text-sm text-gray-400 text-center">
+                          No {batchMode === 'companies' ? 'companies' : 'contacts'} to show.
+                        </p>
                       ) : (
                         <div className="divide-y divide-gray-100">
                           {visibleBatchRows.map((row) => {
@@ -1286,13 +1292,19 @@ export default function ImportPage() {
                             return (
                               <div key={row.id} className="flex items-start justify-between gap-4 px-4 py-3">
                                 <div className="min-w-0">
-                                  <p className="text-sm font-medium text-gray-900 truncate">{row.full_name}</p>
+                                  <p className="text-sm font-medium text-gray-900 truncate">
+                                    {batchMode === 'companies'
+                                      ? row.company_name || row.company_domain || 'Unknown company'
+                                      : row.full_name}
+                                  </p>
                                   <p className="text-xs text-gray-500 mt-0.5">{row.company_name || row.company_domain || 'Unknown company'}{row.job_title ? ` · ${row.job_title}` : ''}</p>
                                   {showReason && (
                                     <p className={`text-xs mt-0.5 ${reasonClass}`}>{row.failure_reason}</p>
                                   )}
                                 </div>
-                                <p className="text-xs text-gray-400 shrink-0">{row.email || 'No email'}</p>
+                                <p className="text-xs text-gray-400 shrink-0">
+                                  {batchMode === 'companies' ? 'Company' : row.email || 'No email'}
+                                </p>
                               </div>
                             );
                           })}
