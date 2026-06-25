@@ -19,6 +19,7 @@ import { syncPresentersDelta } from '@/lib/signals/conference/presenters/sync-pr
 import {
   contactSweepSubscribersForTargets,
   listDueContactSweepTargets,
+  markContactSubscriberSourceSweep,
   markContactSourceSweep,
   refreshAllMonitoringUniverses,
 } from '@/lib/billing/monitoring';
@@ -90,6 +91,7 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
+        for (const item of items) failedPersons.add(item.personId);
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/conference-presenters-delta] monitor failed for user ${userId}:`, error);
         await persistRunHistory(admin, {
@@ -104,6 +106,14 @@ async function runCron(request: Request) {
       }
     }
     if (byUser.size === 0) monitorSkipped = targets.length;
+    await Promise.all(subscribers.map((item) => markContactSubscriberSourceSweep({
+      orgId: item.orgId,
+      personId: item.personId,
+      source: item.source,
+      cadenceDays: item.cadenceDays,
+      status: failedPersons.has(item.personId) ? 'failed' : 'succeeded',
+      providerCostUsd: 0,
+    })));
     const subscriberPersonIds = new Set(subscribers.map((item) => item.personId));
     await Promise.all(targets.filter((target) => subscriberPersonIds.has(target.personId)).map((target) => markContactSourceSweep({
       personId: target.personId,

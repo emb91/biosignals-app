@@ -4,6 +4,7 @@ import { runHiringMonitor } from '@/lib/signals/run-hiring-monitor';
 import {
   accountSweepSubscribersForTargets,
   listDueAccountSweepTargets,
+  markAccountSubscriberSourceSweep,
   markAccountSourceSweep,
   markAccountSweep,
   refreshMonitoringUniverse,
@@ -76,6 +77,15 @@ async function runCron(request: Request) {
           markSharedTarget: false,
         });
       }
+      await markAccountSubscriberSourceSweep({
+        orgId: item.orgId,
+        companyId: item.companyId,
+        source: item.source,
+        cadenceDays: item.cadenceDays,
+        status: didFail ? 'failed' : 'succeeded',
+        resultCount,
+        providerCostUsd: resultCount * 0.001,
+      });
       if (didFail) failed += 1;
       else processed += 1;
     }));
