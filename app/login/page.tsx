@@ -34,12 +34,28 @@ export default function LoginPage() {
   // Failed email links (expired/used invite or confirmation) land here as
   // /login?error=auth_failed via /auth/callback — explain instead of showing
   // a bare sign-in form with no context.
+  //
+  // Marketing CTAs and the hero "map your market" form arrive via /signup, which
+  // forwards here as /login?mode=signup (carrying the typed company as ?domain=).
+  // Open in sign-up mode and stash the domain so the onboarding company step can
+  // pre-fill it. localStorage (not a URL param) so it survives the email
+  // confirmation round-trip — that link often opens in a fresh tab, so it also
+  // has to cross tabs. SetupFlow's own-company step consumes it once and clears.
   useEffect(() => {
-    const param = new URLSearchParams(window.location.search).get('error');
-    if (param === 'auth_failed') {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('error') === 'auth_failed') {
       setError(
         'That sign-in link didn’t work — it may have expired or already been used. Sign in below, or ask your teammate to send a fresh invite.',
       );
+    }
+    if (params.get('mode') === 'signup') {
+      setIsSignUp(true);
+    }
+    const seedDomain = params.get('domain')?.trim();
+    if (seedDomain) {
+      try {
+        localStorage.setItem('arcova_setup_seed_domain', seedDomain);
+      } catch {}
     }
   }, []);
 

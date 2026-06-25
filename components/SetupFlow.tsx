@@ -2929,6 +2929,20 @@ function SetupWelcomeCard({
   const [url, setUrl] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Pre-fill from a company the user typed on the marketing site before signing
+  // up (hero "map your market" form → /signup → /login stashes it). Own-company
+  // step only; consume once so it doesn't bleed into later steps or sessions.
+  useEffect(() => {
+    if (mode !== 'own') return;
+    try {
+      const seed = localStorage.getItem('arcova_setup_seed_domain');
+      if (seed) {
+        setUrl(seed.replace(/^https?:\/\//i, ''));
+        localStorage.removeItem('arcova_setup_seed_domain');
+      }
+    } catch {}
+  }, [mode]);
+
   useEffect(() => {
     if (!isLoading) {
       const t = setTimeout(() => inputRef.current?.focus(), 200);
