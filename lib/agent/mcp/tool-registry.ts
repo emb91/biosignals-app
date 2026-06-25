@@ -16,6 +16,7 @@ import {
   fetchFilteredLeads,
 } from '@/lib/leads-data';
 import { quarterOf, isValidPeriod } from '@/lib/coverage/period';
+import { normalizeIcpTaxonomyPayload } from '@/lib/icp-taxonomy';
 import type { McpScope } from '@/lib/mcp/tokens';
 
 /**
@@ -231,7 +232,7 @@ const queryCompanies: AgentTool = {
   inputSchema: {
     type: 'object',
     properties: {
-      companyTypes: { type: 'array', items: { type: 'string' }, description: 'e.g. ["Biotech","CDMO","CRO","Pharma","Academic","Hospital","MedTech","AgBio"]' },
+      companyTypes: { type: 'array', items: { type: 'string' }, description: 'e.g. ["Biotech / Biopharma","CDMO","CRO","Pharma","Academic / Research Institute","Hospital / Health System","SaaS"]' },
       therapeuticAreas: { type: 'array', items: { type: 'string' } },
       modalities: { type: 'array', items: { type: 'string' } },
       fundingStages: { type: 'array', items: { type: 'string' } },
@@ -464,13 +465,14 @@ const updateIcp: AgentTool = {
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     const a = (v: unknown) => (Array.isArray(v) ? (v as string[]) : null);
+    const taxonomy = normalizeIcpTaxonomyPayload(input);
     if (typeof input.name === 'string') patch.name = input.name;
-    if (typeof input.companyType === 'string') patch.company_type = input.companyType;
-    if (a(input.therapeuticAreas)) patch.therapeutic_areas = a(input.therapeuticAreas);
-    if (a(input.modalities)) patch.modalities = a(input.modalities);
-    if (a(input.developmentStages)) patch.development_stages = a(input.developmentStages);
-    if (a(input.companySizes)) patch.company_sizes = a(input.companySizes);
-    if (a(input.fundingStages)) patch.funding_stages = a(input.fundingStages);
+    if (typeof input.companyType === 'string') patch.company_type = taxonomy.company_type;
+    if (a(input.therapeuticAreas)) patch.therapeutic_areas = taxonomy.therapeutic_areas;
+    if (a(input.modalities)) patch.modalities = taxonomy.modalities;
+    if (a(input.developmentStages)) patch.development_stages = taxonomy.development_stages;
+    if (a(input.companySizes)) patch.company_sizes = taxonomy.company_sizes;
+    if (a(input.fundingStages)) patch.funding_stages = taxonomy.funding_stages;
     if (a(input.targetCustomers)) patch.target_customers = a(input.targetCustomers);
     if (a(input.buyerTypes)) patch.buyer_types = a(input.buyerTypes);
 

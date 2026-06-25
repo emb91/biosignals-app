@@ -480,11 +480,93 @@ export function canonicalizeLiFollowerSize(value: unknown): LiFollowerSize | nul
 }
 
 export function canonicalizeBusinessArea(value: unknown): BusinessArea | null {
-  return canonicalizeFromOptions(value, BUSINESS_AREA_OPTIONS);
+  if (typeof value !== 'string') return null;
+
+  const aliases: Record<string, BusinessArea> = {
+    bd: 'Business Development',
+    'biz dev': 'Business Development',
+    'clinical ops': 'Clinical Operations',
+    'clinical operation': 'Clinical Operations',
+    'r d': 'Research & Development',
+    'r and d': 'Research & Development',
+    randd: 'Research & Development',
+    rnd: 'Research & Development',
+    research: 'Research & Development',
+    development: 'Research & Development',
+    'research development': 'Research & Development',
+    'research and development': 'Research & Development',
+    regulatory: 'Regulatory Affairs',
+    manufacturing: 'Manufacturing & CMC',
+    cmc: 'Manufacturing & CMC',
+    'tech ops': 'Manufacturing & CMC',
+    'technical operations': 'Manufacturing & CMC',
+    quality: 'Quality & Compliance',
+    qa: 'Quality & Compliance',
+    qc: 'Quality & Compliance',
+    compliance: 'Quality & Compliance',
+    ai: 'AI & Machine Learning',
+    ml: 'AI & Machine Learning',
+    'machine learning': 'AI & Machine Learning',
+    data: 'Data & Informatics',
+    informatics: 'Data & Informatics',
+    library: 'Library & Information Services',
+    'information services': 'Library & Information Services',
+    'corp dev': 'Strategy & Corporate Development',
+    'corporate development': 'Strategy & Corporate Development',
+    strategy: 'Strategy & Corporate Development',
+  };
+
+  const normalized = normalizeTaxonomyText(value);
+  return aliases[normalized] ?? canonicalizeFromOptions(value, BUSINESS_AREA_OPTIONS);
 }
 
 export function canonicalizeSeniorityLevel(value: unknown): SeniorityLevel | null {
-  return canonicalizeFromOptions(value, SENIORITY_LEVEL_OPTIONS);
+  if (typeof value !== 'string') return null;
+
+  const aliases: Record<string, SeniorityLevel> = {
+    'c suite': 'C-Level',
+    'c level': 'C-Level',
+    'c-suite': 'C-Level',
+    'c-level': 'C-Level',
+    executive: 'C-Level',
+    vp: 'VP / SVP',
+    svp: 'VP / SVP',
+    'vice president': 'VP / SVP',
+    'senior vice president': 'VP / SVP',
+    head: 'Head of / Senior Manager',
+    'head of': 'Head of / Senior Manager',
+    senior: 'Head of / Senior Manager',
+    'senior manager': 'Head of / Senior Manager',
+    ic: 'Individual Contributor',
+    individual: 'Individual Contributor',
+    contributor: 'Individual Contributor',
+    associate: 'Individual Contributor',
+    entry: 'Individual Contributor',
+  };
+
+  const normalized = normalizeTaxonomyText(value);
+  const exact = aliases[normalized] ?? canonicalizeFromOptions(value, SENIORITY_LEVEL_OPTIONS);
+  if (exact) return exact;
+
+  const tokens = normalized.split(' ');
+  if (tokens.includes('svp') || tokens.includes('vp') || normalized.includes('vice president')) {
+    return 'VP / SVP';
+  }
+  if (
+    normalized.includes('c suite') ||
+    normalized.includes('c level') ||
+    tokens.some((token) => ['ceo', 'cto', 'cfo', 'coo', 'cio', 'cmo'].includes(token)) ||
+    normalized.startsWith('chief ')
+  ) {
+    return 'C-Level';
+  }
+  if (tokens.includes('director')) return 'Director';
+  if (normalized.includes('senior manager') || tokens.includes('head')) {
+    return 'Head of / Senior Manager';
+  }
+  if (tokens.includes('manager')) return 'Manager';
+
+  return null;
 }
 
 export function expandModalitiesWithParents(values: readonly Modality[]): Modality[] {

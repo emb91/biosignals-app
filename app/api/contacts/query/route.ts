@@ -43,8 +43,8 @@ const SYSTEM_PROMPT = `${TASK_AGENT_OPENING} Interpret natural language queries 
 Contact data available:
 - name (full_name, first_name, last_name)
 - job_title (raw job title text)
-- seniority_level: "Director", "VP", "C-Suite", "Manager", "Senior", "Associate", "Entry"
-- business_area: "Manufacturing", "Scientific/Technical", "Commercial", "Finance", "Operations"
+- seniority_level: "C-Level", "VP / SVP", "Director", "Head of / Senior Manager", "Manager", "Individual Contributor"
+- business_area: "Executive Leadership", "Business Development", "Clinical Operations", "Research & Development", "Regulatory Affairs", "Manufacturing & CMC", "Commercial", "Quality & Compliance", "AI & Machine Learning", "Data & Informatics"
 - company_name
 - company_fit_score: 0–1 (composite: company type, TA, modality, dev stage, size, funding)
 - contact_fit_score: 0–1 (right function + right seniority for the ICP)
@@ -52,10 +52,10 @@ Contact data available:
 - source / data_provenance_type: "HubSpot", "CSV", "Arcova"
 
 Company data (joined):
-- company_type: "CDMO", "Biotech", "CRO", "Pharma", "Academic", "Hospital", "MedTech", "AgBio"
-- funding_stage: "Pre-Seed", "Seed", "Series A", "Series B", "Series C", "Series D+", "Public", "Private Equity", "Unknown"
-- therapeutic_areas: ["Oncology", "Rare Disease", "Immunology", "Neuroscience", "Cardiovascular", "Infectious Disease", "Metabolic", "Ophthalmology"]
-- modalities: ["Small Molecule", "Biologics", "Cell Therapy", "Gene Therapy", "ADC", "mRNA", "Oligonucleotide", "Diagnostics"]
+- company_type: "Biotech / Biopharma", "Pharma", "CDMO", "CRO", "Medical Device", "Diagnostics", "Academic / Research Institute", "Hospital / Health System", "SaaS"
+- funding_stage: "Bootstrapped", "Pre-seed", "Seed", "Series A", "Series B", "Series C", "Series D+", "Public", "Grant-funded", "Non-profit"
+- therapeutic_areas: ["Oncology", "Rare Disease", "Immunology", "Neuroscience", "Cardiovascular", "Infectious Disease", "Metabolic Disease", "Ophthalmology"]
+- modalities: ["Small Molecule", "Biologic (Antibody)", "Cell Therapy", "Gene Therapy", "ADC", "mRNA", "Oligonucleotide", "Diagnostics"]
 
 Computed status (from fit scores):
 - "reach_out": company_fit >= 0.5 AND contact_fit >= 0.65 AND has_signal (ready to engage now)
@@ -76,7 +76,7 @@ Return JSON with this exact shape:
     "minCompanyFit": null,    // 0–1 number
     "maxCompanyFit": null,
     "hasSignal": null,        // true if they must have a signal
-    "companyTypes": null,     // e.g. ["CDMO", "CRO"]
+    "companyTypes": null,     // e.g. ["CDMO", "Biotech / Biopharma"]
     "fundingStages": null,    // e.g. ["Series B", "Series C"]
     "therapeuticAreas": null, // e.g. ["Oncology"]
     "modalities": null,

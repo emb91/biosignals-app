@@ -13,6 +13,8 @@
   "include": [
     "lib/arcova-taxonomy.ts",
     "lib/icp-taxonomy.ts",
-    "lib/icp-taxonomy.test.ts"
+    "lib/icp-taxonomy.test.ts",
+    "lib/persona-taxonomy.ts",
+    "lib/persona-taxonomy.test.ts"
   ]
 }
