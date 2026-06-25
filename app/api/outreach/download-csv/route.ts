@@ -14,6 +14,7 @@
  * bulk path used from /outreach's selected-row toolbar.
  */
 import { NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
 
 interface Msg {
@@ -62,10 +63,10 @@ export async function POST(req: Request) {
   const contactIds = Array.from(new Set(seqRows.map((r) => r.contact_id)));
   const contactMap = new Map<string, { name: string; email: string; company: string }>();
   if (contactIds.length > 0) {
-    const { data: contacts } = await supabase
+    const admin = createAdminClient();
+    const { data: contacts } = await admin
       .from('contacts')
       .select('id, full_name, first_name, last_name, email, company_name')
-      .eq('user_id', user.id)
       .in('id', contactIds);
     for (const c of (contacts ?? []) as Array<{
       id: string;

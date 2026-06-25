@@ -10,6 +10,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 
 interface SequenceRowOut {
   id: string;
@@ -74,10 +75,10 @@ export async function GET(req: Request) {
   );
   let contactMap = new Map<string, SequenceRowOut['contact']>();
   if (contactIds.length > 0) {
-    const { data: contactRows } = await supabase
+    const admin = createAdminClient();
+    const { data: contactRows } = await admin
       .from('contacts')
       .select('id, full_name, first_name, last_name, email, job_title, company_name, linkedin_url')
-      .eq('user_id', user.id)
       .in('id', contactIds);
     contactMap = new Map(
       (contactRows ?? []).map((c) => [

@@ -29,6 +29,11 @@ import {
 import { HUBSPOT_CLOSED_DEAL_STAGES } from '@/lib/hubspot-deals';
 import { effectiveReadiness } from '@/lib/lead-action';
 import { authoritativeAccountReadiness, resolveEffectivePriority } from '@/lib/effective-priority';
+import {
+  fetchOrgOutreachActivityByPerson,
+  statusForTeammateAction,
+  type OrgOutreachActivity,
+} from '@/lib/org-outreach';
 
 /** Normalise a 0-1 or 0-100 score to a 0-1 fraction (null if unusable). */
 function norm01Score(value: unknown): number | null {
@@ -233,6 +238,17 @@ function normalizeText(value: string): string {
     .toLowerCase()
     .replace(/[’']/g, "'")
     .replace(/\s+/g, ' ');
+}
+
+function normalizeOwnSequenceStatus(row: {
+  dispatch_status: string | null;
+  exported_to?: string | null;
+}): string {
+  let normalized = row.dispatch_status;
+  if (normalized === 'queued') normalized = 'sent';
+  if (normalized === 'exported') normalized = 'sent';
+  if (!normalized) normalized = row.exported_to ? 'sent' : 'draft';
+  return normalized;
 }
 
 function canonicalizeDevelopmentStage(value: string): string | null {
@@ -651,45 +667,121 @@ async function attachLatestSequenceStatusBestEffort(
       .filter((v): v is string => Boolean(v)),
   );
   if (contactIds.length === 0) {
-    return rows.map((row) => ({ ...row, latest_sequence_status: null }));
+    return rows.map((row) => ({ ...row, latest_sequence_status: null, org_outreach_activity: null }));
   }
   try {
-    const { data, error } = await supabase
-      .from('outreach_sequences')
-      .select('contact_id, dispatch_status, exported_to, created_at')
-      .eq('user_id', userId)
-      .in('contact_id', contactIds)
-      .order('created_at', { ascending: false });
-    if (error || !data) {
-      return rows.map((row) => ({ ...row, latest_sequence_status: null }));
+    const personByContactId = new Map<string, string>();
+    for (const row of rows) {
+      if (typeof row.id === 'string' && typeof row.person_id === 'string') {
+        personByContactId.set(row.id, row.person_id);
+      }
     }
+    const missingPersonContactIds = contactIds.filter((id) => !personByContactId.has(id));
+    if (missingPersonContactIds.length > 0) {
+      const { data: links } = await supabase
+        .from('user_contacts')
+        .select('id, person_id')
+        .in('id', missingPersonContactIds);
+      for (const link of (links ?? []) as Array<{ id: string; person_id: string | null }>) {
+        if (link.person_id) personByContactId.set(link.id, link.person_id);
+      }
+    }
+
+    const teammateByPerson = await fetchOrgOutreachActivityByPerson(supabase, {
+      userId,
+      personIds: [...new Set([...personByContactId.values()])],
+    });
+
+    const personIds = [...new Set([...personByContactId.values()])];
+    const [personSeqResult, contactSeqResult] = await Promise.all([
+      personIds.length > 0
+        ? supabase
+            .from('outreach_sequences')
+            .select('id, person_id, contact_id, dispatch_status, exported_to, created_at')
+            .eq('user_id', userId)
+            .in('person_id', personIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      contactIds.length > 0
+        ? supabase
+            .from('outreach_sequences')
+            .select('id, person_id, contact_id, dispatch_status, exported_to, created_at')
+            .eq('user_id', userId)
+            .in('contact_id', contactIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (personSeqResult.error || contactSeqResult.error) {
+      return rows.map((row) => ({ ...row, latest_sequence_status: null, org_outreach_activity: null }));
+    }
+    const sequenceRows = [
+      ...((personSeqResult.data ?? []) as Array<{
+        id: string;
+        person_id: string | null;
+        contact_id: string | null;
+        dispatch_status: string | null;
+        exported_to: string | null;
+        created_at: string;
+      }>),
+      ...((contactSeqResult.data ?? []) as Array<{
+        id: string;
+        person_id: string | null;
+        contact_id: string | null;
+        dispatch_status: string | null;
+        exported_to: string | null;
+        created_at: string;
+      }>),
+    ]
+      .filter((row, index, all) => all.findIndex((candidate) => candidate.id === row.id) === index)
+      .sort((a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''));
     const latest = new Map<string, string | null>();
-    for (const r of data as Array<{
-      contact_id: string;
-      dispatch_status: string | null;
-      exported_to: string | null;
-    }>) {
-      // Order by created_at desc, so the first hit per contact_id is the most
+    for (const r of sequenceRows) {
+      const sequencePersonId = r.person_id ?? (r.contact_id ? personByContactId.get(r.contact_id) : null);
+      if (!sequencePersonId) continue;
+      if (latest.has(sequencePersonId)) continue;
+      // Order by created_at desc, so the first hit per person_id is the most
       // recent one — set-if-absent preserves that.
-      if (latest.has(r.contact_id)) continue;
       // Normalise to the four states the action override understands. Legacy
       // 'exported' rows (CSV/clipboard pulls before the export feature was
       // retired) imply manual dispatch — collapse to 'sent'. A null status
       // with no export means staged-but-not-dispatched → 'draft' (matches
       // /outreach's `dispatch_status ?? 'draft'` display).
-      let normalized = r.dispatch_status;
-      if (normalized === 'exported') normalized = 'sent';
-      if (!normalized) normalized = r.exported_to ? 'sent' : 'draft';
-      latest.set(r.contact_id, normalized);
+      latest.set(sequencePersonId, normalizeOwnSequenceStatus(r));
     }
     return rows.map((row) => ({
       ...row,
-      latest_sequence_status:
-        typeof row.id === 'string' ? latest.get(row.id) ?? null : null,
+      latest_sequence_status: (() => {
+        if (typeof row.id !== 'string') return null;
+        const personId = personByContactId.get(row.id);
+        const ownStatus = personId ? latest.get(personId) : null;
+        if (ownStatus) return ownStatus;
+        const teammate = personId ? teammateByPerson.get(personId) : null;
+        return teammate ? statusForTeammateAction(teammate.status) : null;
+      })(),
+      org_outreach_activity: (() => {
+        if (typeof row.id !== 'string') return null;
+        const personId = personByContactId.get(row.id);
+        const teammate = personId ? teammateByPerson.get(personId) : null;
+        return teammate ? serializeOrgOutreachActivity(teammate) : null;
+      })(),
     }));
   } catch {
-    return rows.map((row) => ({ ...row, latest_sequence_status: null }));
+    return rows.map((row) => ({ ...row, latest_sequence_status: null, org_outreach_activity: null }));
   }
+}
+
+function serializeOrgOutreachActivity(activity: OrgOutreachActivity): {
+  userName: string;
+  status: OrgOutreachActivity['status'];
+  customerFacing: boolean;
+  lastStatusAt: string | null;
+} {
+  return {
+    userName: activity.userName,
+    status: activity.status,
+    customerFacing: activity.customerFacing,
+    lastStatusAt: activity.lastStatusAt,
+  };
 }
 
 /**

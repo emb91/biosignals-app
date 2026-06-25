@@ -8,6 +8,7 @@
  * Output: { count, sequences: [{ id, contact_id, contact_name, anchor_hook_text, last_status_at, lemlist_lead_id, lemlist_lead_email }] }
  */
 import { NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
 
 export async function GET() {
@@ -34,10 +35,10 @@ export async function GET() {
   const contactIds = Array.from(new Set(seqRows.map((r) => r.contact_id)));
   let contactMap = new Map<string, { full_name: string | null; first_name: string | null; last_name: string | null }>();
   if (contactIds.length > 0) {
-    const { data: contacts } = await supabase
+    const admin = createAdminClient();
+    const { data: contacts } = await admin
       .from('contacts')
       .select('id, full_name, first_name, last_name')
-      .eq('user_id', user.id)
       .in('id', contactIds);
     contactMap = new Map(
       (contacts ?? []).map((c) => [

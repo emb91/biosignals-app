@@ -828,6 +828,7 @@ export default function BriefingPage() {
           const leadJson = (await topLeadsRes.json()) as { data?: Array<Record<string, unknown>> };
           let leadRows = (leadJson.data ?? []).filter((lead) => typeof lead.id === 'string');
           setHasAnyLeads(leadRows.length > 0);
+          leadRows = leadRows.filter((lead) => !lead.org_outreach_activity);
 
           // Never recommend a lead a teammate is already working — two reps must not be
           // pointed at the same person. Best-effort: if the lookup fails, show unfiltered.

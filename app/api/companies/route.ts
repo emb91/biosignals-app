@@ -13,6 +13,7 @@ import {
   type HubSpotLeadState,
   formatHubSpotStageLabel,
 } from '@/lib/hubspot-lead-state';
+import { fetchOrgOutreachActivityByPerson, statusForTeammateAction } from '@/lib/org-outreach';
 
 // Row returned by the list_user_accounts Postgres RPC.
 // Aggregation, sort, and pagination happen entirely in SQL.
@@ -180,9 +181,22 @@ async function fetchCompanyCrmStatuses(
 async function fetchCompanySequenceStatuses(
   supabase: SupabaseLike,
   userId: string,
+  orgId: string | null,
   companyIds: string[],
 ): Promise<Map<string, SequenceDispatchStatus>> {
   if (!companyIds.length) return new Map();
+  const companySeq = new Map<string, SequenceDispatchStatus>();
+  const applyStatus = (companyId: string | null | undefined, status: string | null | undefined) => {
+    if (!companyId) return;
+    if (status === 'generating') {
+      companySeq.set(companyId, 'generating');
+    } else if (status === 'draft') {
+      companySeq.set(companyId, 'draft');
+    } else if (status === 'sent' && !['generating', 'draft'].includes(companySeq.get(companyId) ?? '')) {
+      companySeq.set(companyId, 'sent');
+    }
+  };
+
   try {
     const { data: contacts, error: contactsErr } = await supabase
       .from('contacts')
@@ -190,7 +204,7 @@ async function fetchCompanySequenceStatuses(
       .eq('user_id', userId)
       .in('company_id', companyIds)
       .is('archived_at', null);
-    if (contactsErr || !contacts?.length) return new Map();
+    if (contactsErr || !contacts?.length) throw contactsErr ?? new Error('No own contacts found');
 
     const companyByContactId = new Map(
       (contacts as Array<{ id: string; company_id: string }>).map((c) => [c.id, c.company_id]),
@@ -203,7 +217,7 @@ async function fetchCompanySequenceStatuses(
       .eq('user_id', userId)
       .in('contact_id', contactIds)
       .order('created_at', { ascending: false });
-    if (seqErr || !seqs?.length) return new Map();
+    if (seqErr || !seqs?.length) throw seqErr ?? new Error('No own sequences found');
 
     // Latest status per contact (newest first → set-if-absent), normalised to the
     // states the action override understands — identical to /api/contacts.
@@ -215,28 +229,70 @@ async function fetchCompanySequenceStatuses(
     }>) {
       if (latestByContact.has(r.contact_id)) continue;
       let normalized = r.dispatch_status;
+      if (normalized === 'queued') normalized = 'sent';
       if (normalized === 'exported') normalized = 'sent';
       if (!normalized) normalized = r.exported_to ? 'sent' : 'draft';
       latestByContact.set(r.contact_id, normalized);
     }
 
     // Aggregate per company: generating/draft > sent; everything else ignored.
-    const companySeq = new Map<string, SequenceDispatchStatus>();
     for (const [contactId, status] of latestByContact) {
-      const companyId = companyByContactId.get(contactId);
-      if (!companyId) continue;
-      if (status === 'generating') {
-        companySeq.set(companyId, 'generating');
-      } else if (status === 'draft') {
-        companySeq.set(companyId, 'draft');
-      } else if (status === 'sent' && !['generating', 'draft'].includes(companySeq.get(companyId) ?? '')) {
-        companySeq.set(companyId, 'sent');
+      applyStatus(companyByContactId.get(contactId), status);
+    }
+  } catch {
+    // Own-sequence lookup is best-effort; teammate activity below can still fill.
+  }
+
+  if (!orgId) return companySeq;
+  try {
+    const { data: states } = await supabase
+      .from('org_contact_state')
+      .select('person_id, company_id')
+      .eq('org_id', orgId)
+      .in('company_id', companyIds)
+      .is('archived_at', null);
+    const stateRows = (states ?? []) as Array<{ person_id: string | null; company_id: string | null }>;
+    const companyByPersonId = new Map<string, string>();
+    for (const row of stateRows) {
+      if (row.person_id && row.company_id && !companyByPersonId.has(row.person_id)) {
+        companyByPersonId.set(row.person_id, row.company_id);
       }
     }
-    return companySeq;
+    const personIds = [...companyByPersonId.keys()];
+    if (personIds.length > 0) {
+      const { data: ownSeqs } = await supabase
+        .from('outreach_sequences')
+        .select('person_id, dispatch_status, exported_to, created_at')
+        .eq('user_id', userId)
+        .in('person_id', personIds)
+        .order('created_at', { ascending: false });
+      const latestByPerson = new Set<string>();
+      for (const row of (ownSeqs ?? []) as Array<{
+        person_id: string | null;
+        dispatch_status: string | null;
+        exported_to: string | null;
+      }>) {
+        if (!row.person_id || latestByPerson.has(row.person_id)) continue;
+        latestByPerson.add(row.person_id);
+        let normalized = row.dispatch_status;
+        if (normalized === 'queued') normalized = 'sent';
+        if (normalized === 'exported') normalized = 'sent';
+        if (!normalized) normalized = row.exported_to ? 'sent' : 'draft';
+        applyStatus(companyByPersonId.get(row.person_id), normalized);
+      }
+    }
+    const activity = await fetchOrgOutreachActivityByPerson(supabase, {
+      userId,
+      personIds,
+    });
+    for (const [personId, row] of activity) {
+      applyStatus(companyByPersonId.get(personId), statusForTeammateAction(row.status));
+    }
   } catch {
-    return new Map();
+    // Best-effort teammate overlay; never break the accounts list for it.
   }
+
+  return companySeq;
 }
 
 export async function GET(request: Request) {
@@ -320,7 +376,7 @@ export async function GET(request: Request) {
       // CRM status scoped to this page only — the expensive per-contact lookup.
       fetchCompanyCrmStatuses(supabase, user.id, sliceCompanyIds),
       // Aggregate outreach funnel state per account (mirrors the contact action).
-      fetchCompanySequenceStatuses(supabase, user.id, sliceCompanyIds),
+      fetchCompanySequenceStatuses(supabase, user.id, orgId, sliceCompanyIds),
       orgId && sliceCompanyIds.length > 0
         ? supabase
             .from('org_company_overrides')
