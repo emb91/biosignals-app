@@ -601,7 +601,7 @@ function DetailCard({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-2 px-3.5 py-3 text-left transition-colors hover:bg-white/60"
+        className="flex w-full items-center justify-between gap-2 px-[14px] py-[11px] text-left transition-colors hover:bg-white/60"
       >
         <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">{title}</span>
         <span className="inline-flex items-center gap-2">
@@ -613,7 +613,7 @@ function DetailCard({
           <ChevronDown className={cn('h-4 w-4 shrink-0 text-[#7d909a] transition-transform duration-200', open ? '' : '-rotate-90')} />
         </span>
       </button>
-      {open && <div className="border-t border-[rgba(13,53,71,0.06)] px-3.5 py-3.5">{children}</div>}
+      {open && <div className="border-t border-[rgba(13,53,71,0.06)] px-[14px] py-[13px]">{children}</div>}
     </div>
   );
 }
@@ -2165,7 +2165,7 @@ export default function CompaniesPage() {
                     </div>
 
                     {/* Panel body */}
-                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                    <div className="min-h-0 flex-1 overflow-y-auto space-y-[13px] p-[16px]">
 
                       {panelMode === 'fit' && (
                         <CompanyIcpFitDetailPanel
@@ -2218,10 +2218,10 @@ export default function CompaniesPage() {
                         return (
                           <div className="flex flex-col gap-3">
                             {/* Recommended action card — pill + updated + rationale (design "Recommended action") */}
-                            <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3.5 py-3.5 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                            <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-[14px] py-[13px] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                               <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Recommended action</p>
                               <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-                                <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-sm font-medium', config.className)}>
+                                <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-[13.5px] font-medium', config.className)}>
                                   {config.label}
                                 </span>
                                 {updatedAt ? (
@@ -2249,7 +2249,7 @@ export default function CompaniesPage() {
                                     <button
                                       type="button"
                                       onClick={() => router.push(ROUTES.accounts)}
-                                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                      className="inline-flex items-center gap-1.5 text-[13.5px] font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                     >
                                       View Signals
                                       <ChevronRight className="w-4 h-4" aria-hidden />
@@ -2272,7 +2272,7 @@ export default function CompaniesPage() {
                                   type="button"
                                   onClick={() => handleAccountReachOut(selectedAccount)}
                                   disabled={reachOutLoadingId === selectedAccount.id}
-                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2.5 text-sm font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:opacity-60"
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2.5 text-[13.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:opacity-60"
                                 >
                                   Choose a contact
                                   <ChevronRight className="h-4 w-4" aria-hidden />
@@ -2289,7 +2289,7 @@ export default function CompaniesPage() {
                                 <button
                                   type="button"
                                   onClick={() => router.push(ROUTES.outreach)}
-                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition-[filter] hover:brightness-110"
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition-[filter] hover:brightness-110"
                                 >
                                   Open outreach
                                   <ChevronRight className="h-4 w-4" aria-hidden />
@@ -2330,7 +2330,7 @@ export default function CompaniesPage() {
                                   <button
                                     type="button"
                                     onClick={() => openContactAcquisition(selectedAccount)}
-                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                   >
                                     <Users className="h-4 w-4" />
                                     Find contacts
@@ -2355,7 +2355,7 @@ export default function CompaniesPage() {
                             </div>
 
                             {/* Why this action — bullet rationale (design "Why this action" card) */}
-                            <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3.5 py-3.5 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                            <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-[14px] py-[13px] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
                               <p className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Why this action</p>
                               <ul className="mt-3 flex flex-col gap-2.5">
                                 {whyBullets.map((b, i) => (
@@ -2447,7 +2447,7 @@ export default function CompaniesPage() {
                                 <button
                                   type="button"
                                   onClick={() => router.push(ROUTES.accounts)}
-                                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                  className="inline-flex items-center gap-1.5 text-[13.5px] font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                 >
                                   Review signals
                                   <ChevronRight className="w-4 h-4" aria-hidden />
@@ -2621,11 +2621,11 @@ export default function CompaniesPage() {
                               <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                                 <div className="min-w-0">
                                   <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Type</p>
-                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
+                                  <p className="mt-2 text-[13.5px] leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
                                 </div>
                                 <div className="min-w-0">
                                   <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">Imported</p>
-                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">
+                                  <p className="mt-2 text-[13.5px] leading-snug text-[#0d3547]">
                                     {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
                                   </p>
                                 </div>
@@ -2633,11 +2633,11 @@ export default function CompaniesPage() {
 
                               <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
                                 {selectedAccount.last_enriched_at && (
-                                  <p className="text-xs leading-snug text-[#4a6470]">
+                                  <p className="text-[11px] leading-snug text-[#4a6470]">
                                     Last updated {formatDate(selectedAccount.last_enriched_at)}
                                   </p>
                                 )}
-                                <p className="text-xs leading-relaxed text-[#6B7280]">
+                                <p className="text-[11px] leading-relaxed text-[#6B7280]">
                                   You can refresh this enrichment again whenever you need updated data.
                                 </p>
                                 {(() => {
@@ -2651,14 +2651,14 @@ export default function CompaniesPage() {
                                   if (isWorking) {
                                     return (
                                       <div className="flex items-center gap-2">
-                                        <span className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] opacity-60">
+                                        <span className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#1F2937] opacity-60">
                                           <RotateCw className="w-4 h-4 text-[#1F2937] animate-spin" />
                                           Enriching…
                                         </span>
                                         <button
                                           type="button"
                                           onClick={() => stopCompanyEnrichment(selectedAccount.id)}
-                                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50"
+                                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-[13.5px] font-semibold text-red-600 transition-colors hover:bg-red-50"
                                         >
                                           <X className="w-4 h-4" />
                                           Stop
@@ -2670,7 +2670,7 @@ export default function CompaniesPage() {
                                     <button
                                       type="button"
                                       onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
-                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50"
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#1F2937] transition-colors hover:bg-gray-50"
                                     >
                                       <RotateCw className="w-4 h-4 text-[#1F2937]" />
                                       Refresh enrichment
@@ -2708,18 +2708,18 @@ export default function CompaniesPage() {
                                         {idx + 1}
                                       </span>
                                       <div className="min-w-0">
-                                        <p className="truncate text-sm font-medium text-gray-900">
+                                        <p className="truncate text-[13.5px] font-medium text-gray-900">
                                           {contact.full_name || '—'}
                                         </p>
                                         {title && (
-                                          <p className="truncate text-xs text-gray-500 mt-0.5">{title}</p>
+                                          <p className="truncate text-[11px] text-gray-500 mt-0.5">{title}</p>
                                         )}
                                       </div>
                                     </div>
                                     <div className="flex shrink-0 items-center gap-2">
                                       {priorityPct != null && (
                                         <span className="text-right">
-                                          <span className="block text-sm font-semibold tabular-nums text-gray-900">
+                                          <span className="block text-[13.5px] font-semibold tabular-nums text-gray-900">
                                             {priorityPct}
                                           </span>
                                           <span className="block text-[10px] uppercase tracking-[0.12em] text-gray-400">
@@ -2727,7 +2727,7 @@ export default function CompaniesPage() {
                                           </span>
                                         </span>
                                       )}
-                                      <span className="text-xs font-semibold text-arcova-teal opacity-0 transition-opacity group-hover:opacity-100">
+                                      <span className="text-[11px] font-semibold text-arcova-teal opacity-0 transition-opacity group-hover:opacity-100">
                                         Reach out →
                                       </span>
                                     </div>
@@ -2759,14 +2759,14 @@ export default function CompaniesPage() {
                                   <button
                                     type="button"
                                     onClick={() => openContactAcquisition(selectedAccount)}
-                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2.5 text-sm font-semibold text-arcova-teal hover:bg-arcova-teal/5 transition-colors"
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2.5 text-[13.5px] font-semibold text-arcova-teal hover:bg-arcova-teal/5 transition-colors"
                                   >
                                     <Users className="h-3.5 w-3.5" />
                                     Find contacts
                                   </button>
                                 </>
                               ) : (
-                                <p className="text-sm text-gray-400 text-center py-12">No contacts found.</p>
+                                <p className="text-[13.5px] text-gray-400 text-center py-12">No contacts found.</p>
                               )}
                             </div>
                           ) : (
@@ -2790,7 +2790,7 @@ export default function CompaniesPage() {
                                           {contact.email && <p className="mt-1 break-all text-[12.5px] text-[#7d909a]">{contact.email}</p>}
                                         </div>
                                         {fitPct && (
-                                          <span className="shrink-0 font-manrope text-base font-bold tabular-nums text-[#0d3547]">{fitPct}</span>
+                                          <span className="shrink-0 font-manrope text-[13.5px] font-bold tabular-nums text-[#0d3547]">{fitPct}</span>
                                         )}
                                       </div>
                                       <button
@@ -2805,7 +2805,7 @@ export default function CompaniesPage() {
                                     {/* Fit breakdown — always visible */}
                                     <div className="border-t border-[rgba(13,53,71,0.06)] px-3.5 py-3.5 space-y-2.5">
                                       {fitLoading ? (
-                                        <p className="text-xs text-gray-400">Loading fit…</p>
+                                        <p className="text-[11px] text-gray-400">Loading fit…</p>
                                       ) : fit?.winning_breakdown ? (
                                         <>
                                           {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
@@ -2821,7 +2821,7 @@ export default function CompaniesPage() {
                                             return (
                                               <div key={key}>
                                                 <div className="flex items-center justify-between gap-2">
-                                                  <p className="text-xs font-medium text-gray-700">{component.label}</p>
+                                                  <p className="text-[11px] font-medium text-gray-700">{component.label}</p>
                                                   {componentPct && <span className="text-[11px] text-slate-500 shrink-0">{componentPct}</span>}
                                                 </div>
                                                 <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
@@ -2845,7 +2845,7 @@ export default function CompaniesPage() {
                                           })}
                                         </>
                                       ) : (
-                                        <p className="text-xs text-gray-400">No contact fit data yet.</p>
+                                        <p className="text-[11px] text-gray-400">No contact fit data yet.</p>
                                       )}
                                     </div>
                                   </div>
@@ -2899,11 +2899,11 @@ export default function CompaniesPage() {
 
                           {hubspotCrmPanel.loading ? (
                             <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
-                              <p className="text-sm leading-snug text-[#4a6470]">Loading HubSpot CRM…</p>
+                              <p className="text-[13.5px] leading-snug text-[#4a6470]">Loading HubSpot CRM…</p>
                             </div>
                           ) : hubspotCrmPanel.error ? (
                             <div className="rounded-xl border border-[#ffd8c7] bg-[#fff7f3] px-4 py-4">
-                              <p className="text-sm leading-snug text-[#b45309]">{hubspotCrmPanel.error}</p>
+                              <p className="text-[13.5px] leading-snug text-[#b45309]">{hubspotCrmPanel.error}</p>
                             </div>
                           ) : hubspotCrmPanel.data?.deals.length ? (
                             <div className="space-y-3">
@@ -2925,7 +2925,7 @@ export default function CompaniesPage() {
                                         <p className="font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                           {deal.deal_name || 'HubSpot deal'}
                                         </p>
-                                        <p className="mt-1 text-xs text-[#7d909a]">
+                                        <p className="mt-1 text-[11px] text-[#7d909a]">
                                           HubSpot company:{' '}
                                           <span className="font-medium text-[#4a6470]">
                                             {deal.hubspot_company_name || deal.hubspot_company_domain || '—'}
@@ -2942,7 +2942,7 @@ export default function CompaniesPage() {
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Amount
                                         </p>
-                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                        <p className="mt-1 text-[13.5px] leading-snug text-[#0d3547]">
                                           {formatUsdValue(deal.amount) || '—'}
                                         </p>
                                       </div>
@@ -2950,7 +2950,7 @@ export default function CompaniesPage() {
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Close date
                                         </p>
-                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                        <p className="mt-1 text-[13.5px] leading-snug text-[#0d3547]">
                                           {formatLastUpdated(deal.close_date)}
                                         </p>
                                       </div>
@@ -2958,7 +2958,7 @@ export default function CompaniesPage() {
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Last synced
                                         </p>
-                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                        <p className="mt-1 text-[13.5px] leading-snug text-[#0d3547]">
                                           {formatLastUpdated(deal.synced_at)}
                                         </p>
                                       </div>
@@ -2973,7 +2973,7 @@ export default function CompaniesPage() {
                                           {deal.contacts.map((c, idx) => (
                                             <li
                                               key={`${deal.hubspot_deal_id}:${c.arcova_contact_id ?? c.email ?? idx}`}
-                                              className="text-xs text-[#4a6470]"
+                                              className="text-[11px] text-[#4a6470]"
                                             >
                                               <span className="font-medium text-[#0d3547]">
                                                 {c.full_name || c.email || 'Unknown contact'}
@@ -2989,7 +2989,7 @@ export default function CompaniesPage() {
 
                                     {hasMismatch && (
                                       <div className="mt-3 rounded-lg border border-[#ffd8c7] bg-[#fff7f3] px-3 py-2">
-                                        <p className="text-xs leading-snug text-[#b45309]">
+                                        <p className="text-[11px] leading-snug text-[#b45309]">
                                           HubSpot company domain ({deal.hubspot_company_domain}) doesn't match the Arcova
                                           company ({arcovaDomain}).
                                         </p>
@@ -3001,7 +3001,7 @@ export default function CompaniesPage() {
                             </div>
                           ) : (
                             <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
-                              <p className="text-sm leading-snug text-[#4a6470]">
+                              <p className="text-[13.5px] leading-snug text-[#4a6470]">
                                 No HubSpot deal activity on this company yet.
                               </p>
                             </div>
@@ -3072,7 +3072,7 @@ export default function CompaniesPage() {
                                 animateOnMount
                                 deferAnimationMs={160}
                                 label={
-                                  <span className="block text-xl font-semibold leading-snug tabular-nums text-[#0d3547]">
+                                  <span className="block text-[19px] font-semibold leading-snug tabular-nums text-[#0d3547]">
                                     {priorityPct != null ? priorityPct : '—'}
                                   </span>
                                 }
@@ -3124,7 +3124,7 @@ export default function CompaniesPage() {
                           <button
                             type="button"
                             onClick={() => setEditAccountOpen(true)}
-                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-[13.5px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                             Edit company
@@ -3155,7 +3155,7 @@ export default function CompaniesPage() {
                                 window.alert(error instanceof Error ? error.message : 'Could not archive company.');
                               }
                             }}
-                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-[13.5px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                             Archive company
