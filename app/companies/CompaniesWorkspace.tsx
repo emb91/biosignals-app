@@ -2072,7 +2072,7 @@ export default function CompaniesPage() {
                         <img
                           src={selectedAccount.logo_cached ?? selectedAccount.logo_url ?? ''}
                           alt=""
-                          className="relative z-[1] h-[3.375rem] w-[3.375rem] shrink-0 rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white object-contain p-1 shadow-sm ring-1 ring-black/5"
+                          className="relative z-[1] h-[54px] w-[54px] shrink-0 rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white object-contain p-1 shadow-sm ring-1 ring-black/5"
                           onError={() =>
                             setFailedLogoByAccountId((prev) => ({
                               ...prev,
@@ -2081,7 +2081,7 @@ export default function CompaniesPage() {
                           }
                         />
                       ) : (
-                        <div className="relative z-[1] flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white font-manrope text-2xl font-semibold text-arcova-teal shadow-sm ring-1 ring-black/5">
+                        <div className="relative z-[1] flex h-[54px] w-[54px] shrink-0 items-center justify-center rounded-[13px] border border-[rgba(13,53,71,0.08)] bg-white font-manrope text-[19px] font-semibold text-arcova-teal shadow-sm ring-1 ring-black/5">
                           {(selectedAccount.company_name?.[0] || selectedAccount.domain?.[0] || '?').toUpperCase()}
                         </div>
                       )}
@@ -2103,7 +2103,7 @@ export default function CompaniesPage() {
                                         ? 'CRM'
                                         : 'Company'}
                         </p>
-                        <h2 className="font-manrope mt-1 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[1.4375rem]">
+                        <h2 className="font-manrope mt-1 break-words text-[23px] font-bold leading-[1.1] tracking-[-0.024em] text-[rgb(13,53,71)]">
                           {selectedAccount.company_name || selectedAccount.domain || 'Company'}
                         </h2>
                       </div>
