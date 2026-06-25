@@ -82,6 +82,7 @@ export type SignalKey =
   | 'executive_hiring'
   | 'hiring_expansion'
   | 'headcount_expansion'
+  | 'headcount_contraction'
   | 'new_to_role'
   | 'recently_promoted'
   | 'recently_changed_company'
