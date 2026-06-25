@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, ArrowUpRight, Check, Loader2, Minus, Plus } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, CreditCard, Loader2, Minus, Plus } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import AppSidebar from '@/components/AppSidebar';
 
@@ -27,6 +27,11 @@ type Summary = {
   complimentary?: boolean;
   role: 'owner' | 'admin' | 'member';
   plan: { key: string; name: string; status: string; billingInterval: 'monthly' | 'annual' };
+  billing?: {
+    stripeBacked: boolean;
+    canOpenPortal: boolean;
+    creditPackConfigured: boolean;
+  };
   credits: {
     available: number;
     granted: number;
@@ -120,6 +125,8 @@ export default function BillingPage() {
   const currentPlanKey = summary?.plan.key ?? 'free';
   const hasPaidPlan = currentPlanKey === 'starter' || currentPlanKey === 'growth';
   const interval = annual ? 'annual' : 'monthly';
+  const canOpenPortal = Boolean(summary?.billing?.canOpenPortal);
+  const canBuyCreditPack = Boolean(summary?.catalog.pack?.available && summary.billing?.stripeBacked);
 
   const redirectTo = useCallback(async (path: string, body?: Record<string, unknown>) => {
     setBusy(path + JSON.stringify(body ?? {}));
@@ -245,6 +252,32 @@ export default function BillingPage() {
             </div>
           )}
 
+          {hasPaidPlan && (
+            <section className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[22px] border border-white/80 bg-white/70 p-5 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl">
+              <div>
+                <h2 className="text-base font-semibold text-[#0d3547]">{summary.plan.name} billing</h2>
+                <p className="mt-1 text-sm text-[#7d909a]">
+                  Manage payment method, invoices, cancellation and plan changes in Stripe Customer Portal.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void redirectTo('/api/billing/portal')}
+                disabled={!canManage || !canOpenPortal || busy !== null}
+                className="inline-flex items-center gap-2 rounded-full bg-[#0d3547] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#003344] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <CreditCard className="h-4 w-4" />
+                Manage in Stripe
+                <ArrowUpRight className="h-4 w-4" />
+              </button>
+              {!canOpenPortal && canManage && (
+                <p className="basis-full text-sm text-[#7d909a]">
+                  This plan is not connected to a Stripe customer yet. Choose a hosted plan checkout before managing billing.
+                </p>
+              )}
+            </section>
+          )}
+
           <section className="mt-11 grid overflow-hidden rounded-[24px] border border-[rgba(13,53,71,0.08)] bg-white shadow-[0_2px_18px_-6px_rgba(13,53,71,0.10)] md:grid-cols-3">
             {plans.map((plan, index) => {
               const current = currentPlanKey === plan.key && (plan.key === 'free' || summary.plan.billingInterval === interval);
@@ -286,10 +319,10 @@ export default function BillingPage() {
                     type="button"
                     onClick={() => {
                       if (!plan.paid || current || unavailable || !canManage) return;
-                      if (hasPaidPlan) void redirectTo('/api/billing/portal');
+                      if (hasPaidPlan && canOpenPortal) void redirectTo('/api/billing/portal');
                       else void redirectTo('/api/billing/checkout', { kind: 'plan', planKey: plan.key, billing: interval });
                     }}
-                    disabled={!plan.paid || current || unavailable || !canManage || busy !== null}
+                    disabled={!plan.paid || current || unavailable || !canManage || busy !== null || (hasPaidPlan && !canOpenPortal)}
                     className={`mt-5 inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-[15px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-55 ${
                       plan.featured
                         ? 'bg-[#00a4b4] text-white shadow-[0_10px_24px_-10px_rgba(0,164,180,0.7)] hover:bg-[#008c99]'
@@ -397,7 +430,7 @@ export default function BillingPage() {
                 disabled={
                   busy !== null ||
                   !canManage ||
-                  !summary.catalog.pack?.available ||
+                  !canBuyCreditPack ||
                   summary.unlimited ||
                   !hasPaidPlan
                 }
@@ -410,6 +443,15 @@ export default function BillingPage() {
 
             {!hasPaidPlan && !summary.unlimited && (
               <p className="mt-3 text-sm text-[#7d909a]">Credit add-ons are available after choosing a paid plan.</p>
+            )}
+            {hasPaidPlan && summary.plan.status === 'past_due' && (
+              <p className="mt-3 text-sm text-[#7d909a]">Resolve the billing issue in Stripe before buying credit packs.</p>
+            )}
+            {hasPaidPlan && summary.plan.status !== 'past_due' && !summary.billing?.stripeBacked && (
+              <p className="mt-3 text-sm text-[#7d909a]">Credit add-ons require an active Stripe-backed subscription.</p>
+            )}
+            {hasPaidPlan && summary.billing?.stripeBacked && !summary.billing.creditPackConfigured && (
+              <p className="mt-3 text-sm text-[#7d909a]">Credit add-ons are not configured yet.</p>
             )}
             {summary.capacity && (
               <p className="mt-3 text-sm text-[#7d909a]">

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-billing-checkout-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/billing/config.ts",
+    "lib/billing/checkout-eligibility.ts",
+    "lib/billing/checkout-eligibility.test.ts"
+  ]
+}

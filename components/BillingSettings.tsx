@@ -26,6 +26,11 @@ type Summary = {
     renewsAt: string | null;
     cancelAtPeriodEnd: boolean;
   };
+  billing?: {
+    stripeBacked: boolean;
+    canOpenPortal: boolean;
+    creditPackConfigured: boolean;
+  };
   seats: { used: number; included: number };
   credits: {
     available: number;
@@ -61,6 +66,8 @@ const CARD =
 export default function BillingSettings() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +81,28 @@ export default function BillingSettings() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const redirectTo = useCallback(async (path: string, body?: Record<string, unknown>) => {
+    setBusy(path + JSON.stringify(body ?? {}));
+    setError(null);
+    try {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (res.ok && data.url) {
+        window.location.href = data.url;
+        return;
+      }
+      setError(data.error || 'Could not open Stripe billing.');
+    } catch {
+      setError('Could not open Stripe billing.');
+    } finally {
+      setBusy(null);
+    }
+  }, []);
 
   if (loading) {
     return (
@@ -130,6 +159,9 @@ export default function BillingSettings() {
   );
   const showPlanNudge = capUsagePct >= 75 && (plan.key === 'free' || plan.key === 'starter');
   const showCreditNudge = usagePct >= 80 && plan.key !== 'free' && catalog.pack?.available;
+  const canOpenPortal = Boolean(summary.billing?.canOpenPortal);
+  const starterPlanAvailable = Boolean(catalog.plans.some((catalogPlan) => catalogPlan.key === 'starter' && catalogPlan.available));
+  const canBuyCreditPack = Boolean(catalog.pack?.available && summary.billing?.stripeBacked);
   const renewsAt = plan.renewsAt
     ? new Date(plan.renewsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
     : null;
@@ -140,6 +172,11 @@ export default function BillingSettings() {
       <p className="mt-1 text-sm text-[#7d909a]">
         Plans include monthly credits and workspace capacity. Purchased credits roll over and can be used for any paid action.
       </p>
+      {error && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       <div className={CARD}>
         <div className="flex items-start justify-between gap-4">
@@ -164,12 +201,14 @@ export default function BillingSettings() {
             </p>
           </div>
           {canManage && summary.available && !onFreePlan && (
-            <Link
-              href="/settings/billing"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            <button
+              type="button"
+              onClick={() => void redirectTo('/api/billing/portal')}
+              disabled={!canOpenPortal || busy !== null}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <CreditCard className="h-3.5 w-3.5" /> Manage billing
-            </Link>
+            </button>
           )}
         </div>
 
@@ -210,13 +249,21 @@ export default function BillingSettings() {
                 </p>
               </div>
               {canManage && summary.available && (
-                <Link
-                  href="/settings/billing"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#0d3547]/90"
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (plan.key === 'free') {
+                      void redirectTo('/api/billing/checkout', { kind: 'plan', planKey: 'starter', billing: 'monthly' });
+                      return;
+                    }
+                    void redirectTo('/api/billing/portal');
+                  }}
+                  disabled={busy !== null || (plan.key === 'free' ? !starterPlanAvailable : !canOpenPortal)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#0d3547]/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ArrowUpRight className="h-3.5 w-3.5" />
                   {plan.key === 'free' ? 'Upgrade to Starter' : 'Review Growth'}
-                </Link>
+                </button>
               )}
             </div>
           </div>
@@ -228,13 +275,15 @@ export default function BillingSettings() {
               You’ve used {usagePct}% of this period’s included credits. Add rollover credits to keep using paid actions.
             </p>
             {canManage && (
-              <Link
-                href="/settings/billing"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-100"
+              <button
+                type="button"
+                onClick={() => void redirectTo('/api/billing/checkout', { kind: 'pack' })}
+                disabled={!canBuyCreditPack || busy !== null}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add credits
-              </Link>
+              </button>
             )}
           </div>
         )}
@@ -242,24 +291,49 @@ export default function BillingSettings() {
         {/* Actions */}
         {canManage && summary.available && (
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              href="/settings/billing"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#0d3547]/90"
+            <button
+              type="button"
+              onClick={() => {
+                if (onFreePlan) {
+                  void redirectTo('/api/billing/checkout', { kind: 'plan', planKey: 'starter', billing: 'monthly' });
+                  return;
+                }
+                void redirectTo('/api/billing/portal');
+              }}
+              disabled={busy !== null || (onFreePlan ? !starterPlanAvailable : !canOpenPortal)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#0d3547]/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ArrowUpRight className="h-3.5 w-3.5" />
-              Select another plan
-            </Link>
+              {onFreePlan ? 'Upgrade to Starter' : 'Manage plan'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void redirectTo('/api/billing/checkout', { kind: 'pack' })}
+              disabled={!canBuyCreditPack || busy !== null}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Buy credit add-ons
+            </button>
             <Link
               href="/settings/billing"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
             >
-              <Plus className="h-3.5 w-3.5" />
-              Buy credit add-ons
+              Plan details
             </Link>
           </div>
         )}
         {canManage && !summary.available && (
           <p className="mt-3 text-sm text-[#7d909a]">Plan upgrades are coming soon.</p>
+        )}
+        {canManage && onFreePlan && summary.available && !starterPlanAvailable && (
+          <p className="mt-3 text-sm text-[#7d909a]">Starter checkout is not configured yet.</p>
+        )}
+        {canManage && !onFreePlan && summary.plan.status === 'past_due' && (
+          <p className="mt-3 text-sm text-[#7d909a]">Resolve the billing issue in Stripe before buying credit packs.</p>
+        )}
+        {canManage && !onFreePlan && summary.plan.status !== 'past_due' && !summary.billing?.stripeBacked && (
+          <p className="mt-3 text-sm text-[#7d909a]">Credit add-ons require an active Stripe-backed subscription.</p>
         )}
       </div>
     </section>
