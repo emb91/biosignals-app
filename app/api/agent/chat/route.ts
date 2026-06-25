@@ -23,6 +23,8 @@ import {
   fetchFilteredLeads,
 } from '@/lib/leads-data';
 import { effectiveReadiness, getLeadActionFromFits } from '@/lib/lead-action';
+import { computeIntrinsicPriority, resolveEffectivePriority } from '@/lib/effective-priority';
+import { resolveContactHubSpotStates } from '@/lib/hubspot-lead-state';
 import { personaFunctionNames } from '@/lib/persona-functions';
 import { buildWorkspaceJourneyState } from '@/lib/agent-journey-state';
 import {
@@ -97,8 +99,7 @@ function contactPriorityFromScores(input: {
       finiteScoreNumber(input.companyReadiness),
       finiteScoreNumber(input.contactReadiness),
     ) ?? 0;
-  if (companyFit == null || contactFit == null) return null;
-  return Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * readiness)));
+  return computeIntrinsicPriority({ companyFit, contactFit, readiness });
 }
 
 interface ChatMessage {
@@ -1313,7 +1314,25 @@ async function toolGetAccountDetail(
   if (error) return JSON.stringify({ error: error.message });
   if (!data) return JSON.stringify({ error: `No account found for id ${companyId}` });
 
-  return JSON.stringify(data);
+  const accountRow = data as Record<string, unknown>;
+  const priorityPolicy = resolveEffectivePriority({
+    intrinsicPriority: finiteScoreNumber(accountRow.priority_score),
+    companyFit: finiteScoreNumber(accountRow.company_fit_score),
+    intrinsicReadiness: finiteScoreNumber(accountRow.readiness_score) ?? 0,
+    crmIsSuppressed:
+      typeof accountRow.crm_is_suppressed === 'boolean'
+        ? accountRow.crm_is_suppressed
+        : undefined,
+  });
+
+  return JSON.stringify({
+    ...accountRow,
+    raw_readiness_score: accountRow.readiness_score ?? null,
+    readiness_score: priorityPolicy.effectiveReadiness,
+    priority_score: priorityPolicy.effectivePriority,
+    intrinsic_priority_score: priorityPolicy.intrinsicPriority,
+    crm_is_suppressed: priorityPolicy.isSuppressed,
+  });
 }
 
 /**
@@ -1344,7 +1363,7 @@ async function toolGetContactDetail(
 
   const contactRow = data as Record<string, unknown>;
   const companyId = typeof contactRow.company_id === 'string' ? contactRow.company_id : null;
-  const [accountResult, contactReadinessResult] = await Promise.all([
+  const [accountResult, contactReadinessResult, hubspotStates] = await Promise.all([
     companyId
       ? supabase
           .from('accounts_view')
@@ -1359,6 +1378,12 @@ async function toolGetContactDetail(
       .eq('user_id', userId)
       .eq('contact_id', contactId)
       .maybeSingle(),
+    resolveContactHubSpotStates(supabase, userId, [
+      {
+        id: contactId,
+        email: typeof contactRow.email === 'string' ? contactRow.email : null,
+      },
+    ]),
   ]);
   const accountRow =
     accountResult && typeof accountResult === 'object' && 'data' in accountResult
@@ -1371,11 +1396,22 @@ async function toolGetContactDetail(
   const companyFit = finiteScoreNumber(accountRow?.company_fit_score);
   const companyReadiness = finiteScoreNumber(accountRow?.readiness_score);
   const contactReadiness = finiteScoreNumber(contactReadinessRow?.overall_score);
-  const priority = contactPriorityFromScores({
+  const contactFit = finiteScoreNumber(contactRow.contact_fit_score);
+  const intrinsicReadiness = effectiveReadiness(companyReadiness, contactReadiness);
+  const intrinsicPriority = contactPriorityFromScores({
     companyFit,
-    contactFit: contactRow.contact_fit_score,
+    contactFit,
     companyReadiness,
     contactReadiness,
+  });
+  const hubspotState = hubspotStates.get(contactId) ?? null;
+  const priorityPolicy = resolveEffectivePriority({
+    intrinsicPriority,
+    companyFit,
+    contactFit,
+    intrinsicReadiness,
+    crmState: hubspotState?.state ?? null,
+    crmClosedAt: hubspotState?.modifiedAt ?? null,
   });
 
   return JSON.stringify({
@@ -1383,8 +1419,14 @@ async function toolGetContactDetail(
     company_fit_score: companyFit,
     company_readiness_score: companyReadiness,
     contact_readiness_score: contactReadiness,
-    priority_score: priority,
-    intrinsic_priority_score: priority,
+    effective_readiness_score: priorityPolicy.effectiveReadiness,
+    priority_score: priorityPolicy.effectivePriority,
+    intrinsic_priority_score: priorityPolicy.intrinsicPriority,
+    crm_is_suppressed: priorityPolicy.isSuppressed,
+    hubspot_lead_state: hubspotState?.state ?? 'none',
+    hubspot_latest_deal_stage: hubspotState?.dealStage ?? null,
+    hubspot_latest_deal_name: hubspotState?.dealName ?? null,
+    hubspot_latest_deal_updated_at: hubspotState?.modifiedAt ?? null,
   });
 }
 

@@ -14,12 +14,14 @@ import {
   syncUserAddedContactPhones,
 } from '@/lib/contact-phones';
 import { effectiveReadiness } from '@/lib/lead-action';
+import { computeIntrinsicPriority, resolveEffectivePriority } from '@/lib/effective-priority';
 import { getOrgContext } from '@/lib/org-context';
 import {
   accountReadinessByCompanyIdForOrg,
   contactReadinessByContactIdForOrg,
 } from '@/lib/org-readiness-snapshots';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { resolveContactHubSpotStates } from '@/lib/hubspot-lead-state';
 
 type LeadUpdateBody = {
   full_name?: string;
@@ -91,8 +93,7 @@ function priorityFromScores(input: {
     finiteScoreNumber(input.companyReadiness),
     finiteScoreNumber(input.contactReadiness),
   ) ?? 0;
-  if (companyFit == null || contactFit == null) return null;
-  return Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * readiness)));
+  return computeIntrinsicPriority({ companyFit, contactFit, readiness });
 }
 
 function messageFromUnknown(error: unknown): string {
@@ -310,6 +311,7 @@ export async function GET(
         accountResult,
         accountReadinessByCompany,
         contactReadinessByContact,
+        hubspotStates,
       ] = await Promise.all([
         personId
           ? ctx.supabase
@@ -341,6 +343,12 @@ export async function GET(
           userId: ctx.user.id,
           contactIds: [contactId],
         }),
+        resolveContactHubSpotStates(ctx.supabase, ctx.user.id, [
+          {
+            id: contactId,
+            email: typeof contactRow.email === 'string' ? contactRow.email : null,
+          },
+        ]),
       ]);
 
       const overrides =
@@ -355,11 +363,22 @@ export async function GET(
       const teamAccountReadiness = companyId ? accountReadinessByCompany.get(companyId)?.score ?? null : null;
       const companyReadiness = teamAccountReadiness ?? finiteScoreNumber(accountRow?.readiness_score);
       const contactReadiness = contactReadinessByContact.get(contactId)?.score ?? null;
-      const priority = priorityFromScores({
+      const contactFit = finiteScoreNumber(contactRow.contact_fit_score);
+      const intrinsicReadiness = effectiveReadiness(companyReadiness, contactReadiness);
+      const intrinsicPriority = priorityFromScores({
         companyFit,
-        contactFit: contactRow.contact_fit_score,
+        contactFit,
         companyReadiness,
         contactReadiness,
+      });
+      const hubspotState = hubspotStates.get(contactId) ?? null;
+      const priorityPolicy = resolveEffectivePriority({
+        intrinsicPriority,
+        companyFit,
+        contactFit,
+        intrinsicReadiness,
+        crmState: hubspotState?.state ?? null,
+        crmClosedAt: hubspotState?.modifiedAt ?? null,
       });
 
       return NextResponse.json({
@@ -368,8 +387,14 @@ export async function GET(
           company_fit_score: companyFit,
           company_readiness_score: companyReadiness,
           contact_readiness_score: contactReadiness,
-          priority_score: priority,
-          intrinsic_priority_score: priority,
+          effective_readiness_score: priorityPolicy.effectiveReadiness,
+          priority_score: priorityPolicy.effectivePriority,
+          intrinsic_priority_score: priorityPolicy.intrinsicPriority,
+          crm_is_suppressed: priorityPolicy.isSuppressed,
+          hubspot_lead_state: hubspotState?.state ?? 'none',
+          hubspot_latest_deal_stage: hubspotState?.dealStage ?? null,
+          hubspot_latest_deal_name: hubspotState?.dealName ?? null,
+          hubspot_latest_deal_updated_at: hubspotState?.modifiedAt ?? null,
           contact_emails: emailsGrouped.get(contactId) ?? [],
           contact_phones: phonesGrouped.get(contactId) ?? [],
         },

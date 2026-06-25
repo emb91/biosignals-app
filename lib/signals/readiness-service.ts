@@ -288,7 +288,7 @@ export async function recomputeContactReadiness(
     listNormalizedSignalsForContact(supabase, input.userId, input.contactId),
     // Pull contact fit + the contact's company_id so we can look up org-scoped
     // company fit. contacts.company_fit_score does NOT exist. Priority =
-    // company_fit × contact_fit × (0.5 + 0.5 × r).
+    // min(company_fit, contact_fit) × (0.5 + 0.5 × r).
     // Best-effort: a missing row leaves priority null and the snapshot still writes.
     supabase
       .from('contacts')

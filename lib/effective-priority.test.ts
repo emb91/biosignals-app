@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   authoritativeAccountReadiness,
   CRM_SUPPRESSED_READINESS,
@@ -54,7 +56,7 @@ test('suppression expiry restores intrinsic priority', () => {
   });
 
   assert.equal(result.isSuppressed, false);
-  assert.equal(result.effectivePriority, 0.91);
+  assert.ok(result.effectivePriority != null && Math.abs(result.effectivePriority - 0.91) < 0.0000001);
 });
 
 test('denormalized suppression state takes precedence for SQL-backed consumers', () => {
@@ -97,6 +99,53 @@ test('account snapshot readiness wins over stale company-state mirror', () => {
     }),
     0.684,
   );
+});
+
+test('contact priority uses weakest fit as floor instead of compounding fits', () => {
+  assert.equal(
+    computeIntrinsicPriority({
+      companyFit: 0.82,
+      contactFit: 0.78,
+      readiness: 1,
+    }),
+    0.78,
+  );
+});
+
+test('fresh fit and readiness components override stale stored priority mirrors', () => {
+  const result = resolveEffectivePriority({
+    intrinsicPriority: 0.64,
+    companyFit: 0.82,
+    contactFit: 0.78,
+    intrinsicReadiness: 1,
+  });
+
+  assert.equal(result.intrinsicPriority, 0.78);
+  assert.equal(result.effectivePriority, 0.78);
+});
+
+test('contact priority runtime paths do not reintroduce compounded fit math', () => {
+  const checkedFiles = [
+    'app/api/contacts/route.ts',
+    'app/api/contacts/[id]/route.ts',
+    'app/api/agent/chat/route.ts',
+    'app/contacts/ContactsWorkspace.tsx',
+    'lib/signals/readiness-service.ts',
+    'supabase/migrations/20260626110233_contact_priority_fit_floor.sql',
+  ];
+  const forbidden = [
+    /\bcompanyFit\s*\*\s*contactFit\b/,
+    /\bcompany_fit\s*\*\s*contact_fit\b/,
+    /\bcalc\.company_fit\s*\*\s*calc\.contact_fit\b/,
+    /company_fit\s*×\s*contact_fit/,
+  ];
+
+  for (const file of checkedFiles) {
+    const source = readFileSync(join(process.cwd(), file), 'utf8');
+    for (const pattern of forbidden) {
+      assert.equal(pattern.test(source), false, `${file} contains stale compounded priority math: ${pattern}`);
+    }
+  }
 });
 
 test('priority-change nudges fail closed on suppressed or unknown eligibility', () => {

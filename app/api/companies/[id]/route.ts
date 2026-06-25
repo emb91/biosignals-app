@@ -1,6 +1,20 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { getOrgContext, orgIdForUser } from '@/lib/org-context';
+import { resolveEffectivePriority } from '@/lib/effective-priority';
+import {
+  formatHubSpotStageLabel,
+  HUBSPOT_STATE_PRIORITY,
+  resolveContactHubSpotStates,
+  type HubSpotLeadState,
+} from '@/lib/hubspot-lead-state';
+
+type SupabaseLike = Awaited<ReturnType<typeof createClient>>;
+type AccountCrmEntry = {
+  state: HubSpotLeadState;
+  dealStageLabel: string | null;
+  closedAt: string | null;
+};
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -112,6 +126,52 @@ function applyCompanyOverrides<T extends Record<string, unknown>>(row: T, overri
   return next as T;
 }
 
+function finiteScoreNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function fetchCompanyCrmStatus(
+  supabase: SupabaseLike,
+  userId: string,
+  companyId: string,
+): Promise<AccountCrmEntry | null> {
+  try {
+    const { data: contacts, error } = await supabase
+      .from('contacts')
+      .select('id, email')
+      .eq('user_id', userId)
+      .eq('company_id', companyId)
+      .is('archived_at', null);
+    if (error || !contacts?.length) return null;
+
+    const contactStates = await resolveContactHubSpotStates(
+      supabase,
+      userId,
+      (contacts as Array<{ id: string; email: string | null }>).map((contact) => ({
+        id: contact.id,
+        email: contact.email,
+      })),
+    );
+
+    let best: AccountCrmEntry | null = null;
+    for (const resolved of contactStates.values()) {
+      if (!best || HUBSPOT_STATE_PRIORITY[resolved.state] > HUBSPOT_STATE_PRIORITY[best.state]) {
+        best = {
+          state: resolved.state,
+          dealStageLabel: formatHubSpotStageLabel(resolved.dealStage),
+          closedAt: resolved.modifiedAt ?? null,
+        };
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * GET: full company detail for a single company (side panel + agent context).
  * Reads from accounts_view for existing scoring/list compatibility, then
@@ -163,7 +223,33 @@ export async function GET(
       overrides = (overrideRow as { overrides: Record<string, unknown> | null } | null)?.overrides ?? null;
     }
 
-    return NextResponse.json({ data: applyCompanyOverrides(data as Record<string, unknown>, overrides) });
+    const row = applyCompanyOverrides(data as Record<string, unknown>, overrides);
+    const crmEntry = await fetchCompanyCrmStatus(supabase, user.id, id);
+    const priorityPolicy = resolveEffectivePriority({
+      intrinsicPriority: finiteScoreNumber(row.priority_score),
+      companyFit: finiteScoreNumber(row.company_fit_score),
+      intrinsicReadiness: finiteScoreNumber(row.readiness_score) ?? 0,
+      crmState: crmEntry?.state ?? null,
+      crmClosedAt: crmEntry?.closedAt ?? null,
+      crmIsSuppressed:
+        crmEntry == null && typeof row.crm_is_suppressed === 'boolean'
+          ? row.crm_is_suppressed
+          : undefined,
+    });
+
+    return NextResponse.json({
+      data: {
+        ...row,
+        raw_readiness_score: row.readiness_score ?? null,
+        readiness_score: priorityPolicy.effectiveReadiness,
+        priority_score: priorityPolicy.effectivePriority,
+        intrinsic_priority_score: priorityPolicy.intrinsicPriority,
+        crm_is_suppressed: priorityPolicy.isSuppressed,
+        crm_status: crmEntry?.state ?? row.crm_status ?? null,
+        crm_deal_stage_label: crmEntry?.dealStageLabel ?? row.crm_deal_stage_label ?? null,
+        crm_closed_at: crmEntry?.closedAt ?? row.crm_closed_at ?? null,
+      },
+    });
   } catch (error) {
     console.error('Error in companies/[id] GET:', error);
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });

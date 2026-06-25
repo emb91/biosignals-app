@@ -4151,11 +4151,11 @@ export function ContactsWorkspace() {
                             })()}
                           </div>
 
-                          {/* Priority — company_fit × contact_fit × (0.5 + 0.5 × readiness). Click opens the Priority side panel. */}
+                          {/* Priority — fit floor × (0.5 + 0.5 × readiness). Click opens the Priority side panel. */}
                           <div className="min-w-0 flex items-center justify-center">
                             <TableFitGaugeButton
                               score={displayContactPriority(lead)}
-                              title="View priority (company fit × contact fit × readiness)"
+                              title="View priority (fit floor × readiness)"
                               arcColorFn={priorityScoreArcColor}
                               onOpen={(e) => {
                                 e.stopPropagation();

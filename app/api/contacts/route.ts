@@ -28,7 +28,7 @@ import {
 } from '@/lib/data-provenance';
 import { HUBSPOT_CLOSED_DEAL_STAGES } from '@/lib/hubspot-deals';
 import { effectiveReadiness } from '@/lib/lead-action';
-import { authoritativeAccountReadiness, resolveEffectivePriority } from '@/lib/effective-priority';
+import { authoritativeAccountReadiness, computeIntrinsicPriority, resolveEffectivePriority } from '@/lib/effective-priority';
 
 /** Normalise a 0-1 or 0-100 score to a 0-1 fraction (null if unusable). */
 function norm01Score(value: unknown): number | null {
@@ -52,7 +52,7 @@ function finiteScoreNumber(value: unknown): number | null {
  * the stored (mirrored) value which can go stale when company_fit changes
  * without a readiness recompute. Same formula as lib/signals/readiness-store
  * and the client's contactPriorityScore:
- *   priority = company_fit × contact_fit × (0.5 + 0.5 × effectiveReadiness)
+ *   priority = min(company_fit, contact_fit) × (0.5 + 0.5 × effectiveReadiness)
  * Mirrors the live-priority fix applied to the accounts RPC (list_user_accounts).
  * Keep company readiness aligned with account_readiness_snapshots, not the
  * org/company compat view mirror, so /contacts agrees with /companies.
@@ -70,10 +70,11 @@ function recomputeContactPriorityLive(
       row.company_readiness_score as number | null,
       row.contact_readiness_score as number | null,
     ) ?? 0;
-    const live =
-      companyFit == null || contactFit == null
-        ? null
-        : Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * eff)));
+    const live = computeIntrinsicPriority({
+      companyFit,
+      contactFit,
+      readiness: eff,
+    });
     const priorityPolicy = resolveEffectivePriority({
       intrinsicPriority: live,
       companyFit,
