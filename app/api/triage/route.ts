@@ -3,29 +3,14 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgContext } from '@/lib/org-context';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { FREE_TIER, PLANS, isPlanKey } from '@/lib/billing/config';
-
-type TriageGroup = 'high' | 'medium' | 'low';
-
-type RawTriageRow = {
-  id: string;
-  user_id: string;
-  batch_id: string | null;
-  full_name: string | null;
-  email: string | null;
-  linkedin_url: string | null;
-  company_name: string | null;
-  status: string | null;
-  raw_data: Record<string, unknown> | null;
-  uploaded_at: string | null;
-  triage_group: TriageGroup | null;
-  triage_override_group?: TriageGroup | null;
-  triage_version: string | null;
-  triage_scored_at: string | null;
-  triage_overridden_by?: string | null;
-  triage_overridden_at?: string | null;
-  pinned_at?: string | null;
-  pinned_by?: string | null;
-};
+import {
+  findPendingTriageRowForOrg,
+  listPendingTriageRowsForOrg,
+  updatePendingTriageRowForOrg,
+  type PendingTriagePatch,
+  type RawTriageRow,
+  type TriageGroup,
+} from '@/lib/triage-pending-rows';
 
 type TriageSummary = {
   total: number;
@@ -97,18 +82,6 @@ function expectedEnrichmentDate(highFitIndex: number | null, monthlyThroughput: 
   return addMonths(new Date(), monthOffset).toISOString();
 }
 
-async function getOrgUserIds(admin: ReturnType<typeof createAdminClient>, orgId: string): Promise<string[]> {
-  const { data, error } = await admin
-    .from('org_members')
-    .select('user_id')
-    .eq('org_id', orgId);
-
-  if (error) throw error;
-  return ((data ?? []) as Array<{ user_id: string | null }>)
-    .map((row) => row.user_id)
-    .filter((id): id is string => Boolean(id));
-}
-
 export async function GET() {
   const context = await getOrgContext();
   if (!context) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -116,22 +89,7 @@ export async function GET() {
   try {
     const admin = createAdminClient();
     const monthlyThroughput = await resolveMonthlyThroughput(admin, context.orgId);
-    const userIds = await getOrgUserIds(admin, context.orgId);
-    if (userIds.length === 0) {
-      return NextResponse.json({
-        data: [],
-        summary: { total: 0, high: 0, medium: 0, low: 0, untriaged: 0, scheduledHighFit: 0, monthlyThroughput },
-      });
-    }
-
-    const { data, error } = await admin
-      .from('raw_uploads')
-      .select(
-        'id, user_id, batch_id, full_name, email, linkedin_url, company_name, status, raw_data, uploaded_at, triage_group, triage_override_group, triage_version, triage_scored_at, triage_overridden_by, triage_overridden_at, pinned_at, pinned_by',
-      )
-      .in('user_id', userIds)
-      .in('status', ['awaiting_triage', 'awaiting_enrichment'])
-      .limit(1000);
+    const { data, error } = await listPendingTriageRowsForOrg(admin, context.orgId);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -237,20 +195,12 @@ export async function PATCH(request: Request) {
 
   try {
     const admin = createAdminClient();
-    const userIds = await getOrgUserIds(admin, context.orgId);
-    if (userIds.length === 0) return NextResponse.json({ error: 'Triage row not found' }, { status: 404 });
-
-    const { data: row, error: lookupError } = await admin
-      .from('raw_uploads')
-      .select('id, user_id')
-      .eq('id', id)
-      .in('user_id', userIds)
-      .maybeSingle<{ id: string; user_id: string }>();
+    const { data: row, error: lookupError } = await findPendingTriageRowForOrg(admin, context.orgId, id);
 
     if (lookupError) return NextResponse.json({ error: lookupError.message }, { status: 500 });
     if (!row) return NextResponse.json({ error: 'Triage row not found' }, { status: 404 });
 
-    const patch: Record<string, unknown> = {};
+    const patch: PendingTriagePatch = {};
     if ('triageGroup' in body) {
       if (body.triageGroup !== null && !isTriageGroup(body.triageGroup)) {
         return NextResponse.json({ error: 'triageGroup must be high, medium, low, or null' }, { status: 400 });
@@ -269,10 +219,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'No supported update provided' }, { status: 400 });
     }
 
-    const { error } = await admin
-      .from('raw_uploads')
-      .update(patch)
-      .eq('id', id);
+    const { error } = await updatePendingTriageRowForOrg(admin, context.orgId, id, patch);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
