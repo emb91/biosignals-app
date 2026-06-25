@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-org-outreach-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/org-context.test-stub.ts",
+    "lib/org-outreach.ts",
+    "lib/org-outreach.test.ts"
+  ]
+}
