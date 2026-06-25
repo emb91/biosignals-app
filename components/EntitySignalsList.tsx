@@ -11,6 +11,8 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
+import { fitScoreArcColor, percentDisplayNumber } from '@/lib/fit-gauge';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -389,6 +391,16 @@ async function fetchSignals(params: URLSearchParams): Promise<SignalItem[]> {
   return (json.data ?? []).map((item) => ({ ...item, sourceMetadata: item.sourceMetadata ?? {} }));
 }
 
+function SignalGroupHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">{label}</span>
+      <span className="h-px flex-1 bg-[rgba(13,53,71,0.08)]" />
+      <span className="text-[10px] font-bold tabular-nums text-[#b6c2c8]">{count}</span>
+    </div>
+  );
+}
+
 export function EntitySignalsList({
   companyId,
   contactId,
@@ -464,38 +476,86 @@ export function EntitySignalsList({
     );
   }
 
+  // Readiness gauge value — the SAME number the Priority tab shows (passed in via
+  // effectiveReadinessScore), so the hero ring and the Priority readiness row can't diverge.
+  const readinessPct = percentDisplayNumber(effectiveReadinessScore ?? null);
+  const entityLabel =
+    (contactId
+      ? items.find((i) => i.contactName)?.contactName
+      : items.find((i) => i.companyName)?.companyName) || (contactId ? 'This contact' : 'This company');
+  const readinessForSummary = items.find((i) => i.readiness)?.readiness ?? null;
+  const readinessBlurb = buildReadinessSummary({
+    entityLabel,
+    items,
+    readiness: readinessForSummary,
+    effectiveScore: effectiveReadinessScore ?? null,
+    cappedReason: crmCappedReason ?? null,
+  });
+  const NEW_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+  const newCount = items.filter((i) => {
+    const t = i.observedAt ? new Date(i.observedAt).getTime() : NaN;
+    return Number.isFinite(t) && Date.now() - t <= NEW_WINDOW_MS;
+  }).length;
+
   return (
     <div className="space-y-3">
-      {/* Signal count */}
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-        {items.length} signal{items.length !== 1 ? 's' : ''}
-      </p>
+      {/* Hero readiness gauge — same ring as the Fit & Priority tabs so all three read alike. */}
+      <div className="flex flex-col items-center rounded-[14px] border border-[rgba(13,53,71,0.06)] bg-[rgba(246,250,250,0.7)] px-4 py-6 text-center">
+        <AnimatedCircularProgressBar
+          value={readinessPct ?? 0}
+          gaugePrimaryColor={fitScoreArcColor(readinessPct)}
+          gaugeSecondaryColor="rgba(13,53,71,0.09)"
+          animateOnMount
+          deferAnimationMs={160}
+          label={
+            <span className="block text-xl font-semibold leading-snug tabular-nums text-[#0d3547]">
+              {readinessPct != null ? readinessPct : '—'}
+            </span>
+          }
+          className="size-24 [--transition-length:0.95s]"
+        />
+        <p className="mt-3 font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">Readiness score</p>
+        {readinessBlurb ? (
+          <p className="mt-3 text-[12.5px] leading-[1.55] text-[#1f475a]">
+            {newCount > 0 ? (
+              <>
+                <b className="text-[#0d3547]">
+                  {newCount} new signal{newCount !== 1 ? 's' : ''} detected.
+                </b>{' '}
+                {readinessBlurb}
+              </>
+            ) : (
+              readinessBlurb
+            )}
+          </p>
+        ) : null}
+      </div>
 
-      {/* Signal list — with optional section headers when both contact + company signals are shown */}
+      {/* Signal list — grouped Contact / Company when both are shown, else a single group. */}
       {(contactId && companyId) ? (() => {
         const contactItems = items.filter((i) => i.contactId === contactId);
         const companyItems = items.filter((i) => !contactItems.includes(i));
         const [firstGroup, secondGroup] = primaryScope === 'contact'
-          ? [{ label: 'Contact signals', items: contactItems }, { label: 'Account signals', items: companyItems }]
-          : [{ label: 'Account signals', items: companyItems }, { label: 'Contact signals', items: contactItems }];
+          ? [{ label: 'Contact signals', items: contactItems }, { label: 'Company signals', items: companyItems }]
+          : [{ label: 'Company signals', items: companyItems }, { label: 'Contact signals', items: contactItems }];
         return (
           <div className="space-y-4">
-            {firstGroup.items.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">{firstGroup.label}</p>
-                {firstGroup.items.map((item) => <SignalCard key={item.id} item={item} />)}
-              </div>
-            )}
-            {secondGroup.items.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">{secondGroup.label}</p>
-                {secondGroup.items.map((item) => <SignalCard key={item.id} item={item} />)}
-              </div>
+            {[firstGroup, secondGroup].map((g) =>
+              g.items.length > 0 ? (
+                <div key={g.label} className="space-y-2">
+                  <SignalGroupHeader label={g.label} count={g.items.length} />
+                  {g.items.map((item) => <SignalCard key={item.id} item={item} />)}
+                </div>
+              ) : null,
             )}
           </div>
         );
       })() : (
         <div className="space-y-2">
+          <SignalGroupHeader
+            label={contactId && !companyId ? 'Contact signals' : 'Company signals'}
+            count={items.length}
+          />
           {items.map((item) => (
             <SignalCard key={item.id} item={item} />
           ))}

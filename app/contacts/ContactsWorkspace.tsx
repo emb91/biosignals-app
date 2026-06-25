@@ -5664,7 +5664,9 @@ export function ContactsWorkspace() {
                             contactId={selectedLead.id}
                             companyId={selectedLead.company_id ?? undefined}
                             primaryScope="contact"
-                            effectiveReadinessScore={selectedLead.contact_readiness_score ?? null}
+                            // Same value the Priority tab's readiness row uses (CRM-suppressed),
+                            // so the Signals hero gauge and Priority can't show different numbers.
+                            effectiveReadinessScore={displayEffectiveReadiness(selectedLead)}
                             crmCappedReason={(() => {
                               const contactLabel = selectedLead.full_name || 'This contact';
                               if (selectedLead.hubspot_lead_state === 'customer') {
