@@ -5048,7 +5048,7 @@ export function ContactsWorkspace() {
                                           }
                                           return (
                                             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                                              <span className="text-sm leading-snug text-[#7d909a]">Not on file yet</span>
+                                              <span className="text-[13.5px] leading-snug text-[#7d909a]">Not on file yet</span>
                                               <button
                                                 type="button"
                                                 onClick={() => void handleRevealPhone(selectedLead.id)}
@@ -5075,7 +5075,7 @@ export function ContactsWorkspace() {
                                             href={selectedLead.linkedin_url}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="mt-2 inline-flex min-w-0 items-start gap-1.5 break-all text-sm font-medium leading-snug text-arcova-teal hover:underline"
+                                            className="mt-2 inline-flex min-w-0 items-start gap-1.5 break-all text-[13.5px] font-medium leading-snug text-arcova-teal hover:underline"
                                           >
                                             <span className="min-w-0">
                                               {selectedLead.linkedin_url.replace(/^https?:\/\/(www\.)?/, '')}
@@ -5142,7 +5142,7 @@ export function ContactsWorkspace() {
                                                 ) : null}
                                               </div>
                                               <div className="min-w-0 pb-1">
-                                                <p className="text-sm font-semibold leading-snug text-[#0d3547]">
+                                                <p className="text-[13.5px] font-semibold leading-snug text-[#0d3547]">
                                                   {job.title || '—'}
                                                 </p>
                                                 <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
@@ -5317,7 +5317,7 @@ export function ContactsWorkspace() {
                               </div>
                             ) : selectedHubSpotCrmState?.error ? (
                               <div className="rounded-xl border border-[#ffd8c7] bg-[#fff7f3] px-4 py-4">
-                                <p className="text-sm leading-snug text-[#b45309]">{selectedHubSpotCrmState.error}</p>
+                                <p className="text-[13px] leading-snug text-[#b45309]">{selectedHubSpotCrmState.error}</p>
                               </div>
                             ) : selectedHubSpotCrm?.deals?.length ? (
                               <div className="space-y-3">
@@ -5464,14 +5464,14 @@ export function ContactsWorkspace() {
                                     should not be worked as an active lead here.
                                   </p>
                                   <div className="rounded-xl border border-[rgba(45,138,138,0.22)] bg-[rgba(45,138,138,0.07)] p-4">
-                                    <p className="text-sm font-semibold text-[#2d8a8a]">Customer state</p>
+                                    <p className="text-[13px] font-semibold text-[#2d8a8a]">Customer state</p>
                                     <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                       Keep the CRM history for attribution and future customer workflows, but avoid
                                       spending more lead-enrichment budget on it from this queue.
                                     </p>
                                   </div>
                                   <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
-                                    <p className="text-sm font-semibold text-[#0d3547]">Arcova attribution</p>
+                                    <p className="text-[13px] font-semibold text-[#0d3547]">Arcova attribution</p>
                                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
