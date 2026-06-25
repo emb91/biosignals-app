@@ -4443,7 +4443,7 @@ export function ContactsWorkspace() {
                                       ? 'Outreach'
                                       : 'Action'}
                           </p>
-                          <h2 className="font-manrope mt-1 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[1.4375rem]">
+                          <h2 className="font-manrope mt-[6px] break-words text-[23px] font-bold leading-[1.1] tracking-[-0.024em] text-[rgb(13,53,71)]">
                             {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
                               selectedLead.full_name ||
                               'Selected contact'}
@@ -4984,7 +4984,7 @@ export function ContactsWorkspace() {
                                                   </p>
                                                   <span className={`inline-flex shrink-0 items-center gap-1 ${meta.className}`}>
                                                     <VerificationIcon className="h-3.5 w-3.5" aria-hidden />
-                                                    <span className="text-xs font-medium">{meta.label}</span>
+                                                    <span className="text-[11px] font-medium">{meta.label}</span>
                                                   </span>
                                                 </div>
                                               );
@@ -5023,7 +5023,7 @@ export function ContactsWorkspace() {
                                           })()}
                                         </div>
                                         {findEmailErrorByLeadId[selectedLead.id] && (
-                                          <p className="mt-1.5 text-xs leading-snug text-rose-600">
+                                          <p className="mt-1.5 text-[11px] leading-snug text-rose-600">
                                             {findEmailErrorByLeadId[selectedLead.id]}
                                           </p>
                                         )}
@@ -5088,7 +5088,7 @@ export function ContactsWorkspace() {
                                       </div>
                                     </div>
                                     {selectedLead.email && contactEmailMayBeOutdated(selectedLead.email_status) && (
-                                        <p className="mt-4 flex items-start gap-1.5 text-xs leading-snug text-amber-700">
+                                        <p className="mt-4 flex items-start gap-1.5 text-[11px] leading-snug text-amber-700">
                                           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                                           <span>
                                             {selectedLead.email_status === 'stale_suspected'
@@ -5148,7 +5148,7 @@ export function ContactsWorkspace() {
                                                 <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                                   {job.company_name || '—'}
                                                 </p>
-                                                <p className="mt-1.5 text-xs tabular-nums text-[#7d909a]">
+                                                <p className="mt-1.5 text-[11px] tabular-nums text-[#7d909a]">
                                                   {[job.start_date, job.end_date].filter(Boolean).join(' → ')}
                                                 </p>
                                               </div>
@@ -5160,7 +5160,7 @@ export function ContactsWorkspace() {
                                           <button
                                             type="button"
                                             onClick={() => setIsWorkHistoryExpanded((prev) => !prev)}
-                                            className="inline-flex items-center gap-1.5 pt-1 text-sm font-semibold text-arcova-teal transition-colors hover:text-arcova-teal/85"
+                                            className="inline-flex items-center gap-1.5 pt-1 text-[13.5px] font-semibold text-arcova-teal transition-colors hover:text-arcova-teal/85"
                                           >
                                             <ChevronDown
                                               className={`h-4 w-4 transition-transform ${
@@ -5202,13 +5202,13 @@ export function ContactsWorkspace() {
                                 </div>
 
                                 <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
-                                  <p className="text-xs leading-snug text-[#4a6470]">
+                                  <p className="text-[11px] leading-snug text-[#4a6470]">
                                     Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                                   </p>
 
                                   {effectiveRefreshStatus === 'running' && (
                                     <div
-                                      className={`rounded-lg border px-3 py-2 text-xs ${effectiveRefreshStatusMeta.className}`}
+                                      className={`rounded-lg border px-3 py-2 text-[11px] ${effectiveRefreshStatusMeta.className}`}
                                     >
                                       <p className="font-medium">{effectiveRefreshStatusMeta.label}</p>
                                       <div className="mt-2 flex flex-col gap-1.5">
@@ -5216,13 +5216,13 @@ export function ContactsWorkspace() {
                                           type="button"
                                           onClick={() => stopLeadEnrichment(selectedLead.id)}
                                           disabled={isStoppingSelected}
-                                          className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                          className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                           <Ban className="h-3.5 w-3.5" aria-hidden />
                                           {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
                                         </button>
                                         {stopEnrichmentError && (
-                                          <p className="text-xs text-red-500">{stopEnrichmentError}</p>
+                                          <p className="text-[11px] text-red-500">{stopEnrichmentError}</p>
                                         )}
                                       </div>
                                     </div>
@@ -5237,8 +5237,8 @@ export function ContactsWorkspace() {
                                           aria-hidden
                                         />
                                         <div className="min-w-0 space-y-1">
-                                          <p className="text-xs font-semibold text-[#2D8A8A]">Enrichment done</p>
-                                          <p className="text-xs leading-snug text-[#6B7280]">
+                                          <p className="text-[11px] font-semibold text-[#2D8A8A]">Enrichment done</p>
+                                          <p className="text-[11px] leading-snug text-[#6B7280]">
                                             Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
                                           </p>
                                         </div>
@@ -5248,22 +5248,22 @@ export function ContactsWorkspace() {
 
                                   {selectedLeadRefreshStatus === 'cancelled' &&
                                     selectedLead.enrichment_refresh_finished_at && (
-                                      <p className="text-xs leading-snug text-[#6B7280]">
+                                      <p className="text-[11px] leading-snug text-[#6B7280]">
                                         Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                       </p>
                                     )}
 
                                   {selectedLeadRefreshStatus === 'failed' && (
                                     <>
-                                      <p className="text-xs font-semibold text-[rgb(13,53,71)]">
+                                      <p className="text-[11px] font-semibold text-[rgb(13,53,71)]">
                                         {selectedLeadRefreshStatusMeta.label}
                                       </p>
-                                      <p className="text-xs leading-snug text-[#7d909a]">Showing last known data.</p>
+                                      <p className="text-[11px] leading-snug text-[#7d909a]">Showing last known data.</p>
                                     </>
                                   )}
 
                                   {selectedLeadRefreshStatus !== 'running' && (
-                                    <p className="text-xs leading-relaxed text-[#6B7280]">
+                                    <p className="text-[11px] leading-relaxed text-[#6B7280]">
                                       You can refresh this enrichment again whenever you need updated data.
                                     </p>
                                   )}
@@ -5277,7 +5277,7 @@ export function ContactsWorkspace() {
                                       isEditingSelected ||
                                       isSelectedLeadRefreshRunning
                                     }
-                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     <RotateCw
                                       className={`h-4 w-4 text-[#1F2937] ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
@@ -5291,7 +5291,7 @@ export function ContactsWorkspace() {
                                           : 'Refresh enrichment'}
                                   </button>
                                   {selectedLead.hubspot_lead_state === 'customer' ? (
-                                    <p className="text-xs leading-snug text-[#7d909a]">
+                                    <p className="text-[11px] leading-snug text-[#7d909a]">
                                       Closed-won contacts should move through customer workflows instead of paid lead enrichment.
                                     </p>
                                   ) : null}
@@ -5344,10 +5344,10 @@ export function ContactsWorkspace() {
                                     >
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
-                                          <p className="text-base font-semibold text-[#0d3547]">
+                                          <p className="text-[13.5px] font-semibold text-[#0d3547]">
                                             {deal.deal_name || 'HubSpot deal'}
                                           </p>
-                                          <p className="mt-1 text-xs text-[#7d909a]">
+                                          <p className="mt-1 text-[11px] text-[#7d909a]">
                                             HubSpot account:{' '}
                                             <span className="font-medium text-[#4a6470]">
                                               {deal.hubspot_company_name || deal.hubspot_company_domain || '—'}
@@ -5398,7 +5398,7 @@ export function ContactsWorkspace() {
 
                                       <div className="mt-4 space-y-2">
                                         {deal.close_date ? (
-                                          <p className="text-xs leading-snug text-[#4a6470]">
+                                          <p className="text-[11px] leading-snug text-[#4a6470]">
                                             Close date:{' '}
                                             <span className="font-medium text-[#0d3547]">
                                               {formatLastUpdated(deal.close_date)}
@@ -5407,10 +5407,10 @@ export function ContactsWorkspace() {
                                         ) : null}
                                         {hasMismatch ? (
                                           <div className="rounded-lg border border-[#ffd8c7] bg-[#fff7f3] px-3 py-2">
-                                            <p className="text-xs font-medium text-[#b45309]">
+                                            <p className="text-[11px] font-medium text-[#b45309]">
                                               This deal points at a different company
                                             </p>
-                                            <p className="mt-1 text-xs leading-snug text-[#7c5a4b]">
+                                            <p className="mt-1 text-[11px] leading-snug text-[#7c5a4b]">
                                               The matched account is {arcovaCompanyName || arcovaCompanyDomain || 'this contact’s company'},
                                               but HubSpot still has this deal attached to{' '}
                                               {deal.hubspot_company_name || deal.hubspot_company_domain || 'another CRM account'}.
@@ -5419,16 +5419,16 @@ export function ContactsWorkspace() {
                                         ) : null}
                                         {deal.resolution_suppressed && !hasMismatch ? (
                                           <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-[rgba(246,250,252,0.9)] px-3 py-2">
-                                            <p className="text-xs font-medium text-[#0d3547]">
+                                            <p className="text-[11px] font-medium text-[#0d3547]">
                                               Stored as HubSpot CRM context only
                                             </p>
-                                            <p className="mt-1 text-xs leading-snug text-[#4a6470]">
+                                            <p className="mt-1 text-[11px] leading-snug text-[#4a6470]">
                                               We kept this deal for CRM visibility, but did not use it to move an Arcova account yet.
                                             </p>
                                           </div>
                                         ) : null}
                                         {deal.resolution_status ? (
-                                          <p className="text-xs leading-snug text-[#4a6470]">
+                                          <p className="text-[11px] leading-snug text-[#4a6470]">
                                             Resolution:{' '}
                                             <span className="font-medium text-[#0d3547]">
                                               {formatHubSpotResolutionLabel(deal.resolution_status)}
@@ -5436,7 +5436,7 @@ export function ContactsWorkspace() {
                                           </p>
                                         ) : null}
                                         {deal.mismatch_reason ? (
-                                          <p className="text-xs leading-snug text-[#7d909a]">
+                                          <p className="text-[11px] leading-snug text-[#7d909a]">
                                             {deal.mismatch_reason}
                                           </p>
                                         ) : null}
@@ -5477,10 +5477,10 @@ export function ContactsWorkspace() {
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Sourced
                                         </p>
-                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                        <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
                                           {selectedLeadArcovaSourced ? 'By Arcova' : 'Not by Arcova'}
                                         </p>
-                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                        <p className="mt-1 text-[11px] leading-snug text-[#6b7f8a]">
                                           {selectedLeadDataSourceTypeLabel}
                                         </p>
                                       </div>
@@ -5488,10 +5488,10 @@ export function ContactsWorkspace() {
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Enriched
                                         </p>
-                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                        <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
                                           {selectedLeadArcovaEnriched ? 'By Arcova' : 'Not yet'}
                                         </p>
-                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                        <p className="mt-1 text-[11px] leading-snug text-[#6b7f8a]">
                                           {selectedLeadLatestArcovaTouchIso
                                             ? `Last touch ${actionDrawerRelativeTime(selectedLeadLatestArcovaTouchIso)}`
                                             : 'No Arcova touch recorded'}
@@ -5501,10 +5501,10 @@ export function ContactsWorkspace() {
                                         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Outcome
                                         </p>
-                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                        <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
                                           {selectedLeadWonAfterArcovaTouch ? 'Won after Arcova touch' : 'Won in CRM'}
                                         </p>
-                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                        <p className="mt-1 text-[11px] leading-snug text-[#6b7f8a]">
                                           {selectedLead.hubspot_latest_deal_updated_at
                                             ? `Closed won ${actionDrawerRelativeTime(selectedLead.hubspot_latest_deal_updated_at)}`
                                             : 'Closed-won timing not yet available'}
@@ -5524,7 +5524,7 @@ export function ContactsWorkspace() {
                                     new signal changes the picture.
                                   </p>
                                   <div className="rounded-xl border border-[rgba(125,144,154,0.2)] bg-[rgba(125,144,154,0.08)] p-4">
-                                    <p className="text-sm font-semibold text-[#5f7480]">Dormant for now</p>
+                                    <p className="text-[13.5px] font-semibold text-[#5f7480]">Dormant for now</p>
                                     <p className="mt-1 text-[13.5px] leading-[1.45] text-[#4a6470]">
                                       Let fresh budget, a new decision-maker, or a strategic shift reactivate this
                                       lead later.
@@ -5551,7 +5551,7 @@ export function ContactsWorkspace() {
                             // (Recommended action + Why this action). All states, conditions,
                             // CTAs and handlers are preserved — only the presentation changed.
                             const navyCta =
-                              'inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition hover:brightness-110';
+                              'inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-[#11526a] to-[#0d3547] px-4 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_8px_20px_-10px_rgba(13,53,71,0.6)] transition hover:brightness-110';
                             const detail: { lede: ReactNode; cta?: ReactNode; why?: ReactNode } = (() => {
                               if (action === 'monitor') {
                                 if (isLeadReadyAwaitingContactSignal(selectedLead)) {
@@ -5577,7 +5577,7 @@ export function ContactsWorkspace() {
                                     <button
                                       type="button"
                                       onClick={() => router.push(ROUTES.contacts)}
-                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                     >
                                       View Signals
                                       <ChevronRight className="h-4 w-4" aria-hidden />
@@ -5718,7 +5718,7 @@ export function ContactsWorkspace() {
                                         setSelectedPreview('contact');
                                         startEditingLead(selectedLead);
                                       }}
-                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#e8a07e] bg-white px-4 py-2.5 text-sm font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#e8a07e] bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
                                     >
                                       Edit contact email
                                       <ChevronRight className="h-4 w-4" aria-hidden />
@@ -5738,7 +5738,7 @@ export function ContactsWorkspace() {
                                   </p>
                                   <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
                                     <span
-                                      className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${actionConfig.className}`}
+                                      className={`inline-flex items-center rounded-full px-3 py-1 text-[13.5px] font-medium ${actionConfig.className}`}
                                     >
                                       {actionConfig.label}
                                     </span>
@@ -5812,7 +5812,7 @@ export function ContactsWorkspace() {
                                     animateOnMount
                                     deferAnimationMs={160}
                                     label={
-                                      <span className="block text-xl font-semibold text-[#0d3547] leading-snug tabular-nums">
+                                      <span className="block text-[19px] font-semibold text-[#0d3547] leading-snug tabular-nums">
                                         {priorityPct != null ? priorityPct : '—'}
                                       </span>
                                     }
@@ -5917,13 +5917,13 @@ export function ContactsWorkspace() {
                       >
                         {selectedPreview !== 'contact' && (
                           <div className="space-y-4">
-                            <p className="text-xs leading-snug text-[#4a6470]">
+                            <p className="text-[11px] leading-snug text-[#4a6470]">
                               Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                             </p>
 
                             {effectiveRefreshStatus === 'running' && (
                               <div
-                                className={`rounded-lg border px-3 py-2 text-xs ${effectiveRefreshStatusMeta.className}`}
+                                className={`rounded-lg border px-3 py-2 text-[11px] ${effectiveRefreshStatusMeta.className}`}
                               >
                                 <p className="font-medium">{effectiveRefreshStatusMeta.label}</p>
                                 <div className="mt-2 flex flex-col gap-1.5">
@@ -5931,13 +5931,13 @@ export function ContactsWorkspace() {
                                     type="button"
                                     onClick={() => stopLeadEnrichment(selectedLead.id)}
                                     disabled={isStoppingSelected}
-                                    className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     <Ban className="h-3.5 w-3.5" aria-hidden />
                                     {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
                                   </button>
                                   {stopEnrichmentError && (
-                                    <p className="text-xs text-red-500">{stopEnrichmentError}</p>
+                                    <p className="text-[11px] text-red-500">{stopEnrichmentError}</p>
                                   )}
                                 </div>
                               </div>
@@ -5952,8 +5952,8 @@ export function ContactsWorkspace() {
                                     aria-hidden
                                   />
                                   <div className="min-w-0 space-y-1">
-                                    <p className="text-xs font-semibold text-[#2D8A8A]">Enrichment done</p>
-                                    <p className="text-xs leading-snug text-[#6B7280]">
+                                    <p className="text-[11px] font-semibold text-[#2D8A8A]">Enrichment done</p>
+                                    <p className="text-[11px] leading-snug text-[#6B7280]">
                                       Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
                                     </p>
                                   </div>
@@ -5963,22 +5963,22 @@ export function ContactsWorkspace() {
 
                             {selectedLeadRefreshStatus === 'cancelled' &&
                               selectedLead.enrichment_refresh_finished_at && (
-                                <p className="text-xs leading-snug text-[#6B7280]">
+                                <p className="text-[11px] leading-snug text-[#6B7280]">
                                   Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                 </p>
                               )}
 
                             {selectedLeadRefreshStatus === 'failed' && (
                               <>
-                                <p className="text-xs font-semibold text-[rgb(13,53,71)]">
+                                <p className="text-[11px] font-semibold text-[rgb(13,53,71)]">
                                   {selectedLeadRefreshStatusMeta.label}
                                 </p>
-                                <p className="text-xs leading-snug text-[#7d909a]">Showing last known data.</p>
+                                <p className="text-[11px] leading-snug text-[#7d909a]">Showing last known data.</p>
                               </>
                             )}
 
                             {selectedLeadRefreshStatus !== 'running' && (
-                              <p className="text-xs leading-relaxed text-[#6B7280]">
+                              <p className="text-[11px] leading-relaxed text-[#6B7280]">
                                 You can refresh this enrichment again whenever you need updated data.
                               </p>
                             )}
@@ -5992,7 +5992,7 @@ export function ContactsWorkspace() {
                                 isEditingSelected ||
                                 isSelectedLeadRefreshRunning
                               }
-                              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <RotateCw
                                 className={`h-4 w-4 text-[#1F2937] ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
@@ -6006,7 +6006,7 @@ export function ContactsWorkspace() {
                                     : 'Refresh enrichment'}
                             </button>
                             {selectedLead.hubspot_lead_state === 'customer' ? (
-                              <p className="text-xs leading-snug text-[#7d909a]">
+                              <p className="text-[11px] leading-snug text-[#7d909a]">
                                 Closed-won contacts should move through customer workflows instead of paid lead enrichment.
                               </p>
                             ) : null}
