@@ -2,6 +2,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
+import { useCreditConfirm } from '@/context/CreditConfirmContext';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import MemberWelcome from '@/components/MemberWelcome';
@@ -659,6 +660,7 @@ function metaTitle(signalKey: string, meta: Record<string, unknown>): string | n
 export default function BriefingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const confirmCredits = useCreditConfirm();
 
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [steps, setSteps] = useState<SetupStep[]>([]);
@@ -761,7 +763,14 @@ export default function BriefingPage() {
       openTask(item);
       return;
     }
-    if (!window.confirm(`Refresh ${contactIds.length} contacts for up to ${contactIds.length * 4} credits?`)) {
+    const ok = await confirmCredits({
+      title: `Refresh ${contactIds.length} ${contactIds.length === 1 ? 'contact' : 'contacts'}?`,
+      description: 'Re-runs enrichment for each contact to pull the latest role, signals and fit.',
+      cost: contactIds.length * 4,
+      upTo: true,
+      confirmLabel: 'Refresh',
+    });
+    if (!ok) {
       return;
     }
 

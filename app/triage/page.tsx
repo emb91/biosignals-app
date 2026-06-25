@@ -6,6 +6,7 @@ import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/lib/routes';
+import { useCreditConfirm } from '@/context/CreditConfirmContext';
 import { CalendarClock, ChevronRight, ListChecks, Pin, X } from 'lucide-react';
 
 const HubSpotLogo = ({ className }: { className?: string }) => (
@@ -124,6 +125,7 @@ export default function TriagePage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const confirmCredits = useCreditConfirm();
 
   const selected = selectedId ? rows.find((row) => row.id === selectedId) ?? null : null;
   const loadTriage = async () => {
@@ -172,7 +174,6 @@ export default function TriagePage() {
   };
 
   const enrichNow = async (row: TriageRow) => {
-    if (!window.confirm(`Enrich ${row.name} now?`)) return;
     setBusyId(row.id);
     setError(null);
     try {
@@ -185,7 +186,14 @@ export default function TriagePage() {
       const preflight = await preflightResponse.json();
       if (!preflightResponse.ok) throw new Error(preflight.error || 'Could not price enrichment.');
       const credits = Number(preflight.preflight?.estimatedCredits ?? 4);
-      if (!window.confirm(`Use up to ${credits.toLocaleString()} credits?`)) return;
+      const ok = await confirmCredits({
+        title: `Enrich ${row.name}?`,
+        description: 'Finds and scores the best-matched contacts for this import.',
+        cost: credits,
+        upTo: true,
+        confirmLabel: 'Enrich',
+      });
+      if (!ok) return;
       const response = await fetch('/api/import-contacts/enrich', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono, Manrope, Plus_Jakarta_Sans, Poppins, Quicksand }
 import ClientLayout from "./ClientLayout"
 import { AuthProvider } from "@/context/AuthContext"
 import { EnrichmentGuardProvider } from "@/context/EnrichmentGuardContext"
+import { CreditConfirmProvider } from "@/context/CreditConfirmContext"
 import { SetupStateProvider } from "@/lib/use-setup-state"
 import { PostHogProvider, PostHogIdentify } from "./posthog-provider"
 import { ApolloTracker } from "./apollo-tracker"
@@ -124,7 +125,9 @@ export default function RootLayout({
             <PostHogIdentify />
             <SetupStateProvider>
               <EnrichmentGuardProvider>
-                <ClientLayout>{children}</ClientLayout>
+                <CreditConfirmProvider>
+                  <ClientLayout>{children}</ClientLayout>
+                </CreditConfirmProvider>
               </EnrichmentGuardProvider>
             </SetupStateProvider>
             {process.env.NODE_ENV !== "production" && (

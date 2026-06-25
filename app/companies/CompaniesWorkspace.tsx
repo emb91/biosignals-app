@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
+import { useCreditConfirm } from '@/context/CreditConfirmContext';
 import { formatCurrencyShort } from '@/lib/funding-display';
 import {
   CompanyIcpFitDetailPanel,
@@ -572,6 +573,7 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
 export default function CompaniesPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const confirmCredits = useCreditConfirm();
   const searchParams = useSearchParams();
   const accountsDeepLinkCompanyIdRef = useRef<string | null>(null);
   const accountsScrollRef = useRef<HTMLDivElement | null>(null);
@@ -739,7 +741,13 @@ export default function CompaniesPage() {
     );
 
     try {
-      if (!window.confirm('Refresh this company for 3 credits?')) {
+      const ok = await confirmCredits({
+        title: 'Refresh this company?',
+        description: 'Arcova re-runs enrichment to pull the latest firmographics, signals and fit.',
+        cost: 3,
+        confirmLabel: 'Refresh',
+      });
+      if (!ok) {
         invalidateAccountCaches(companyId, { clearDetailState: false });
         await fetchAccounts(true);
         return;
