@@ -83,6 +83,10 @@ function recomputeContactPriorityLive(
         typeof row.hubspot_latest_deal_updated_at === 'string'
           ? row.hubspot_latest_deal_updated_at
           : null,
+      crmIsSuppressed:
+        typeof row.crm_is_suppressed === 'boolean'
+          ? row.crm_is_suppressed
+          : undefined,
     });
     return {
       ...row,
@@ -91,6 +95,44 @@ function recomputeContactPriorityLive(
       effective_readiness_score: priorityPolicy.effectiveReadiness,
       crm_is_suppressed: priorityPolicy.isSuppressed,
     };
+  });
+}
+
+function compareScoreDescNullLast(a: unknown, b: unknown): number {
+  const av = finiteScoreNumber(a);
+  const bv = finiteScoreNumber(b);
+  if (av == null && bv == null) return 0;
+  if (av == null) return 1;
+  if (bv == null) return -1;
+  return bv - av;
+}
+
+function compareDateDesc(a: unknown, b: unknown): number {
+  const av = typeof a === 'string' ? Date.parse(a) || 0 : 0;
+  const bv = typeof b === 'string' ? Date.parse(b) || 0 : 0;
+  return bv - av;
+}
+
+function sortContactsForList(rows: LeadRow[]): LeadRow[] {
+  return [...rows].sort((a, b) => {
+    const suppressionDiff = (a.crm_is_suppressed === true ? 1 : 0) - (b.crm_is_suppressed === true ? 1 : 0);
+    if (suppressionDiff !== 0) return suppressionDiff;
+
+    const priorityDiff = compareScoreDescNullLast(a.priority_score, b.priority_score);
+    if (priorityDiff !== 0) return priorityDiff;
+
+    const overallFitDiff = compareScoreDescNullLast(a.overall_fit_score, b.overall_fit_score);
+    if (overallFitDiff !== 0) return overallFitDiff;
+
+    const fitDiff = compareScoreDescNullLast(a.fit_score, b.fit_score);
+    if (fitDiff !== 0) return fitDiff;
+
+    const createdDiff = compareDateDesc(a.created_at, b.created_at);
+    if (createdDiff !== 0) return createdDiff;
+
+    const aId = typeof a.id === 'string' ? a.id : '';
+    const bId = typeof b.id === 'string' ? b.id : '';
+    return aId.localeCompare(bId);
   });
 }
 
@@ -524,13 +566,23 @@ async function attachReadinessBestEffort(
       });
     }
 
-    const { data, error } = await supabase
-      .from('contact_readiness_snapshots')
-      .select('contact_id, overall_label, overall_score')
-      .in('contact_id', contactIds);
-    if (error || !data) return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
+    const data: Array<{ contact_id: string; overall_label: string | null; overall_score: unknown }> = [];
+    for (const batch of chunks(contactIds)) {
+      const result = await supabase
+        .from('contact_readiness_snapshots')
+        .select('contact_id, overall_label, overall_score')
+        .in('contact_id', batch);
+      if (result.error || !result.data) {
+        return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
+      }
+      data.push(...((result.data || []) as Array<{
+        contact_id: string;
+        overall_label: string | null;
+        overall_score: unknown;
+      }>));
+    }
     const readinessMap = new Map<string, { label: string | null; score: number | null }>(
-      (data as Array<{ contact_id: string; overall_label: string | null; overall_score: unknown }>).map((r) => [
+      data.map((r) => [
         r.contact_id,
         { label: r.overall_label, score: finiteScoreNumber(r.overall_score) },
       ]),
@@ -643,23 +695,30 @@ async function attachUserCompanyScoresBestEffort(
     };
     let data: CompanyScoreRow[] = [];
 
-    const viewResult = await supabase
-      .from('accounts_view')
-      .select('id, company_fit_score, readiness_score')
-      .eq('user_id', userId)
-      .in('id', companyIds)
-      .is('archived_at', null);
+    for (const batch of chunks(companyIds)) {
+      const viewResult = await supabase
+        .from('accounts_view')
+        .select('id, company_fit_score, readiness_score')
+        .eq('user_id', userId)
+        .in('id', batch)
+        .is('archived_at', null);
 
-    if (!viewResult.error) {
-      data = ((viewResult.data ?? []) as Array<{
-        id: string;
-        company_fit_score: number | null;
-        readiness_score: number | null;
-      }>).map((row) => ({
-        company_id: row.id,
-        company_fit_score: row.company_fit_score,
-        readiness_score: row.readiness_score,
-      }));
+      if (viewResult.error) {
+        data = [];
+        break;
+      }
+
+      data.push(
+        ...((viewResult.data ?? []) as Array<{
+          id: string;
+          company_fit_score: number | null;
+          readiness_score: number | null;
+        }>).map((row) => ({
+          company_id: row.id,
+          company_fit_score: row.company_fit_score,
+          readiness_score: row.readiness_score,
+        })),
+      );
     }
 
     const idsLoadedFromView = new Set(data.map((row) => row.company_id));
@@ -994,6 +1053,14 @@ function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+function chunks<T>(values: T[], size: number = 500): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    out.push(values.slice(i, i + size));
+  }
+  return out;
+}
+
 export async function GET(request: Request) {
   try {
     const supabase = await createClient();
@@ -1014,6 +1081,7 @@ export async function GET(request: Request) {
     const companyId = searchParams.get('companyId') || '';
 
     const offset = (page - 1) * pageSize;
+    const fetchBatchSize = 1000;
 
     // Find company IDs matching taxonomy search terms (company type, TA, modality)
     let taxonomyCompanyIds: string[] = [];
@@ -1048,44 +1116,52 @@ export async function GET(request: Request) {
       taxonomyCompanyIds = (taxonomyMatches || []).map((c) => c.id as string).filter(Boolean);
     }
 
-    const runQuery = (selectClause: string) => {
-    let query = supabase
-      .from('contacts')
-      .select(selectClause, { count: 'exact' })
-      .eq('user_id', user.id)
-      .is('archived_at', null);
+    const runQuery = async (selectClause: string) => {
+      const allRows: Array<Record<string, unknown>> = [];
+      let totalCount: number | null = null;
 
-      if (companyId) {
-        query = query.eq('company_id', companyId);
-      } else if (search) {
-        const contactFilter = `full_name.ilike.%${search}%,company_name.ilike.%${search}%,job_title.ilike.%${search}%`;
-        const filter =
-          taxonomyCompanyIds.length > 0
-            ? `${contactFilter},company_id.in.(${taxonomyCompanyIds.join(',')})`
-            : contactFilter;
-        query = query.or(filter);
+      for (let start = 0; ; start += fetchBatchSize) {
+        let query = supabase
+          .from('contacts')
+          .select(selectClause, { count: 'exact' })
+          .eq('user_id', user.id)
+          .is('archived_at', null);
+
+        if (companyId) {
+          query = query.eq('company_id', companyId);
+        } else if (search) {
+          const contactFilter = `full_name.ilike.%${search}%,company_name.ilike.%${search}%,job_title.ilike.%${search}%`;
+          const filter =
+            taxonomyCompanyIds.length > 0
+              ? `${contactFilter},company_id.in.(${taxonomyCompanyIds.join(',')})`
+              : contactFilter;
+          query = query.or(filter);
+        }
+
+        const result = await query
+          .order('created_at', { ascending: false })
+          .range(start, start + fetchBatchSize - 1);
+
+        if (result.error) {
+          return { data: null, error: result.error, count: totalCount };
+        }
+
+        if (typeof result.count === 'number') {
+          totalCount = result.count;
+        }
+
+        const batch = ((result.data ?? []) as unknown) as Array<Record<string, unknown>>;
+        allRows.push(...batch);
+
+        if (batch.length < fetchBatchSize) break;
+        if (totalCount != null && allRows.length >= totalCount) break;
       }
 
-      // CRM-suppressed (closed-won/lost within cooldown) contacts sink to the
-      // bottom GLOBALLY — this must be the first sort key so pagination doesn't
-      // strand a closed deal's high intrinsic priority on page 1 (the read-time
-      // display suppression only sees one page). Maintained by
-      // denormalizeCrmSuppressionState on every HubSpot sync.
-      //
-      // Then priority_score (mirrored from contact_readiness_snapshots) orders
-      // within each group; overall_fit_score / fit_score are tiebreakers for
-      // contacts without a readiness snapshot yet, then created_at.
-      return query
-        .order('crm_is_suppressed', { ascending: true })
-        .order('priority_score', { ascending: false, nullsFirst: false })
-        .order('overall_fit_score', { ascending: false, nullsFirst: false })
-        .order('fit_score', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false })
-        .range(offset, offset + pageSize - 1);
+      return { data: allRows, error: null, count: totalCount ?? allRows.length };
     };
 
     const baseLeadSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, email_deliverability, linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, priority_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, email_deliverability, linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, priority_score, crm_is_suppressed, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
     // LEAN nested companies select — the contact LIST view only needs minimal
     // company context. The side panel + agent fetch full company detail via
     // GET /api/contacts/[id]. Trimming here saves ~30 fields × 50 rows per list
@@ -1111,7 +1187,7 @@ export async function GET(request: Request) {
     const tertiarySelect =
       `${baseLeadSelect}, ${companySelectStable}`;
     const fallbackSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, crm_is_suppressed, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
 
     let { data, error, count } = await runQuery(primarySelect);
 
@@ -1253,68 +1329,66 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Parallelize all "best-effort attach" passes. Each helper takes the same
-    // base rows array and returns rows.map(row => ({ ...row, ...itsFields })),
-    // so the index order is preserved and we can merge by index. The previous
-    // implementation chained these sequentially — 7 round-trips serialized,
-    // which was the dominant /api/contacts latency cost. Now they run as a
-    // single Promise.all, so total wait ≈ slowest single query.
-    //
-    // CRM-readiness masking moved to applyCrmReadinessMask (runs after merge)
-    // so attachReadinessBestEffort no longer needs the hubspot result.
+    // Compute team-visible ranking before pagination. The stored contact
+    // priority_score is a per-user mirror and can lag the org representative's
+    // readiness snapshot, so SQL-side priority ordering can choose the wrong
+    // page even if the returned cards later display corrected team scores.
     const baseRows = ((data || []) as unknown) as LeadRow[];
+    const [readinessRows, companyReadinessRows] = await Promise.all([
+      attachReadinessBestEffort(supabase, baseRows, user.id, orgId),
+      attachUserCompanyScoresBestEffort(supabase, baseRows, user.id, orgId),
+    ]);
+
+    const rankedRows: LeadRow[] = baseRows.map((_, idx) => ({
+      ...readinessRows[idx],
+      // Must come after most attach* helpers: each helper spreads the original baseRow, which
+      // carries company_fit_score = null (it lives in org company state, not on
+      // the contacts row). If we spread anything after this helper, that null
+      // base value clobbers the fit we just attached and the action gate
+      // re-collapses to Deprioritise.
+      ...companyReadinessRows[idx],
+    }));
+
+    const sortedRows = sortContactsForList(recomputeContactPriorityLive(rankedRows));
+    const pageRows = sortedRows.slice(offset, offset + pageSize);
+
+    // Heavy display-only attaches run after live/team ranking chooses the page.
+    // Each helper takes the same rows array and returns rows.map(row => ({
+    // ...row, ...itsFields })), so the index order is preserved and we can merge
+    // by index while avoiding org-wide email/phone/enrichment fanout.
     const [
       enrichmentRows,
       icpRows,
       emailRows,
       phoneRows,
       hubspotRows,
-      readinessRows,
-      companyReadinessRows,
       attributionRows,
       sequenceStatusRows,
       orgOverrideRows,
     ] = await Promise.all([
-      attachEnrichmentMetadataBestEffort(supabase, baseRows),
-      attachMatchedIcpNames(supabase, baseRows),
-      attachContactEmailsBestEffort(supabase, baseRows),
-      attachContactPhonesBestEffort(supabase, baseRows),
-      attachHubSpotLeadStateBestEffort(supabase, baseRows),
-      attachReadinessBestEffort(supabase, baseRows, user.id, orgId),
-      attachUserCompanyScoresBestEffort(supabase, baseRows, user.id, orgId),
-      attachContactAttributionBestEffort(supabase, baseRows),
-      attachLatestSequenceStatusBestEffort(supabase, baseRows, user.id),
-      attachOrgContactOverridesBestEffort(supabase, baseRows, orgId),
+      attachEnrichmentMetadataBestEffort(supabase, pageRows),
+      attachMatchedIcpNames(supabase, pageRows),
+      attachContactEmailsBestEffort(supabase, pageRows),
+      attachContactPhonesBestEffort(supabase, pageRows),
+      attachHubSpotLeadStateBestEffort(supabase, pageRows),
+      attachContactAttributionBestEffort(supabase, pageRows),
+      attachLatestSequenceStatusBestEffort(supabase, pageRows, user.id),
+      attachOrgContactOverridesBestEffort(supabase, pageRows, orgId),
     ]);
 
-    const merged: LeadRow[] = baseRows.map((_, idx) => ({
+    const merged: LeadRow[] = pageRows.map((row, idx) => ({
+      ...row,
       ...enrichmentRows[idx],
       ...icpRows[idx],
       ...emailRows[idx],
       ...phoneRows[idx],
       ...hubspotRows[idx],
-      ...readinessRows[idx],
       ...attributionRows[idx],
       ...sequenceStatusRows[idx],
       ...orgOverrideRows[idx],
-      // Must come after most attach* helpers: each helper spreads the original baseRow, which
-      // carries company_fit_score = null (it lives in org company state, not on
-      // the contacts row). If we spread anything after this helper, that null
-      // base value clobbers the fit we just attached and the action gate
-      // re-collapses to Deprioritise. Org overrides must stay before this
-      // attach for the same reason: the override helper applies edits onto a
-      // full base row, so it also carries the base null company_fit_score.
-      ...companyReadinessRows[idx],
     }));
 
-    // Synchronous post-processing: provenance label + LIVE priority recompute.
-    // priority_score is recomputed from the freshly-attached company_fit +
-    // contact_fit + readiness so it can't drift from the displayed fit/action
-    // (the stored mirror goes stale when company_fit changes without a readiness
-    // recompute — same bug that showed Moderna as "Reach out" but priority 0 on
-    // the accounts side). CRM-resolved (customer/dormant) suppression is applied
-    // at display time + reflected in the action tree / CRM badge, not here.
-    const finalRows = recomputeContactPriorityLive(attachDataProvenance(merged));
+    const finalRows = attachDataProvenance(merged);
 
     return NextResponse.json({
       data: finalRows,

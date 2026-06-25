@@ -22,6 +22,16 @@ const ROLE_RANK: Record<string, number> = {
   member: 2,
 };
 
+const IN_FILTER_BATCH_SIZE = 500;
+
+function chunks<T>(values: T[], size: number = IN_FILTER_BATCH_SIZE): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    out.push(values.slice(i, i + size));
+  }
+  return out;
+}
+
 function finiteScore(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -95,32 +105,40 @@ export async function contactReadinessByContactIdForOrg(params: {
   const memberIds = [...new Set(members.map((member) => member.userId))];
   if (memberIds.length === 0) return out;
 
-  const { data: requestedLinks, error: requestedLinksError } = await admin
-    .from('user_contacts')
-    .select('id, person_id')
-    .in('id', contactIds);
-  if (requestedLinksError) throw new Error(`contact person lookup failed: ${requestedLinksError.message}`);
+  const requestedLinks: Array<{ id: string; person_id: string | null }> = [];
+  for (const batch of chunks(contactIds)) {
+    const { data, error } = await admin
+      .from('user_contacts')
+      .select('id, person_id')
+      .in('id', batch);
+    if (error) throw new Error(`contact person lookup failed: ${error.message}`);
+    requestedLinks.push(...((data ?? []) as Array<{ id: string; person_id: string | null }>));
+  }
 
   const personByRequestedContact = new Map(
-    (requestedLinks ?? [])
+    requestedLinks
       .filter((row) => typeof row.id === 'string' && typeof row.person_id === 'string')
       .map((row) => [row.id as string, row.person_id as string]),
   );
   const personIds = [...new Set([...personByRequestedContact.values()])];
   if (personIds.length === 0) return out;
 
-  const { data: orgContacts, error: orgContactsError } = await admin
-    .from('user_contacts')
-    .select('id, person_id, user_id')
-    .in('user_id', memberIds)
-    .in('person_id', personIds)
-    .is('archived_at', null);
-  if (orgContactsError) throw new Error(`org contact lookup failed: ${orgContactsError.message}`);
+  const orgContacts: Array<{ id: string; person_id: string | null; user_id: string | null }> = [];
+  for (const batch of chunks(personIds)) {
+    const { data, error } = await admin
+      .from('user_contacts')
+      .select('id, person_id, user_id')
+      .in('user_id', memberIds)
+      .in('person_id', batch)
+      .is('archived_at', null);
+    if (error) throw new Error(`org contact lookup failed: ${error.message}`);
+    orgContacts.push(...((data ?? []) as Array<{ id: string; person_id: string | null; user_id: string | null }>));
+  }
 
   const personByOrgContact = new Map<string, string>();
   const usersByPerson = new Map<string, Set<string>>();
   const orgContactIds: string[] = [];
-  for (const row of orgContacts ?? []) {
+  for (const row of orgContacts) {
     const contactId = row.id as string;
     const personId = row.person_id as string;
     const userId = row.user_id as string;
@@ -133,13 +151,6 @@ export async function contactReadinessByContactIdForOrg(params: {
   }
   if (orgContactIds.length === 0) return out;
 
-  const { data: snapshots, error: snapshotsError } = await admin
-    .from('contact_readiness_snapshots')
-    .select('user_id, contact_id, overall_label, overall_score, updated_at')
-    .in('user_id', memberIds)
-    .in('contact_id', orgContactIds);
-  if (snapshotsError) throw new Error(`contact readiness lookup failed: ${snapshotsError.message}`);
-
   type SnapshotRow = {
     user_id: string;
     contact_id: string;
@@ -147,8 +158,19 @@ export async function contactReadinessByContactIdForOrg(params: {
     overall_score: unknown;
     updated_at: string | null;
   };
+  const snapshots: SnapshotRow[] = [];
+  for (const batch of chunks(orgContactIds)) {
+    const { data, error } = await admin
+      .from('contact_readiness_snapshots')
+      .select('user_id, contact_id, overall_label, overall_score, updated_at')
+      .in('user_id', memberIds)
+      .in('contact_id', batch);
+    if (error) throw new Error(`contact readiness lookup failed: ${error.message}`);
+    snapshots.push(...((data ?? []) as SnapshotRow[]));
+  }
+
   const newestByPerson = new Map<string, SnapshotRow>();
-  for (const snapshot of (snapshots ?? []) as SnapshotRow[]) {
+  for (const snapshot of snapshots) {
     const personId = personByOrgContact.get(snapshot.contact_id);
     if (!personId) continue;
     const preferredUserId = pickRepresentative(
@@ -188,21 +210,25 @@ export async function accountReadinessByCompanyIdForOrg(params: {
   if (memberIds.length === 0) return out;
   const preferredUserId = pickRepresentative(members)?.userId ?? params.userId;
 
-  const { data, error } = await admin
-    .from('account_readiness_snapshots')
-    .select('user_id, company_id, overall_score, updated_at')
-    .in('user_id', memberIds)
-    .in('company_id', companyIds);
-  if (error) throw new Error(`account readiness lookup failed: ${error.message}`);
-
   type SnapshotRow = {
     user_id: string;
     company_id: string;
     overall_score: unknown;
     updated_at: string | null;
   };
+  const snapshots: SnapshotRow[] = [];
+  for (const batch of chunks(companyIds)) {
+    const { data, error } = await admin
+      .from('account_readiness_snapshots')
+      .select('user_id, company_id, overall_score, updated_at')
+      .in('user_id', memberIds)
+      .in('company_id', batch);
+    if (error) throw new Error(`account readiness lookup failed: ${error.message}`);
+    snapshots.push(...((data ?? []) as SnapshotRow[]));
+  }
+
   const newestByCompany = new Map<string, SnapshotRow>();
-  for (const snapshot of (data ?? []) as SnapshotRow[]) {
+  for (const snapshot of snapshots) {
     if (!snapshot.company_id) continue;
     newestByCompany.set(
       snapshot.company_id,
