@@ -211,14 +211,31 @@ export async function findOrCreateCompany(
       await admin
         .from('org_companies')
         .upsert(
-          { org_id: orgId, company_id: companyId, source, created_by: userId, archived_at: null, updated_at: now },
+          {
+            org_id: orgId,
+            company_id: companyId,
+            source,
+            created_by: userId,
+            archived_at: null,
+            archived_by: null,
+            archived_reason: null,
+            updated_at: now,
+          },
           { onConflict: 'org_id,company_id' },
         );
     }
     await admin
       .from('user_companies')
       .upsert(
-        { user_id: userId, company_id: companyId, source, archived_at: null, updated_at: now },
+        {
+          user_id: userId,
+          company_id: companyId,
+          source,
+          archived_at: null,
+          archived_by: null,
+          archived_reason: null,
+          updated_at: now,
+        },
         { onConflict: 'user_id,company_id' },
       );
   };

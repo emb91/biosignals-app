@@ -50,7 +50,7 @@ const FREE_CAPS: UsageCaps = {
   importedEnrichmentsIncludedMonthly: 10,
   importedEnrichmentsHardCapMonthly: 10,
   netNewEnrichedLeadsMonthly: 5,
-  outreachSequencesIncludedMonthly: 2,
+  outreachSequencesIncludedMonthly: 1,
   phoneRevealsIncludedMonthly: 1,
   emailFinderRequestsIncludedMonthly: 1,
 };
@@ -64,7 +64,7 @@ const STARTER_CAPS: UsageCaps = {
   importedEnrichmentsIncludedMonthly: 250,
   importedEnrichmentsHardCapMonthly: 5_000,
   netNewEnrichedLeadsMonthly: 50,
-  outreachSequencesIncludedMonthly: 95,
+  outreachSequencesIncludedMonthly: 66,
   phoneRevealsIncludedMonthly: 3,
   emailFinderRequestsIncludedMonthly: 25,
 };
@@ -78,7 +78,7 @@ const GROWTH_CAPS: UsageCaps = {
   importedEnrichmentsIncludedMonthly: 1_200,
   importedEnrichmentsHardCapMonthly: 10_000,
   netNewEnrichedLeadsMonthly: 200,
-  outreachSequencesIncludedMonthly: 300,
+  outreachSequencesIncludedMonthly: 214,
   phoneRevealsIncludedMonthly: 12,
   emailFinderRequestsIncludedMonthly: 60,
 };
@@ -137,7 +137,7 @@ export const ACTION_CREDITS = {
   phone_reveal: 20,
   net_new_enriched_lead: 4,
   manual_contact_refresh: 4,
-  outreach_sequence: 5,
+  outreach_sequence: 7,
   scheduled_monitoring: 0,
   job_change_maintenance: 0,
   raw_import: 0,

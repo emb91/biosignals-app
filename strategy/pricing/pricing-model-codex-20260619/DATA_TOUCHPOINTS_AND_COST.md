@@ -77,6 +77,11 @@ net-new contact + company pairs:
 12 crons run (✅ `vercel.json`). Only **three** touch paid data providers; the rest hit free public/mirror
 sources but still count as signal-monitoring touchpoints.
 
+For billing/COGS rollups, scheduled monitoring is customer-included but still modeled internally with
+separate lines for hiring scrape, job-change profile scrape, external-contact refresh/provider calls, and
+fixed monthly LLM overhead where monitoring classification or synthesis uses LLMs. This touchpoint sheet
+keeps LLM calls out of the API-call counts, but the finance model should not omit that fixed overhead.
+
 ### Paid-provider jobs
 
 | Job | Schedule | Endpoint | Provider | Calls/mo | Cost/mo |
