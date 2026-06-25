@@ -3194,25 +3194,24 @@ export function ContactsWorkspace() {
     const n = percentDisplayNumber(fitScore);
     return (
       <div className="contacts-fit-card">
-        <div className="contacts-fit-head">
-          <span className="contacts-fit-head-title">Contact Fit</span>
-          <span className="contacts-fit-head-num">
-            {selectedContactFitState?.loading ? (
-              <span className="text-xs font-medium text-[#7d909a]">…</span>
-            ) : n != null ? (
-              <>
-                {n}
-                <span>%</span>
-              </>
-            ) : (
-              <span className="text-sm font-semibold text-[#7d909a]">—</span>
-            )}
-          </span>
-        </div>
-        <div className="contacts-fit-bar" aria-hidden>
-          {!selectedContactFitState?.loading && n != null ? (
-            <span className="contacts-fit-bar-fill" style={{ width: `${Math.min(100, n)}%` }} />
-          ) : null}
+        {/* Hero ring — reads consistently with the Priority & Signals gauges (design Fit hero) */}
+        <div className="flex flex-col items-center pb-3 pt-1">
+          <AnimatedCircularProgressBar
+            value={n ?? 0}
+            gaugePrimaryColor={fitScoreArcColor(n)}
+            gaugeSecondaryColor="rgba(13,53,71,0.09)"
+            animateOnMount
+            deferAnimationMs={160}
+            label={
+              <span className="block text-xl font-semibold leading-snug tabular-nums text-[#0d3547]">
+                {selectedContactFitState?.loading ? '…' : n != null ? n : '—'}
+              </span>
+            }
+            className="size-24 [--transition-length:0.95s]"
+          />
+          <p className="mt-3 font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
+            Contact fit
+          </p>
         </div>
         <div className="contacts-fit-criteria">
           {selectedContactFitState?.loading ? (
@@ -4347,13 +4346,35 @@ export function ContactsWorkspace() {
                   {selectedLead ? (
                     <div
                       className={cn(
-                        'flex min-h-0 h-full flex-col',
-                        selectedPreview === 'contact' &&
-                          'relative z-[1] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-0 before:h-28 before:bg-gradient-to-b before:from-[rgba(227,243,241,0.75)] before:via-[rgba(255,255,255,0.35)] before:to-transparent',
+                        // Soft teal header glow now reads on every tab (was contact-only) so
+                        // the redesigned header sits on a consistent gradient throughout.
+                        'relative z-[1] flex min-h-0 h-full flex-col',
+                        'before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-0 before:h-28 before:bg-gradient-to-b before:from-[rgba(227,243,241,0.75)] before:via-[rgba(255,255,255,0.35)] before:to-transparent',
                       )}
                     >
-                      {/* Panel header */}
-                      <div className="relative z-[1] flex items-start gap-3 border-b border-[rgba(13,53,71,0.08)] px-4 pb-3 pt-5">
+                      {/* Panel header — avatar leads, then eyebrow + name, close trails (design .dh) */}
+                      <div className="relative z-[1] flex items-center gap-3 border-b border-[rgba(13,53,71,0.08)] px-4 pb-3.5 pt-[18px]">
+                        {(selectedLead.profile_photo_cached || selectedLead.profile_photo_url) && !failedProfilePhotoByContactId[selectedLead.id] ? (
+                          <img
+                            src={selectedLead.profile_photo_cached || selectedLead.profile_photo_url!}
+                            alt=""
+                            className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-[13px] object-cover shadow-sm ring-1 ring-black/5"
+                            onError={() =>
+                              setFailedProfilePhotoByContactId((prev) => ({
+                                ...prev,
+                                [selectedLead.id]: true,
+                              }))
+                            }
+                          />
+                        ) : (
+                          <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-[13px] bg-gradient-to-br from-[#1f6173] to-[#0d6680] text-lg font-semibold text-[#cfeef0] shadow-sm ring-1 ring-black/5">
+                            {(
+                              selectedLead.first_name?.[0] ||
+                              selectedLead.full_name?.[0] ||
+                              '?'
+                            ).toUpperCase()}
+                          </div>
+                        )}
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
                             {selectedPreview === 'contact'
@@ -4370,51 +4391,28 @@ export function ContactsWorkspace() {
                                       ? 'Outreach'
                                       : 'Action'}
                           </p>
-                          <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
+                          <h2 className="font-manrope mt-1 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[1.4375rem]">
                             {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
                               selectedLead.full_name ||
                               'Selected contact'}
                           </h2>
                         </div>
-                        <div className="flex items-start gap-2 flex-shrink-0">
-                          {(selectedLead.profile_photo_cached || selectedLead.profile_photo_url) && !failedProfilePhotoByContactId[selectedLead.id] ? (
-                            <img
-                              src={selectedLead.profile_photo_cached || selectedLead.profile_photo_url!}
-                              alt=""
-                              className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
-                              onError={() =>
-                                setFailedProfilePhotoByContactId((prev) => ({
-                                  ...prev,
-                                  [selectedLead.id]: true,
-                                }))
-                              }
-                            />
-                          ) : (
-                            <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-lg font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
-                              {(
-                                selectedLead.first_name?.[0] ||
-                                selectedLead.full_name?.[0] ||
-                                '?'
-                              ).toUpperCase()}
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedLeadId(null);
-                              cancelEditingLead();
-                            }}
-                            className="contacts-drawer-close"
-                            aria-label="Close details"
-                          >
-                            <X className="h-3.5 w-3.5" strokeWidth={2} />
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedLeadId(null);
+                            cancelEditingLead();
+                          }}
+                          className="contacts-drawer-close shrink-0"
+                          aria-label="Close details"
+                        >
+                          <X className="h-3.5 w-3.5" strokeWidth={2} />
+                        </button>
                       </div>
 
                       {/* Peer tab strip — all panel views as siblings. Existing
                           row-button entries still work as deep-links into a tab. */}
-                      <div className="relative z-[1] flex items-center gap-1 overflow-x-auto border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-3 py-1.5">
+                      <div className="relative z-[1] flex items-center gap-0.5 border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-2.5 py-2">
                         {([
                           { key: 'contact', label: 'Contact' },
                           { key: 'scoring', label: 'Fit' },
@@ -4431,7 +4429,8 @@ export function ContactsWorkspace() {
                               type="button"
                               onClick={() => setSelectedPreview(key)}
                               className={cn(
-                                'shrink-0 rounded-md px-2 py-1 text-[11.5px] font-semibold transition-colors',
+                                // Equal-width tabs so all 7 fit without horizontal scroll (design .tabs)
+                                'min-w-0 flex-1 whitespace-nowrap rounded-[9px] px-1 py-1.5 text-center text-[11.5px] font-semibold transition-colors',
                                 isActive
                                   ? 'bg-arcova-teal/10 text-arcova-teal'
                                   : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700',
@@ -5192,14 +5191,14 @@ export function ContactsWorkspace() {
                           )
                         ) : selectedPreview === 'hubspot' ? (
                           <div className="space-y-4">
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[#ff7a59]" />
-                                <h2 className="text-lg font-semibold leading-tight text-gray-900">HubSpot CRM</h2>
-                              </div>
-                              <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
-                                Arcova company truth stays primary here. HubSpot shows the CRM account and deal motion alongside it.
-                              </p>
+                            <div className="flex items-center gap-2">
+                              <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
+                                HubSpot CRM
+                              </span>
+                              <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-[#7d909a]">
+                                <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-[#2d8a8a]" />
+                                Connected
+                              </span>
                             </div>
 
                             {selectedHubSpotCrmState?.loading ? (
@@ -5255,7 +5254,7 @@ export function ContactsWorkspace() {
                                       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
                                         <div>
                                           <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
-                                            Arcova company
+                                            Company
                                           </p>
                                           <p className="mt-1 text-sm leading-snug text-[#0d3547]">
                                             {arcovaCompanyName || '—'}
@@ -5263,7 +5262,7 @@ export function ContactsWorkspace() {
                                         </div>
                                         <div>
                                           <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
-                                            Arcova domain
+                                            Domain
                                           </p>
                                           <p className="mt-1 break-all text-sm leading-snug text-[#0d3547]">
                                             {arcovaCompanyDomain || '—'}
@@ -5299,11 +5298,11 @@ export function ContactsWorkspace() {
                                         {hasMismatch ? (
                                           <div className="rounded-lg border border-[#ffd8c7] bg-[#fff7f3] px-3 py-2">
                                             <p className="text-xs font-medium text-[#b45309]">
-                                              Arcova and HubSpot disagree on the company
+                                              This deal points at a different company
                                             </p>
                                             <p className="mt-1 text-xs leading-snug text-[#7c5a4b]">
-                                              Arcova is using {arcovaCompanyName || arcovaCompanyDomain || 'its matched account'} as
-                                              the primary truth, while HubSpot is still attached to{' '}
+                                              The matched account is {arcovaCompanyName || arcovaCompanyDomain || 'this contact’s company'},
+                                              but HubSpot still has this deal attached to{' '}
                                               {deal.hubspot_company_name || deal.hubspot_company_domain || 'another CRM account'}.
                                             </p>
                                           </div>
