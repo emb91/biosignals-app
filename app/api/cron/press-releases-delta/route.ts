@@ -138,7 +138,6 @@ async function runCron(request: Request) {
         });
       } catch (error) {
         monitorFailed += 1;
-        for (const item of items) failedCompanies.add(item.companyId);
         const errMsg = messageFromUnknown(error);
         failures.push({ user_id: userId, error: errMsg });
         console.error(`[cron/press-releases-delta] monitor failed for user ${userId}:`, error);
