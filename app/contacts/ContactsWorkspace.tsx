@@ -1039,6 +1039,31 @@ function score01ToFitOk(score01: number, matchStatus?: string | null): ActionFit
   return 'miss';
 }
 
+/**
+ * Short "Exact match" / "Partial match" / "No match" qualifier for a fit
+ * criterion row. The contact-fit scorer emits matchStatus values from its own
+ * LLM vocabulary (`llm_match` / `llm_reviewed` / `unknown`), while the company
+ * scorer uses `exact` / `partial` / `mismatch` / `strong` / `weak`. Derive the
+ * label from the resolved fit band so it works across both, and return null
+ * when the criterion was not evaluated (no data / inactive).
+ */
+function fitMatchQualifier(
+  ok: ActionFitCriterion['ok'],
+  matchStatus?: string | null,
+): string | null {
+  if (matchStatus === 'unknown') return null;
+  if (matchStatus === 'exact' || matchStatus === 'llm_match') return 'Exact match';
+  if (matchStatus === 'mismatch') return 'No match';
+  if (ok === 'pass') return 'Exact match';
+  if (ok === 'warn') return 'Partial match';
+  return 'No match';
+}
+
+/** True when the contact-fit scorer reported a positive match for the criterion. */
+function isContactFitMatch(matchStatus?: string | null): boolean {
+  return matchStatus === 'exact' || matchStatus === 'llm_match';
+}
+
 const formatPercent = (value: number | null | undefined): string | null => {
   const percent = formatPercentValue(value);
   return percent ? `${percent} fit` : null;
@@ -3276,7 +3301,7 @@ export function ContactsWorkspace() {
               const ok = score01ToFitOk(component.score01, component.matchStatus ?? null);
               const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
               const detailText: string | null = (() => {
-                if (component.matchStatus === 'exact') return 'Exact match';
+                if (isContactFitMatch(component.matchStatus)) return 'Exact match';
                 if (key === 'seniority') {
                   const contactSeniority = selectedLead.seniority_level ?? null;
                   if (contactSeniority) {
@@ -3316,14 +3341,7 @@ export function ContactsWorkspace() {
                         {formatPercentValue(component.score01) ?? '—'}
                       </span>
                       {(() => {
-                        const qual =
-                          component.matchStatus === 'exact'
-                            ? 'Exact match'
-                            : component.matchStatus === 'mismatch'
-                              ? 'No match'
-                              : component.matchStatus === 'partial'
-                                ? 'Partial match'
-                                : null;
+                        const qual = fitMatchQualifier(ok, component.matchStatus ?? null);
                         if (!qual) return null;
                         return (
                           <span className={cn('whitespace-nowrap text-[11px] font-semibold', ok === 'miss' ? 'text-[#c46b7a]' : 'text-[#7d909a]')}>
