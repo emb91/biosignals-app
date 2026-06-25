@@ -767,7 +767,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
            was, floating over the now-full-width page content. Same glass treatment
            as the full panel. Expand control restores the panel; sending a message
            also expands so the reply is visible. */
-        <div className="absolute right-7 top-2.5 z-30 flex w-[360px] items-center gap-1.5 rounded-[1.3125rem] border border-arcova-teal/60 bg-white/65 px-3 py-2 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2),_0_2px_6px_-2px_rgba(0,164,180,0.12)] ring-1 ring-arcova-teal/10 backdrop-blur-[28px] backdrop-saturate-150">
+        <div className="absolute right-7 top-2.5 z-30 flex w-[360px] items-center gap-[10px] rounded-[16px] border border-arcova-teal/40 bg-white/95 px-[15px] py-[11px] shadow-[0_10px_30px_-16px_rgba(13,53,71,0.3),_0_1px_4px_-2px_rgba(13,53,71,0.1)]">
           <AgentChatBar
             ref={inputRef}
             value={input}
@@ -788,11 +788,11 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           <button
             type="button"
             onClick={() => setCollapsed(false)}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[rgba(13,53,71,0.1)] bg-white/55 text-[#7d909a] shadow-[0_1px_2px_rgba(13,53,71,0.06)] transition-all hover:border-arcova-teal/40 hover:bg-white hover:text-arcova-teal"
+            className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[10px] border border-[rgba(13,53,71,0.1)] bg-white/70 text-[#7d909a] transition-all hover:border-arcova-teal/40 hover:bg-white hover:text-arcova-teal"
             aria-label="Expand agent"
             title="Expand agent"
           >
-            <Maximize2 className="h-3.5 w-3.5" />
+            <Maximize2 className="h-[15px] w-[15px]" />
           </button>
         </div>
       ) : (
