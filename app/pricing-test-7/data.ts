@@ -111,10 +111,10 @@ export const COMPARE: CompareGroup[] = [
     // Each sequence = 4 emails, 2 LinkedIn messages, 1 LinkedIn request.
     group: "Outreach",
     rows: [
-      { label: "Generated sequences", m: ["2/month", "95/month", "300/month"], a: ["2/month", "1,140/year", "3,600/year"] },
+      { label: "Generated sequences", m: ["1/month", "66/month", "214/month"], a: ["1/month", "792/year", "2,568/year"] },
       { label: "Emails", sub: true, m: ["8/month", "380/month", "1,200/month"], a: ["8/month", "4,560/year", "14,400/year"] },
       { label: "LinkedIn messages", sub: true, m: ["4/month", "190/month", "600/month"], a: ["4/month", "2,280/year", "7,200/year"] },
-      { label: "LinkedIn requests", sub: true, m: ["2/month", "95/month", "300/month"], a: ["2/month", "1,140/year", "3,600/year"] },
+      { label: "LinkedIn requests", sub: true, m: ["1/month", "66/month", "214/month"], a: ["1/month", "792/year", "2,568/year"] },
     ],
   },
   {

@@ -1,7 +1,7 @@
 # Arcova Pricing and Cost Basis
 
 **Status:** Current operating summary
-**Last updated:** 23 June 2026
+**Last updated:** 25 June 2026
 **Commercial source of truth:** `ARCOVA_PRICING_AND_CREDIT_SPEC.md`
 
 ## Pricing
@@ -30,7 +30,7 @@ These are deliberately separate systems:
 
 - **Customer credits** price completed product actions and should target strong action-level margin.
 - **Provider COGS** is recorded in fractional US dollars from actual provider usage.
-- **$0.01 is an internal cost-credit reference only.** It does not determine customer credit prices.
+- **One Arcova credit / $0.01 is an internal cost-credit reference only.** It is not a fixed customer cash price and does not determine customer action prices.
 - Legacy internal acquisition units remain an abuse/cost governor and are never customer-facing.
 
 Customer action prices:
@@ -38,16 +38,18 @@ Customer action prices:
 | Action | Credits |
 |---|---:|
 | Imported contact and company enrichment | 4, including email validation when an email is returned |
-| Company-only enrichment | 3 |
+| Company-only import/enrichment | 3, only for complete non-duplicate companies; no Haiku triage |
 | Email validation | 0.5 when billable |
 | Successful new-email lookup and validation | 11 |
 | Phone reveal | 20 |
 | Net-new enriched lead | 4 |
 | Manual contact refresh | 4 |
-| Seven-touch outreach sequence | 5 |
+| Seven-touch outreach sequence | 7 |
 | Scheduled monitoring | 0 |
 | Confirmed job-change maintenance | 0 |
 | Raw import, storage, deduplication, cached rescore | 0 |
+
+The decided Starter imported-enrichment allowance is **250 monthly contact-plus-company enrichments**. Treat this as the product allowance in docs and calculators, not as raw imports or provider-call count.
 
 ## Cost model
 
@@ -70,7 +72,13 @@ work plus the expected validation share multiplied by the ZeroBounce validation 
 validation remains a separate internal/customer action only if Arcova exposes an explicit "validate this email"
 workflow later.
 
-Monitoring is the largest recurring cost sensitivity because it repeats across the full active universe.
+Monitoring is included for customers, but it still needs explicit internal COGS lines because it repeats across the full active universe. Model included monitoring with:
+
+- hiring scrape for monitored companies;
+- job-change profile scrape for monitored contacts;
+- external-contact refresh/provider calls triggered by monitoring;
+- fixed monthly LLM overhead where monitoring classification or synthesis uses LLMs.
+
 The Growth cap is 10,000 active leads.
 
 Hiring-monitor planning should use:

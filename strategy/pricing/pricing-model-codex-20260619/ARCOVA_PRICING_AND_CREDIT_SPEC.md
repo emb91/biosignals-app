@@ -1,7 +1,7 @@
 # Arcova Pricing and Credit Specification
 
 **Status:** Working pricing decision
-**Last updated:** 23 June 2026
+**Last updated:** 25 June 2026
 **Scope:** Free, Starter and Growth only
 
 ## Executive decision
@@ -9,7 +9,7 @@
 Arcova uses action-specific included allowances backed by Arcova credits.
 
 - Provider COGS is recorded in fractional dollars and is separate from customer credits.
-- **$0.01 remains an internal cost-credit reference only.** Customer action prices are set independently from that reference.
+- **One Arcova credit / $0.01 remains an internal cost-credit reference only.** It is not a customer price, cash-equivalent balance, or promise that the customer is buying provider cost at cost. Customer action prices are set independently from that reference.
 - Credits are consumed by deliberate, cost-incurring actions such as enrichment, email finding, phone reveal, net-new data acquisition and sequence generation.
 - Routine monitoring is included as a plan entitlement and does not invisibly deduct credits.
 - Included plan allowances are shown as actions, with credit values underneath. Customers think in actions; the system accounts in credits.
@@ -34,7 +34,7 @@ Arcova uses action-specific included allowances backed by Arcova credits.
 | New imported records triaged/month | 500 | 10,000 | 50,000 |
 | Imported enrichments included/month | 10 | 250 | 1,200 |
 | Net-new delivered-leads included/month | 5 | 50 | 200 |
-| Sequence generation package/month | 2 | 95 | 300 |
+| Sequence generation package/month | 1 | 66 | 214 |
 | Email finder package/month | 1 | 25 | 60 |
 | Phone reveal package/month | 1 | 3 | 12 |
 | Export | Full unlocked data | Full unlocked data | Full unlocked data |
@@ -115,6 +115,8 @@ An imported lead enrichment costs **4 credits** and represents the contact-plus-
 
 The COGS model must include that validation. Imported enrichment is not just Apollo plus Apify; it is Apollo plus Apify plus expected ZeroBounce validation when an email is returned. Customers still see one imported-enrichment action, not a separate validation charge.
 
+The decided Starter allowance is **250 monthly contact-plus-company enrichments**. Keep docs, calculators and implementation language aligned to that action allowance; do not reinterpret it as 250 raw imports or 250 provider calls.
+
 #### Free
 
 - Up to 10 imported enrichments/month.
@@ -150,19 +152,21 @@ Purchased credits add spending power but do not increase active ICP capacity, ac
 | Action | Arcova credits | Limit behavior |
 |---|---:|---|
 | Imported lead enrichment | 4 | Included imported-enrichment allowance first; purchased credits after that; active-lead capacity still applies |
-| Company-only enrichment | 3 | Credits |
+| Company-only import/enrichment | 3 | Charged only for complete, non-duplicate companies; no Haiku triage step |
 | Email validation | 0.5 | Included in enrichment when an email is returned; standalone validation only when explicitly exposed |
 | Find a new email | 11 | Included email-finder allowance first; purchased credits after that |
 | Phone reveal | 20 | Included phone-reveal allowance first; purchased credits after that |
 | Net-new enriched lead | 4 | Shared balance plus active-lead capacity |
 | Manual lead refresh | 4 | Shared balance |
-| Seven-touch outreach sequence | 5 | Included sequence allowance first; purchased credits after that |
+| Seven-touch outreach sequence | 7 | Included sequence allowance first; purchased credits after that |
 | Scheduled monitoring | 0 | Included within active-lead cap |
 | Confirmed job-change refresh | 0 | Included maintenance of an active lead |
 
 Before a paid action, Arcova should show the estimated credit cost.
 
 Credits should be reserved before the provider call and settled only on a billable result. Failed calls, duplicates and fresh cache hits should be refunded or never finalized.
+
+For company-only imports, incomplete rows and duplicate companies are not billable results. The billable action is a complete new company accepted for company enrichment at **3 credits/company**.
 
 ### 6. Phone reveal
 
@@ -207,25 +211,32 @@ Net-new data remains inside the Arcova credit system. There is no separate $1-pe
 
 This deliberately gives Starter a lower freshness tier rather than allowing background monitoring to consume credits invisibly. Customers should never discover that scheduled work exhausted the balance needed for deliberate actions.
 
+Internal COGS should still model included monitoring as explicit lines:
+
+- hiring scrape for monitored companies;
+- job-change profile scrape for monitored contacts;
+- external-contact refresh/provider calls triggered by monitoring;
+- fixed monthly LLM overhead where monitoring classification or synthesis uses LLMs.
+
 ### 9. Outreach sequence generation
 
 Arcova generates a complete seven-touch sequence and stages it for Lemlist.
 
 - Arcova does not generate or send one-off emails.
 - Lemlist controls sending inboxes, daily send limits, campaign timing, deliverability and reply stops.
-- One generated sequence costs **5 credits**.
+- One generated sequence costs **7 credits**.
 - Each generated sequence contains seven steps before editing: four email steps, one LinkedIn connection request, and two LinkedIn message steps.
-- Free includes a 2-sequence monthly package allowance, equivalent to 14 total steps: 8 email, 2 LinkedIn connection requests, and 4 LinkedIn message steps.
-- Starter includes a 95-sequence monthly package allowance, equivalent to 665 total steps: 380 email, 95 LinkedIn connection requests, and 190 LinkedIn message steps.
-- Growth includes a 300-sequence monthly package allowance, equivalent to 2,100 total steps: 1,200 email, 300 LinkedIn connection requests, and 600 LinkedIn message steps.
+- Free includes a 1-sequence monthly package allowance, equivalent to 7 total steps: 4 email, 1 LinkedIn connection request, and 2 LinkedIn message steps.
+- Starter includes a 66-sequence monthly package allowance, equivalent to 462 total steps: 264 email, 66 LinkedIn connection requests, and 132 LinkedIn message steps.
+- Growth includes a 214-sequence monthly package allowance, equivalent to 1,498 total steps: 856 email, 214 LinkedIn connection requests, and 428 LinkedIn message steps.
 - Customers can generate additional sequences by spending credits. Arcova does not own or enforce the customer's final Lemlist cadence.
 - Editing generated copy manually is free.
 - A failed Arcova generation should be retried for free.
 
 Outreach volume context:
 
-- 95 generated sequences/month produce 665 total steps: 380 email, 95 LinkedIn connection requests, and 190 LinkedIn message steps before editing.
-- 300 generated sequences/month produce 2,100 total steps: 1,200 email, 300 LinkedIn connection requests, and 600 LinkedIn message steps before editing.
+- 66 generated sequences/month produce 462 total steps: 264 email, 66 LinkedIn connection requests, and 132 LinkedIn message steps before editing.
+- 214 generated sequences/month produce 1,498 total steps: 856 email, 214 LinkedIn connection requests, and 428 LinkedIn message steps before editing.
 - Actual delivery remains governed by the user's Lemlist configuration.
 
 ### 10. Exports
@@ -242,11 +253,13 @@ Outreach volume context:
 
 The user sees action allowances first and credit balances second.
 
-Each included action allowance has a credit value underneath:
+Each included action allowance has a credit value underneath. Monthly credits are the shared
+spending pool; action allowances are guardrails on the shape of that spend, not a promise that
+every action category can be maxed simultaneously.
 
-- Free: 10 imported enrichments, 5 net-new leads, 2 sequences, 1 email find, 1 phone reveal, shown as 100 included monthly credits.
-- Starter: 250 imported enrichments, 50 net-new leads, 95 sequences, 25 email finds, 3 phone reveals, shown as 2,000 included monthly credits.
-- Growth: 1,200 imported enrichments, 200 net-new leads, 300 sequences, 60 email finds, 12 phone reveals, shown as 8,000 included monthly credits.
+- Free: 100 included monthly credits, with guardrails of 10 imported enrichments, 5 net-new leads, 2 sequences, 1 email find, and 1 phone reveal.
+- Starter: 2,000 included monthly credits, with guardrails of 250 imported contact-plus-company enrichments, 50 net-new leads, 66 sequences, 25 email finds, and 3 phone reveals.
+- Growth: 8,000 included monthly credits, with guardrails of 1,200 imported contact-plus-company enrichments, 200 net-new leads, 214 sequences, 60 email finds, and 12 phone reveals.
 
 The app shows action-specific counters such as:
 
@@ -255,7 +268,7 @@ The app shows action-specific counters such as:
 - active lead capacity: `3,810 / 5,000`;
 - triage: `6,200 / 10,000 records this month`;
 - active leads: `3,810 / 5,000`;
-- sequence generation: `18 / 95 generated this month`.
+- sequence generation: `18 / 66 generated this month`.
 
 These counters are customer-facing action allowances. Once the relevant included allowance is exhausted, extra actions use purchased credits. Purchased credits are flexible and can be applied to any paid action, but they do not increase active ICP capacity, active-lead capacity or monitoring cadence.
 

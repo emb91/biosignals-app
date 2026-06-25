@@ -426,7 +426,7 @@ const LANDING_HTML = `
             <tr><td>Included imported enrichments</td><td>10 / month</td><td>250 / month</td><td>1,200 / month</td></tr>
             <tr><td>Included net-new enriched leads</td><td>5 / month</td><td>50 / month</td><td>200 / month</td></tr>
             <tr><td>Extra imported enrichments</td><td>Upgrade for more actions</td><td>Use purchased credits</td><td>Use purchased credits</td></tr>
-            <tr><td>Sequences generated</td><td>2 / month</td><td>95 / month</td><td>300 / month</td></tr>
+            <tr><td>Sequences generated</td><td>1 / month</td><td>66 / month</td><td>214 / month</td></tr>
             <tr><td>Phone reveals</td><td>1 / month</td><td>3 / month</td><td>12 / month</td></tr>
             <tr><td>Email-finder requests</td><td>1 / month</td><td>25 / month</td><td>60 / month</td></tr>
             <tr><td>Exports</td><td>Unlimited</td><td>Unlimited</td><td>Unlimited</td></tr>

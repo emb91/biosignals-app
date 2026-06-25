@@ -213,6 +213,8 @@ async function upsertCompany(
   const orgId = await orgIdForUser(supabase as any, userId);
   const source = record.enrichment_provider || 'imported';
   const linkCompanyToWorkspace = async (companyId: string, archivedAt: string | null = null) => {
+    const activeArchiveClear =
+      archivedAt === null ? { archived_by: null, archived_reason: null } : {};
     if (orgId) {
       const { error: orgLinkError } = await supabase
         .from('org_companies')
@@ -223,6 +225,7 @@ async function upsertCompany(
             source,
             created_by: userId,
             archived_at: archivedAt,
+            ...activeArchiveClear,
             updated_at: now,
           },
           { onConflict: 'org_id,company_id' },
@@ -241,6 +244,7 @@ async function upsertCompany(
           company_id: companyId,
           source,
           archived_at: archivedAt,
+          ...activeArchiveClear,
           updated_at: now,
         },
         { onConflict: 'user_id,company_id' },
