@@ -72,6 +72,8 @@ import {
   Check,
   Plus,
   AlertTriangle,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { EntitySignalsList } from '@/components/EntitySignalsList';
 
@@ -1435,6 +1437,9 @@ export function ContactsWorkspace() {
   // On submit we dismiss the contact card and forward the text to AgentPanel as a
   // pending message — the agent expands back into view and answers immediately.
   const [agentChatBarValue, setAgentChatBarValue] = useState('');
+  // Docked mode: while a contact panel is open and the user expands the agent,
+  // the agent takes the top half and the drawer drops to the bottom half (design 50/50).
+  const [agentDocked, setAgentDocked] = useState(false);
   const fireAgent = (text: string, threadPreview?: string) =>
     setAgentTrigger((prev) => ({
       text,
@@ -1529,6 +1534,11 @@ export function ContactsWorkspace() {
   // The AgentPanel renders its outermost div with the marker class
   // `.contacts-leads-agent-col` (passed via the `className` prop below).
   const [agentRect, setAgentRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+
+  // Leaving a contact returns the agent to its normal full-column layout.
+  useEffect(() => {
+    if (!selectedLeadId) setAgentDocked(false);
+  }, [selectedLeadId]);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const el = document.querySelector<HTMLElement>('.contacts-leads-agent-col');
@@ -4270,8 +4280,9 @@ export function ContactsWorkspace() {
                         column itself is `invisible` in this state, so this bar is the agent's
                         only visible surface. Uses the shared `AgentChatBar` so it matches the
                         side-panel agent's input exactly. Submit dismisses the contact card and
-                        forwards the text to the agent, which expands back into view. */}
-                    {agentRect && (
+                        forwards the text to the agent, which expands back into view. The expand
+                        button docks the full agent into the top half (50/50 with the panel). */}
+                    {agentRect && !agentDocked && (
                       <div
                         className={cn(
                           // Glass card wrapper — same surface treatment as the contact
@@ -4300,6 +4311,15 @@ export function ContactsWorkspace() {
                           placeholder="Ask anything about your contacts…"
                           className="w-full"
                         />
+                        <button
+                          type="button"
+                          onClick={() => setAgentDocked(true)}
+                          className="ml-1.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-arcova-teal/30 bg-white/70 text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                          aria-label="Expand agent"
+                          title="Open the agent above the panel"
+                        >
+                          <Maximize2 className="h-4 w-4" />
+                        </button>
                       </div>
                     )}
                     <aside
@@ -4316,14 +4336,23 @@ export function ContactsWorkspace() {
                       )}
                       style={
                         agentRect
-                          ? {
-                              // Pushed down 64px to leave room at the TOP for the floating
-                              // agent chat bar, which now sits above the contact card.
-                              top: agentRect.top + 64,
-                              left: agentRect.left,
-                              width: agentRect.width,
-                              height: Math.max(0, agentRect.height - 64),
-                            }
+                          ? agentDocked
+                            ? {
+                                // Docked: drawer takes the bottom half; the agent fills the
+                                // top half (50/50 split, viewport-relative like the design).
+                                top: 'calc(50vh + 6px)',
+                                left: agentRect.left,
+                                width: agentRect.width,
+                                height: 'calc(50vh - 20px)',
+                              }
+                            : {
+                                // Pushed down 64px to leave room at the TOP for the floating
+                                // agent chat bar, which now sits above the contact card.
+                                top: agentRect.top + 64,
+                                left: agentRect.left,
+                                width: agentRect.width,
+                                height: Math.max(0, agentRect.height - 64),
+                              }
                           : undefined
                       }
                     >
@@ -4381,6 +4410,21 @@ export function ContactsWorkspace() {
                               'Selected contact'}
                           </h2>
                         </div>
+                        {agentRect && (
+                          <button
+                            type="button"
+                            onClick={() => setAgentDocked((d) => !d)}
+                            className="contacts-drawer-close shrink-0"
+                            aria-label={agentDocked ? 'Expand panel to full height' : 'Share space with the agent'}
+                            title={agentDocked ? 'Expand to full height' : 'Shrink — open the agent above'}
+                          >
+                            {agentDocked ? (
+                              <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />
+                            ) : (
+                              <Minimize2 className="h-3.5 w-3.5" strokeWidth={2} />
+                            )}
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
@@ -5934,11 +5978,13 @@ export function ContactsWorkspace() {
         <AgentPanel
           className={cn(
             'contacts-leads-agent-col min-[1280px]:pl-1.5',
-            // Folds the agent away while the user is reviewing a contact —
-            // the contact card overlays this slot and the floating chat bar
-            // takes over at the bottom. `invisible` keeps the column in
-            // layout so agentRect continues to track its footprint.
-            selectedLeadId && 'invisible',
+            // While reviewing a contact the agent is hidden by default (the floating
+            // chat bar + full-height drawer take over). `invisible` keeps the column
+            // in layout so agentRect keeps tracking its footprint.
+            selectedLeadId && !agentDocked && 'invisible',
+            // Docked: the agent shrinks to the TOP HALF and the drawer drops to the
+            // bottom half (50/50 split). self-start stops the grid stretching it.
+            selectedLeadId && agentDocked && 'z-[41] self-start max-h-[calc(50vh-1.25rem)] overflow-hidden',
           )}
           // Reserve the full expanded column width while a contact is selected even
           // though the leads page opens with the agent collapsed. Without this the
