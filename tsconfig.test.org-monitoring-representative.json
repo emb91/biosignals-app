@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-org-monitoring-representative-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/billing/org-monitoring-representative.ts",
+    "lib/billing/org-monitoring-representative.test.ts"
+  ]
+}

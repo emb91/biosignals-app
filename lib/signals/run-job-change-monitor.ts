@@ -1,9 +1,11 @@
 /**
  * run-job-change-monitor
  *
- * Lightweight contact job-change monitor.  Periodically re-scrapes LinkedIn
- * profiles via the HarvestAPI Apify actor and emits contact-scoped signals
- * when the person's role or company has changed since the last check.
+ * Lightweight contact job-change reveal monitor. The scheduled cron scrapes
+ * each due canonical LinkedIn profile once at the Arcova/source-target layer,
+ * freezes every due subscriber contact's previous state, then calls this module
+ * to emit contact-scoped signals for the orgs whose reveal cadence is due.
+ * Manual runs still scrape directly for the requesting user.
  *
  * Deliberately avoids Apollo enrichment, LLM bio generation, and phone
  * enrichment — those are handled by the full runContactResolutionPipeline.
@@ -16,8 +18,8 @@
  *   title_change              — same employer, different title
  *   new_to_role               — first-time check; relevant stakeholder detected
  *
- * Cron cadence: weekly heartbeat, with per-contact eligibility controlled by
- * the shared sweep-target dispatcher (see /api/cron/contact-job-change).
+ * Cron cadence: source-target acquisition follows the fastest active subscriber
+ * cadence; subscriber reveal follows each org's own cadence.
  */
 
 import { createAdminClient } from '@/lib/supabase-admin';
@@ -54,6 +56,7 @@ const MAX_BATCH = 100;
 type ContactRecord = {
   id: string;
   user_id: string;
+  person_id?: string | null;
   company_id: string | null;
   full_name: string | null;
   linkedin_url: string | null;
@@ -65,6 +68,8 @@ type ContactRecord = {
   business_area: string | null;
   profile_enrichment_status: string | null;
 };
+
+export type JobChangeContactRecord = ContactRecord;
 
 export type JobChangeMonitorResult = {
   processed: number;
@@ -92,9 +97,14 @@ function emptyJobChangeResult(): JobChangeMonitorResult {
 
 // ── Apify scraper ──────────────────────────────────────────────────────────
 
+function normalizeLinkedInProfileUrl(url: string | null | undefined): string | null {
+  const normalized = url?.trim().toLowerCase().replace(/\/+$/, '') ?? '';
+  return normalized || null;
+}
+
 async function scrapeLinkedInProfile(
   linkedinUrl: string,
-  context: { orgId: string | null; userId: string },
+  context: { orgId: string | null; userId: string | null },
 ): Promise<Record<string, unknown> | null> {
   try {
     const items = await runApifyActor<Record<string, unknown>>({
@@ -116,29 +126,35 @@ async function scrapeLinkedInProfile(
   }
 }
 
-async function scrapeLinkedInProfiles(
+export async function scrapeLinkedInProfiles(
   contacts: ContactRecord[],
-  context: { orgId: string | null; userId: string },
+  context: { orgId: string | null; userId: string | null },
 ): Promise<Map<string, Record<string, unknown> | null>> {
   const urls = contacts.map((row) => row.linkedin_url).filter((url): url is string => Boolean(url));
   const result = new Map<string, Record<string, unknown> | null>();
   if (!urls.length) return result;
+  const uniqueUrlByNormalized = new Map<string, string>();
+  for (const url of urls) {
+    const normalized = normalizeLinkedInProfileUrl(url);
+    if (normalized && !uniqueUrlByNormalized.has(normalized)) uniqueUrlByNormalized.set(normalized, url);
+  }
+  const queryUrls = [...uniqueUrlByNormalized.values()];
   try {
     const items = await runApifyActor<Record<string, unknown>>({
       actor: 'profile',
       input: {
-        queries: urls,
+        queries: queryUrls,
         profileScraperMode: 'Profile details no email ($4 per 1k)',
       },
       orgId: context.orgId,
       userId: context.userId,
       actionType: 'contact_job_change_monitoring',
-      inputCount: urls.length,
-      attemptedCount: urls.length,
+      inputCount: queryUrls.length,
+      attemptedCount: queryUrls.length,
       includedMonitoring: true,
       timeoutMs: 180_000,
     });
-    const normalizedToUrl = new Map(urls.map((url) => [url.toLowerCase().replace(/\/+$/, ''), url]));
+    const scrapedByNormalized = new Map<string, Record<string, unknown> | null>();
     for (const item of items) {
       const returnedUrl = [
         item.linkedinUrl,
@@ -148,16 +164,29 @@ async function scrapeLinkedInProfiles(
         item.url,
       ].find((value): value is string => typeof value === 'string' && value.length > 0);
       if (!returnedUrl) continue;
-      const inputUrl = normalizedToUrl.get(returnedUrl.toLowerCase().replace(/\/+$/, ''));
-      if (inputUrl) result.set(inputUrl, item);
+      const normalized = normalizeLinkedInProfileUrl(returnedUrl);
+      if (normalized && uniqueUrlByNormalized.has(normalized)) scrapedByNormalized.set(normalized, item);
     }
-    urls.forEach((url, index) => {
-      if (!result.has(url)) result.set(url, items[index] ?? null);
+    queryUrls.forEach((url, index) => {
+      const normalized = normalizeLinkedInProfileUrl(url);
+      if (normalized && !scrapedByNormalized.has(normalized)) scrapedByNormalized.set(normalized, items[index] ?? null);
+    });
+    urls.forEach((url) => {
+      const normalized = normalizeLinkedInProfileUrl(url);
+      result.set(url, normalized ? scrapedByNormalized.get(normalized) ?? null : null);
     });
   } catch {
     // A failed batch is retried record-by-record so one malformed profile does
     // not strand the rest of the monitoring universe.
-    for (const url of urls) result.set(url, await scrapeLinkedInProfile(url, context));
+    const scrapedByNormalized = new Map<string, Record<string, unknown> | null>();
+    for (const url of queryUrls) {
+      const normalized = normalizeLinkedInProfileUrl(url);
+      if (normalized) scrapedByNormalized.set(normalized, await scrapeLinkedInProfile(url, context));
+    }
+    for (const url of urls) {
+      const normalized = normalizeLinkedInProfileUrl(url);
+      result.set(url, normalized ? scrapedByNormalized.get(normalized) ?? null : null);
+    }
   }
   return result;
 }
@@ -819,6 +848,8 @@ async function emitKeyContactDepartedSignal(
 export type JobChangeMonitorInput = {
   userId: string;
   contactIds?: string[];
+  contactRows?: JobChangeContactRecord[];
+  profilesByLinkedInUrl?: Map<string, Record<string, unknown> | null>;
   limit?: number;
 };
 
@@ -836,17 +867,22 @@ export async function runJobChangeMonitor(
     ? input.contactIds.filter((id): id is string => typeof id === 'string' && Boolean(id))
     : [];
 
-  const query = admin
-    .from('contacts')
-    .select(
-      'id, user_id, company_id, full_name, linkedin_url, email, ' +
-      'resolved_current_company_name, resolved_current_company_domain, ' +
-      'resolved_current_job_title, seniority_level, business_area, profile_enrichment_status'
-    )
-    .eq('user_id', input.userId)
-    .is('archived_at', null)
-    .not('linkedin_url', 'is', null)
-    .order('job_change_checked_at', { ascending: true, nullsFirst: true });
+  const frozenContactRows = Array.isArray(input.contactRows)
+    ? input.contactRows.filter((row) => row.user_id === input.userId)
+    : null;
+  const query = frozenContactRows
+    ? null
+    : admin
+        .from('contacts')
+        .select(
+          'id, user_id, person_id, company_id, full_name, linkedin_url, email, ' +
+          'resolved_current_company_name, resolved_current_company_domain, ' +
+          'resolved_current_job_title, seniority_level, business_area, profile_enrichment_status'
+        )
+        .eq('user_id', input.userId)
+        .is('archived_at', null)
+        .not('linkedin_url', 'is', null)
+        .order('job_change_checked_at', { ascending: true, nullsFirst: true });
 
   // Oldest-checked-first ordering means each run picks the most-stale contacts,
   // so successive runs roll through the whole good-fit list. `limit` decides how
@@ -856,9 +892,9 @@ export async function runJobChangeMonitor(
   if (contactIds.length > 0) {
     // Explicit/targeted request — the caller picked these contacts, so run
     // them as asked (bypasses the routine-sweep fit gate and cadence sizing).
-    query.in('id', contactIds);
+    query?.in('id', contactIds);
     limit = Math.min(perRunCeiling, contactIds.length);
-  } else {
+  } else if (!frozenContactRows) {
     // Rolling sweep — good-fit contacts at good-fit companies only
     // (guardrail #2). The Apify profile scrape should only ever recur on a
     // qualified person at an account worth watching, so we gate on BOTH the
@@ -878,7 +914,7 @@ export async function runJobChangeMonitor(
     // No good-fit companies → nothing to sweep. Skip the scrape entirely.
     if (goodFitCompanyIds.length === 0) return emptyJobChangeResult();
 
-    query.gte('contact_fit_score', SWEEP_FIT_THRESHOLD).in('company_id', goodFitCompanyIds);
+    query?.gte('contact_fit_score', SWEEP_FIT_THRESHOLD).in('company_id', goodFitCompanyIds);
 
     // Fallback/manual routine run: use the user's plan cadence to avoid scraping
     // the full good-fit list at once. The scheduled cron passes explicit due
@@ -897,10 +933,15 @@ export async function runJobChangeMonitor(
     limit = Math.min(perRunCeiling, Math.max(desiredForCadence, 1));
   }
 
-  query.limit(limit);
-
-  const { data: contacts, error: fetchError } = await query;
-  if (fetchError) throw new Error(`[job-change-monitor] fetch contacts: ${fetchError.message}`);
+  let fetchedContactRows: ContactRecord[] | null = frozenContactRows
+    ? frozenContactRows.slice(0, limit)
+    : null;
+  if (!fetchedContactRows) {
+    query?.limit(limit);
+    const { data: contacts, error: fetchError } = await query!;
+    if (fetchError) throw new Error(`[job-change-monitor] fetch contacts: ${fetchError.message}`);
+    fetchedContactRows = (contacts ?? []) as unknown as ContactRecord[];
+  }
 
   let processed = 0;
   let noLinkedin = 0;
@@ -910,13 +951,12 @@ export async function runJobChangeMonitor(
   const emittedSignalTypes = new Set<string>();
   const recomputedContacts: string[] = [];
   const failures: { contact_id: string; error: string }[] = [];
-  const contactRows = (contacts ?? []) as unknown as ContactRecord[];
-  const profiles = await scrapeLinkedInProfiles(contactRows, {
+  const profiles = input.profilesByLinkedInUrl ?? await scrapeLinkedInProfiles(fetchedContactRows, {
     orgId: member?.org_id ?? null,
     userId: input.userId,
   });
 
-  for (const row of contactRows) {
+  for (const row of fetchedContactRows) {
     if (!row.linkedin_url) {
       noLinkedin++;
       continue;

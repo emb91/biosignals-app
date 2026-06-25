@@ -1,11 +1,11 @@
 /**
- * Daily NIH grants delta sync + per-user grants monitor — Vercel cron entrypoint.
+ * NIH grants delta sync + shared-target grants monitor — Vercel cron entrypoint.
  *
  * Step 1: pull the last N days (default 14) of NIH RePORTER awards into the
  *         local nih_grants_local mirror.
- * Step 2: walk every user with non-archived companies and run runGrantsMonitor
- *         against the fresh mirror so signals land in their feeds without
- *         them having to press the admin test button.
+ * Step 2: dispatch due account subscribers from the shared sweep-target cadence
+ *         tables and run runGrantsMonitor against the fresh mirror for one
+ *         representative member per org/company.
  *
  * Per-user monitor failures are isolated — one user's failure doesn't block
  * the others.

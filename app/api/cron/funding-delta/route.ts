@@ -1,11 +1,11 @@
 /**
- * Daily SEC filings delta sync + per-user funding monitor — Vercel cron entrypoint.
+ * SEC filings delta sync + shared-target funding monitor — Vercel cron entrypoint.
  *
  * Step 1: pull Form D / 8-K / 424B filings from EDGAR's daily-index files for
  *         the last N days into the local sec_filings_local mirror.
- * Step 2: walk every user with non-archived companies and run runFundingMonitor
- *         against the fresh mirror so signals land in their feeds without
- *         them having to press the admin test button.
+ * Step 2: dispatch due account subscribers from the shared sweep-target cadence
+ *         tables and run runFundingMonitor against the fresh mirror for one
+ *         representative member per org/company.
  *
  * Halts gracefully on SEC rate-limit errors (logged via sec_delta_sync_runs).
  * Per-user monitor failures are isolated — one user's failure doesn't block

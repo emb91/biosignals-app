@@ -9,7 +9,7 @@
  *   run_all          boolean   — process all companies in batches (ignores limit)
  *   batch_size       number    — chunk size when run_all=true (default 200)
  *
- * Scraping is done inline by runHiringMonitor — one ATS batch call per run.
+ * Manual runs refresh the shared jobs mirror before classifying signals.
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
@@ -102,6 +102,7 @@ export async function POST(request: Request) {
             userId: user.id,
             companyIds: chunk,
             onlySignalKey,
+            refreshFromLinkedIn: true,
           });
           totalProcessed += chunkResult.processed;
           totalFailed += chunkResult.failed;
@@ -135,6 +136,7 @@ export async function POST(request: Request) {
         companyIds: requestedCompanyIds,
         limit: limitValue,
         onlySignalKey,
+        refreshFromLinkedIn: true,
       });
     }
 

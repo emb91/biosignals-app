@@ -1,25 +1,28 @@
 /**
- * Daily PubMed publications monitor — Vercel cron entrypoint.
+ * PubMed publications shared-target monitor — Vercel cron entrypoint.
  *
- * Unlike the other delta crons there's no sync step: runPublicationsMonitor
- * queries PubMed (NCBI E-utilities) live on each run for papers published in
- * the last `lookbackDays` (default 30) that either list one of the user's
- * companies as an author affiliation, or include one of the user's contacts
- * as a named author.
+ * Unlike the mirror-backed delta crons, there is no persistent sync table:
+ * due account/contact targets are dispatched through the shared sweep-target
+ * cadence tables, and runPublicationsMonitor queries PubMed (NCBI E-utilities)
+ * live for the subscriber's cadence-sized lookback window. A per-request cache
+ * dedupes identical PubMed queries across due subscribers in the same Arcova run.
  *
  * Emits:
  *   `publication`         for company affiliation matches (scope: company)
  *   `new_paper_published` for contact author matches       (scope: contact)
  *
- * Walks every user with non-archived companies so signals land in their feeds
- * without them pressing the admin test button. Per-user failures are isolated —
- * one user's failure doesn't block the others.
+ * Subscriber reveal is org-cadence gated; team size does not multiply targets.
+ * Per-user failures are isolated so one representative's failure does not block
+ * the rest of the due subscribers.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { observeCron } from '@/lib/cron-observability';
 import { persistRunHistory } from '@/lib/signals/run-history';
-import { runPublicationsMonitor } from '@/lib/signals/run-publications-monitor';
+import {
+  createPublicationsPubMedCache,
+  runPublicationsMonitor,
+} from '@/lib/signals/run-publications-monitor';
 import { markAccountSubscriberSweeps, markContactSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   accountSweepSubscribersForTargets,
@@ -86,6 +89,7 @@ async function runCron(request: Request) {
     const unmarkedPersons = new Set<string>();
     const subscriberCompanyIds = new Set(accountSubscribers.map((item) => item.companyId));
     const subscriberPersonIds = new Set(contactSubscribers.map((item) => item.personId));
+    const pubmedCache = createPublicationsPubMedCache();
     for (const [userId, work] of byUser) {
       try {
         const cadenceLookback = Math.max(
@@ -102,6 +106,7 @@ async function runCron(request: Request) {
           companyIds: [...new Set(work.accounts.map((item) => item.companyId))],
           contactIds: [...new Set(work.contacts.map((item) => item.contactId))],
           lookbackDays,
+          pubmedCache,
         });
         monitorOk += 1;
         const contactIdToPersonId = new Map(work.contacts.map((item) => [item.contactId, item.personId]));

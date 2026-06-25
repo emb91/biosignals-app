@@ -6,6 +6,10 @@ import { SWEEP_FIT_THRESHOLD } from '@/lib/signals/sweep-fit-gate';
 import { lookbackDaysForCadence } from '@/lib/signals/monitor-cadence-rules';
 import { pickSharedNextSweepAt } from '@/lib/billing/shared-sweep-cadence';
 import {
+  pickOrgMonitoringRepresentative,
+  type OrgMonitoringMember,
+} from '@/lib/billing/org-monitoring-representative';
+import {
   ACCOUNT_SWEEP_SOURCES,
   CONTACT_SWEEP_SOURCES,
   type AccountSweepSource,
@@ -730,12 +734,12 @@ export async function listDueContactSweepTargets(params: {
 async function orgMembersByOrg(
   admin: AdminClient,
   orgIds: string[],
-): Promise<Map<string, string[]>> {
-  const byOrg = new Map<string, string[]>();
+): Promise<Map<string, OrgMonitoringMember[]>> {
+  const byOrg = new Map<string, OrgMonitoringMember[]>();
   const uniqueOrgIds = [...new Set(orgIds)].filter(Boolean);
   if (!uniqueOrgIds.length) return byOrg;
   const { data, error } = await admin.from('org_members')
-    .select('org_id, user_id')
+    .select('org_id, user_id, role, joined_at, created_at')
     .in('org_id', uniqueOrgIds);
   if (error) throw new Error(`org members read failed: ${error.message}`);
   for (const row of data ?? []) {
@@ -743,7 +747,12 @@ async function orgMembersByOrg(
     const userId = row.user_id as string;
     if (!orgId || !userId) continue;
     const list = byOrg.get(orgId) ?? [];
-    list.push(userId);
+    list.push({
+      userId,
+      role: (row.role as string | null | undefined) ?? null,
+      joinedAt: (row.joined_at as string | null | undefined) ?? null,
+      createdAt: (row.created_at as string | null | undefined) ?? null,
+    });
     byOrg.set(orgId, list);
   }
   return byOrg;
@@ -795,8 +804,10 @@ export async function accountSweepSubscribersForTargets(params: {
   const candidates = subscriberRows.flatMap((row) => {
     const sweep = dueSweepByKey.get(`${row.org_id}:${row.company_id}`);
     if (!sweep) return [];
-    const userIds = members.get(row.org_id) ?? [];
-    return userIds.map((userId) => ({ row, userId, cadenceDays: Number(sweep.cadence_days) }));
+    const representative = pickOrgMonitoringRepresentative(members.get(row.org_id) ?? []);
+    return representative
+      ? [{ row, userId: representative.userId, cadenceDays: Number(sweep.cadence_days) }]
+      : [];
   });
   return candidates
     .map(({ row, userId, cadenceDays }) => ({
@@ -850,7 +861,7 @@ export async function contactSweepSubscribersForTargets(params: {
     dueSweepByKey.set(`${row.org_id}:${row.person_id}`, row);
   }
   const members = await orgMembersByOrg(admin, subscriberRows.map((row) => row.org_id));
-  const userIds = [...new Set([...members.values()].flat())];
+  const userIds = [...new Set([...members.values()].flat().map((member) => member.userId))];
   const { data: contacts, error: contactsError } = userIds.length
     ? await admin.from('user_contacts')
       .select('id, user_id, person_id, company_id')
@@ -860,17 +871,31 @@ export async function contactSweepSubscribersForTargets(params: {
     : { data: [], error: null };
   if (contactsError) throw new Error(`representative contact read failed: ${contactsError.message}`);
 
+  const contactByUserPerson = new Map<string, { id: string; userId: string; companyId: string | null }>();
+  for (const contact of contacts ?? []) {
+    const userId = contact.user_id as string;
+    const personId = contact.person_id as string;
+    if (!userId || !personId) continue;
+    contactByUserPerson.set(`${userId}:${personId}`, {
+      id: contact.id as string,
+      userId,
+      companyId: (contact.company_id as string | null | undefined) ?? null,
+    });
+  }
   const contactByOrgPerson = new Map<string, { id: string; userId: string; companyId: string | null }>();
   for (const row of subscriberRows) {
-    const orgUserIds = new Set(members.get(row.org_id) ?? []);
-    const contact = (contacts ?? []).find((candidate) => (
-      candidate.person_id === row.person_id && orgUserIds.has(candidate.user_id as string)
-    ));
+    const orgMembers = members.get(row.org_id) ?? [];
+    const representative = pickOrgMonitoringRepresentative(
+      orgMembers.filter((member) => contactByUserPerson.has(`${member.userId}:${row.person_id}`)),
+    );
+    const contact = representative
+      ? contactByUserPerson.get(`${representative.userId}:${row.person_id}`)
+      : null;
     if (contact) {
       contactByOrgPerson.set(`${row.org_id}:${row.person_id}`, {
-        id: contact.id as string,
-        userId: contact.user_id as string,
-        companyId: (contact.company_id as string | null | undefined) ?? null,
+        id: contact.id,
+        userId: contact.userId,
+        companyId: contact.companyId,
       });
     }
   }

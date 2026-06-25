@@ -1,13 +1,13 @@
 /**
- * Press-release delta sync + per-user monitor — Vercel cron entrypoint.
+ * Press-release delta sync + shared-target monitor — Vercel cron entrypoint.
  *
  * Step 1: Pull fresh articles from GlobeNewswire (biotech + pharma RSS) and
  *         PR Newswire (general feed with biotech keyword pre-filter) into the
  *         press_release_articles mirror and classify them with Haiku 4.5.
  *
- * Step 2: Walk every user with non-archived companies and run
- *         runPressReleaseMonitor so press-release signals land in their feeds
- *         without requiring any manual action.
+ * Step 2: Dispatch due account subscribers from the shared sweep-target cadence
+ *         tables and run runPressReleaseMonitor against the mirror for one
+ *         representative member per org/company.
  *
  * Auth: CRON_SECRET bearer token (same pattern as all other cron routes).
  * Per-user monitor failures are isolated — one user's failure doesn't block others.

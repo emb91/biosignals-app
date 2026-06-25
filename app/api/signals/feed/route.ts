@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { collectRecentPatentsByCompany, PATENT_SURGE_WINDOW_DAYS, type RecentPatent } from '@/lib/signals/patent-surge';
 import { orgIdForUser } from '@/lib/org-context';
 
@@ -102,11 +103,31 @@ export async function GET(request: Request) {
     const contactIdParam = (searchParams.get('contact_id') || '').trim() || null;
     // skipPatentCollapse=1: return all individual patent signals (today page groups them itself)
     const skipPatentCollapse = searchParams.get('skipPatentCollapse') === '1';
+    const orgId = await orgIdForUser(supabase as any, user.id);
+    const readClient = orgId ? createAdminClient() : supabase;
+    let visibleUserIds = [user.id];
+    if (orgId) {
+      const { data: memberRows, error: memberErr } = await readClient
+        .from('org_members')
+        .select('user_id')
+        .eq('org_id', orgId);
+      if (memberErr) {
+        console.error('[GET /api/signals/feed] org member lookup error', memberErr);
+        return NextResponse.json({ error: 'Failed to fetch signals' }, { status: 500 });
+      }
+      visibleUserIds = [
+        ...new Set((memberRows ?? [])
+          .map((row: any) => normalizeString(row.user_id))
+          .filter(Boolean) as string[]),
+      ];
+      if (!visibleUserIds.includes(user.id)) visibleUserIds.push(user.id);
+    }
 
-    let query = supabase
+    let query = readClient
       .from('normalized_signals')
       .select(`
         id,
+        user_id,
         signal_key,
         signal_scope,
         company_id,
@@ -119,6 +140,7 @@ export async function GET(request: Request) {
         evidence_excerpt,
         source_event:signal_source_events!inner(
           id,
+          source_event_id,
           source,
           source_event_type,
           source_url,
@@ -141,7 +163,7 @@ export async function GET(request: Request) {
           archived_at
         )
       `)
-      .eq('user_id', user.id)
+      .in('user_id', visibleUserIds)
       .order('observed_at', { ascending: false })
       .limit(400);
 
@@ -171,15 +193,14 @@ export async function GET(request: Request) {
     ] as string[];
     const archivedCompanyIds = new Set<string>();
     if (allCompanyIds.length) {
-      const orgId = await orgIdForUser(supabase as any, user.id);
       const archivedQuery = orgId
-        ? supabase
+        ? readClient
             .from('org_companies')
             .select('company_id')
             .eq('org_id', orgId)
             .in('company_id', allCompanyIds)
             .not('archived_at', 'is', null)
-        : supabase
+        : readClient
             .from('user_companies')
             .select('company_id')
             .eq('user_id', user.id)
@@ -200,8 +221,31 @@ export async function GET(request: Request) {
       if (row.contact?.archived_at) return false;
       return true;
     });
-    const companyIds = [...new Set(activeRows.map((row: any) => normalizeString(row.company_id)).filter(Boolean))] as string[];
-    const contactIds = [...new Set(activeRows.map((row: any) => normalizeString(row.contact_id)).filter(Boolean))] as string[];
+    const dedupedRows: any[] = [];
+    const seenRows = new Set<string>();
+    for (const row of activeRows) {
+      const sourceEvent = Array.isArray(row.source_event) ? row.source_event[0] : row.source_event;
+      const source = normalizeString(sourceEvent?.source) ?? 'unknown';
+      const logicalSourceId =
+        normalizeString(sourceEvent?.source_event_id)
+        ?? normalizeString(sourceEvent?.source_url)
+        ?? normalizeString(sourceEvent?.title)
+        ?? normalizeString(sourceEvent?.id)
+        ?? String(row.id);
+      const key = [
+        row.signal_key,
+        row.signal_scope,
+        normalizeString(row.company_id) ?? '',
+        normalizeString(row.contact_id) ?? '',
+        source,
+        logicalSourceId,
+      ].join('|');
+      if (seenRows.has(key)) continue;
+      seenRows.add(key);
+      dedupedRows.push(row);
+    }
+    const companyIds = [...new Set(dedupedRows.map((row: any) => normalizeString(row.company_id)).filter(Boolean))] as string[];
+    const contactIds = [...new Set(dedupedRows.map((row: any) => normalizeString(row.contact_id)).filter(Boolean))] as string[];
 
     const readinessSelect =
       'company_id,overall_score,overall_label,new_budget_score,new_budget_label,new_needs_score,new_needs_label,new_people_score,new_people_label,new_strategy_score,new_strategy_label,caution_score,caution_label';
@@ -210,24 +254,24 @@ export async function GET(request: Request) {
 
     const [readinessResult, contactReadinessResult, reasonsResult] = await Promise.all([
       companyIds.length
-        ? supabase
+        ? readClient
             .from('account_readiness_snapshots')
             .select(readinessSelect)
-            .eq('user_id', user.id)
+            .in('user_id', visibleUserIds)
             .in('company_id', companyIds)
         : Promise.resolve({ data: [], error: null }),
       contactIds.length
-        ? supabase
+        ? readClient
             .from('contact_readiness_snapshots')
             .select(contactReadinessSelect)
-            .eq('user_id', user.id)
+            .in('user_id', visibleUserIds)
             .in('contact_id', contactIds)
         : Promise.resolve({ data: [], error: null }),
       companyIds.length
-        ? supabase
+        ? readClient
             .from('account_reason_snapshots')
             .select('company_id,summary_short,why_now,suggested_angle')
-            .eq('user_id', user.id)
+            .in('user_id', visibleUserIds)
             .in('company_id', companyIds)
         : Promise.resolve({ data: [], error: null }),
     ]);
@@ -246,7 +290,7 @@ export async function GET(request: Request) {
     const readinessByContactId = new Map((contactReadinessResult.data || []).map((row: any) => [row.contact_id, row]));
     const reasonByCompanyId = new Map((reasonsResult.data || []).map((row: any) => [row.company_id, row]));
 
-    const mapped: SignalFeedItem[] = activeRows.flatMap((row: any) => {
+    const mapped: SignalFeedItem[] = dedupedRows.flatMap((row: any) => {
       const source = normalizeString(row.source_event?.source) ?? 'unknown';
       const signalKey = String(row.signal_key);
       if (HIDDEN_CRM_SIGNAL_SOURCES.has(source) && HIDDEN_CRM_SIGNAL_KEYS.has(signalKey)) {

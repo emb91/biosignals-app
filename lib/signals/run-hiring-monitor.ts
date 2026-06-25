@@ -1,10 +1,9 @@
 /**
  * Hiring signal monitor — V2.
  *
- * Queries job postings directly from LinkedIn via the
- * curious_coder/linkedin-jobs-scraper Apify actor (78K users, 98% success,
- * $0.001/job). One batch call per run covers all tracked companies —
- * no per-company scraping, no local DB mirror.
+ * Classifies job postings from the shared job_postings_local mirror. The
+ * jobs-delta cron refreshes that mirror once per due company/source target;
+ * customer/org cadence gates decide when each subscriber receives the signal.
  *
  * Signal keys emitted:
  *   cmc_hiring              — CMC, process development, manufacturing science
@@ -459,9 +458,32 @@ function parseRawJob(raw: RawAtsJob): ScrapedJob | null {
   };
 }
 
+function linkedinJobIdFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const currentJobId = /[?&]currentJobId=(\d+)/i.exec(url)?.[1];
+  if (currentJobId) return currentJobId;
+  const viewId = /\/jobs\/view\/(\d+)/i.exec(url)?.[1];
+  if (viewId) return viewId;
+  const anyLongId = /\b(\d{8,})\b/.exec(url)?.[1];
+  return anyLongId ?? null;
+}
+
+function fallbackLinkedInJobId(job: ScrapedJob): string {
+  const normalized = [
+    job.title.toLowerCase(),
+    job.company_name_raw.toLowerCase(),
+    job.job_url ?? '',
+  ].join('|');
+  let hash = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(index)) >>> 0;
+  }
+  return `arcova-${hash.toString(16)}`;
+}
+
 async function fetchJobsFromLinkedIn(
   companyNames: string[],
-  context: { orgId: string | null; userId: string },
+  context: { orgId: string | null; userId: string | null },
 ): Promise<{ jobs: ScrapedJob[]; rawCount: number; error: string | null }> {
   if (companyNames.length === 0) return { jobs: [], rawCount: 0, error: null };
   const rawItems: RawAtsJob[] = [];
@@ -496,6 +518,121 @@ async function fetchJobsFromLinkedIn(
   }
 }
 
+export type HiringJobsSyncResult = {
+  companies_processed: number;
+  companies_failed: number;
+  raw_jobs_returned: number;
+  jobs_upserted: number;
+  failures: Array<{ company_id: string; error: string }>;
+  details: Array<{ company_id: string; company_name: string; jobs_seen: number }>;
+};
+
+export async function syncLinkedInJobsForCompanies(input: {
+  companyIds: string[];
+  orgId?: string | null;
+  userId?: string | null;
+}): Promise<HiringJobsSyncResult> {
+  const admin = createAdminClient();
+  const companyIds = [...new Set(input.companyIds.filter(Boolean))];
+  if (!companyIds.length) {
+    return {
+      companies_processed: 0,
+      companies_failed: 0,
+      raw_jobs_returned: 0,
+      jobs_upserted: 0,
+      failures: [],
+      details: [],
+    };
+  }
+
+  const { data: companiesRaw, error: companiesErr } = await admin
+    .from('companies')
+    .select('id, company_name, aliases')
+    .in('id', companyIds);
+  if (companiesErr) throw new Error(companiesErr.message);
+  const companies = (companiesRaw ?? []) as CompanyRow[];
+  for (const company of companies) {
+    if (!company.aliases?.length && company.company_name) {
+      try {
+        const result = await ensureCompanyAliases(admin, company.id);
+        company.aliases = result.aliases;
+      } catch { /* non-fatal */ }
+    }
+  }
+
+  const companyNames = companies
+    .map((company) => company.company_name?.trim())
+    .filter((name): name is string => Boolean(name));
+  const startedAt = new Date().toISOString();
+  const { jobs, rawCount, error } = await fetchJobsFromLinkedIn(companyNames, {
+    orgId: input.orgId ?? null,
+    userId: input.userId ?? null,
+  });
+  if (error) {
+    return {
+      companies_processed: 0,
+      companies_failed: companies.length,
+      raw_jobs_returned: 0,
+      jobs_upserted: 0,
+      failures: companies.map((company) => ({
+        company_id: company.id,
+        error: `ATS fetch: ${error}`,
+      })),
+      details: [],
+    };
+  }
+
+  const idToCompany = new Map(companies.map((company) => [company.id, company]));
+  const rows: Array<{
+    company_id: string;
+    linkedin_job_id: string;
+    title: string;
+    title_normalized: string;
+    company_name: string | null;
+    job_url: string | null;
+    scraped_at: string;
+    last_seen_at: string;
+  }> = [];
+  const detailsByCompany = new Map<string, number>();
+
+  for (const job of jobs) {
+    const match = verifySourceCompanyNameAgainstCandidates(job.company_name_raw, companies);
+    if (!match?.companyId) continue;
+    const company = idToCompany.get(match.companyId);
+    rows.push({
+      company_id: match.companyId,
+      linkedin_job_id: linkedinJobIdFromUrl(job.job_url) ?? fallbackLinkedInJobId(job),
+      title: job.title,
+      title_normalized: job.title_normalized,
+      company_name: job.company_name_raw || company?.company_name || null,
+      job_url: job.job_url,
+      scraped_at: startedAt,
+      last_seen_at: startedAt,
+    });
+    detailsByCompany.set(match.companyId, (detailsByCompany.get(match.companyId) ?? 0) + 1);
+  }
+
+  if (rows.length > 0) {
+    const { error: upsertError } = await admin
+      .from('job_postings_local')
+      .upsert(rows, { onConflict: 'company_id,linkedin_job_id' });
+    if (upsertError) throw new Error(`job postings mirror upsert failed: ${upsertError.message}`);
+  }
+
+  return {
+    companies_processed: companies.length,
+    companies_failed: 0,
+    raw_jobs_returned: rawCount,
+    jobs_upserted: rows.length,
+    failures: [],
+    details: companies.map((company) => ({
+      company_id: company.id,
+      company_name: company.company_name ?? company.id,
+      jobs_seen: detailsByCompany.get(company.id) ?? 0,
+    })),
+  };
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────
 
 type HiringMonitorInput = {
@@ -503,6 +640,8 @@ type HiringMonitorInput = {
   companyIds?: string[];
   limit?: number;
   onlySignalKey?: SignalKey;
+  lookbackDays?: number;
+  refreshFromLinkedIn?: boolean;
 };
 
 export type CategoryMatch = {
@@ -545,6 +684,15 @@ type CompanyRow = {
   id: string;
   company_name: string | null;
   aliases: string[] | null;
+};
+
+type LocalJobPostingRow = {
+  company_id: string;
+  title: string;
+  title_normalized: string | null;
+  company_name: string | null;
+  job_url: string | null;
+  last_seen_at: string;
 };
 
 function messageFromUnknown(error: unknown): string {
@@ -637,10 +785,45 @@ async function emitHiringSignal(
   return 'emitted';
 }
 
+async function fetchJobsFromLocalMirror(
+  admin: ReturnType<typeof createAdminClient>,
+  companyIds: string[],
+  lookbackDays: number,
+): Promise<Map<string, ScrapedJob[]>> {
+  const jobsByCompanyId = new Map<string, ScrapedJob[]>();
+  const uniqueCompanyIds = [...new Set(companyIds.filter(Boolean))];
+  if (!uniqueCompanyIds.length) return jobsByCompanyId;
+
+  const freshCutoff = new Date(Date.now() - lookbackDays * 86_400_000).toISOString();
+  for (let index = 0; index < uniqueCompanyIds.length; index += 200) {
+    const slice = uniqueCompanyIds.slice(index, index + 200);
+    const { data, error } = await admin
+      .from('job_postings_local')
+      .select('company_id, title, title_normalized, company_name, job_url, last_seen_at')
+      .in('company_id', slice)
+      .gte('last_seen_at', freshCutoff);
+    if (error) throw new Error(`job postings mirror read failed: ${error.message}`);
+    for (const row of (data ?? []) as LocalJobPostingRow[]) {
+      if (!row.company_id || !row.title) continue;
+      const list = jobsByCompanyId.get(row.company_id) ?? [];
+      list.push({
+        title: row.title,
+        title_normalized: row.title_normalized ?? row.title.toLowerCase(),
+        job_url: row.job_url,
+        company_name_raw: row.company_name ?? '',
+      });
+      jobsByCompanyId.set(row.company_id, list);
+    }
+  }
+
+  return jobsByCompanyId;
+}
+
 // ── Main monitor ──────────────────────────────────────────────────────────
 
 export async function runHiringMonitor(input: HiringMonitorInput): Promise<HiringMonitorResult> {
   const admin = createAdminClient();
+  const lookbackDays = Math.min(60, Math.max(1, Math.trunc(input.lookbackDays ?? 14)));
   const { data: member } = await admin.from('org_members').select('org_id')
     .eq('user_id', input.userId).maybeSingle<{ org_id: string }>();
 
@@ -696,62 +879,29 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
 
   const idToCompany = new Map<string, CompanyRow>(companies.map((c) => [c.id, c]));
 
-  // 4. One batch ATS call for all companies + all role keyword groups
-  const companyNames = companies
-    .map((c) => c.company_name?.trim())
-    .filter((n): n is string => Boolean(n));
-
-  const { jobs, rawCount, error: atsError } = await fetchJobsFromLinkedIn(companyNames, {
-    orgId: member?.org_id ?? null,
-    userId: input.userId,
-  });
-
-  if (atsError) {
-    // Whole call failed — record a failure per company and return
-    return {
-      processed: 0,
-      failed: companies.length,
-      postings_scanned: 0,
-      candidate_events_before_dedupe: 0,
-      events_skipped_as_duplicates: 0,
-      emitted_signal_types: [],
-      recomputed_companies: [],
-      failures: companies.map((c) => ({ company_id: c.id, error: `ATS fetch: ${atsError}` })),
-      details: [],
-    };
-  }
-
-  // 5. Group jobs by company ID using the same verified-name evidence rules as
-  // the resolver. Raw substring matching is too risky for short names.
-  const jobsByCompanyId = new Map<string, ScrapedJob[]>();
-  for (const job of jobs) {
-    const match = verifySourceCompanyNameAgainstCandidates(
-      job.company_name_raw,
-      companies,
-    );
-    const companyId = match?.companyId;
-    if (!companyId) continue; // not one of our tracked companies
-    const matchedCompany = idToCompany.get(companyId);
-    job.company_match_metadata = buildAdmissionMetadata({
-      admitted: true,
-      reason: match.reason,
-      confidence: 'high',
-      entityScope: 'company',
-      companyId,
-      matchType: 'verified_ats_company_name',
-      metadata: {
-        role_gate: 'passed',
-        role_gate_reason: match.reason,
-        matched_source_field: 'company_name_raw',
-        matched_source_text: job.company_name_raw,
-        matched_company_name: matchedCompany?.company_name ?? null,
-      },
+  if (input.refreshFromLinkedIn) {
+    const sync = await syncLinkedInJobsForCompanies({
+      companyIds: ownedIds,
+      orgId: member?.org_id ?? null,
+      userId: input.userId,
     });
-
-    const list = jobsByCompanyId.get(companyId) ?? [];
-    list.push(job);
-    jobsByCompanyId.set(companyId, list);
+    if (sync.companies_failed > 0) {
+      return {
+        processed: 0,
+        failed: sync.companies_failed,
+        postings_scanned: 0,
+        candidate_events_before_dedupe: 0,
+        events_skipped_as_duplicates: 0,
+        emitted_signal_types: [],
+        recomputed_companies: [],
+        failures: sync.failures,
+        details: [],
+      };
+    }
   }
+
+  const jobsByCompanyId = await fetchJobsFromLocalMirror(admin, ownedIds, lookbackDays);
+  const totalPostingsScanned = [...jobsByCompanyId.values()].reduce((sum, list) => sum + list.length, 0);
 
   // 6. Per-company: classify → emit signals
   const now = new Date().toISOString();
@@ -935,7 +1085,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
   return {
     processed,
     failed,
-    postings_scanned: jobs.length,
+    postings_scanned: totalPostingsScanned,
     candidate_events_before_dedupe: candidatesBefore,
     events_skipped_as_duplicates: skippedDupes,
     emitted_signal_types: [...emittedSignalTypes],

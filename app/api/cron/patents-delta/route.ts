@@ -1,11 +1,11 @@
 /**
- * Weekly patent-events delta sync + per-user monitor — Vercel cron entrypoint.
+ * Patent-events delta sync + shared-target monitor — Vercel cron entrypoint.
  *
  * Step 1: pull a week of new patent publications from BigQuery into the local
  *         patent_events mirror.
- * Step 2: walk every user with non-archived companies and run runPatentsMonitor
- *         against the fresh mirror, so signals land in their feeds without
- *         them having to press the admin test button.
+ * Step 2: dispatch due account subscribers from the shared sweep-target cadence
+ *         tables and run runPatentsMonitor against the fresh mirror for one
+ *         representative member per org/company.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';

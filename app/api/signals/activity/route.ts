@@ -13,6 +13,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { formatSignalSentence } from '@/lib/signal-activity';
 import { orgIdForUser } from '@/lib/org-context';
 
@@ -53,6 +54,7 @@ type Child = {
 
 type SourceEventRow = {
   id: string;
+  source_event_id: string | null;
   title: string | null;
   summary: string | null;
   excerpt: string | null;
@@ -218,6 +220,22 @@ export async function GET(req: Request) {
   const daysRaw = parseInt(url.searchParams.get('days') ?? '', 10);
   const days = Number.isFinite(daysRaw) ? Math.min(365, Math.max(1, daysRaw)) : DEFAULT_DAYS;
   const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const orgId = await orgIdForUser(supabase as any, user.id);
+  const readClient = orgId ? createAdminClient() : supabase;
+  let visibleUserIds = [user.id];
+  if (orgId) {
+    const { data: memberRows, error: memberErr } = await readClient
+      .from('org_members')
+      .select('user_id')
+      .eq('org_id', orgId);
+    if (memberErr) return NextResponse.json({ error: memberErr.message }, { status: 500 });
+    visibleUserIds = [
+      ...new Set((memberRows ?? [])
+        .map((row: any) => (typeof row.user_id === 'string' ? row.user_id : null))
+        .filter((value): value is string => Boolean(value))),
+    ];
+    if (!visibleUserIds.includes(user.id)) visibleUserIds.push(user.id);
+  }
 
   // The log is dated by the SIGNAL'S OWN event date (when the patent was filed,
   // the paper published), NOT when we ingested it. So we window + sort on
@@ -226,10 +244,10 @@ export async function GET(req: Request) {
   // DB layer cheaply (a row's event can be old while its ingest is recent) —
   // pull the user's recent signals and apply the date logic in JS. The
   // per-user set is small.
-  const { data: rowsRaw, error } = await supabase
+  const { data: rowsRaw, error } = await readClient
     .from('normalized_signals')
     .select('id, signal_key, signal_scope, company_id, contact_id, source_event_id, event_at, observed_at, evidence_excerpt')
-    .eq('user_id', user.id)
+    .in('user_id', visibleUserIds)
     .order('event_at', { ascending: false, nullsFirst: false })
     .limit(MAX_ROWS);
 
@@ -260,14 +278,13 @@ export async function GET(req: Request) {
   const companyIds = [...new Set(rows.map((r) => r.company_id).filter((v): v is string => !!v))];
   const contactIds = [...new Set(rows.map((r) => r.contact_id).filter((v): v is string => !!v))];
   const sourceEventIds = [...new Set(rows.map((r) => r.source_event_id).filter((v): v is string => !!v))];
-  const orgId = await orgIdForUser(supabase as any, user.id);
   const archivedCompaniesQuery = orgId
-    ? supabase
+    ? readClient
         .from('org_companies')
         .select('company_id')
         .eq('org_id', orgId)
         .not('archived_at', 'is', null)
-    : supabase
+    : readClient
         .from('user_companies')
         .select('company_id')
         .eq('user_id', user.id)
@@ -275,13 +292,13 @@ export async function GET(req: Request) {
 
   const [companiesRes, contactsRes, archivedRes, sourceRes] = await Promise.all([
     companyIds.length
-      ? supabase.from('companies').select('id, company_name').in('id', companyIds)
+      ? readClient.from('companies').select('id, company_name').in('id', companyIds)
       : Promise.resolve({ data: [] as Array<{ id: string; company_name: string | null }> }),
     contactIds.length
-      ? supabase
+      ? readClient
           .from('contacts')
           .select('id, full_name, first_name, last_name, company_name, archived_at')
-          .eq('user_id', user.id)
+          .in('user_id', visibleUserIds)
           .in('id', contactIds)
       : Promise.resolve({
           data: [] as Array<{
@@ -295,9 +312,9 @@ export async function GET(req: Request) {
         }),
     archivedCompaniesQuery,
     sourceEventIds.length
-      ? supabase
+      ? readClient
           .from('signal_source_events')
-          .select('id, title, summary, excerpt, source, source_url, event_at, metadata')
+          .select('id, source_event_id, title, summary, excerpt, source, source_url, event_at, metadata')
           .in('id', sourceEventIds)
       : Promise.resolve({
           data: [] as Array<SourceEventRow>,
@@ -311,6 +328,23 @@ export async function GET(req: Request) {
     const source = row.source_event_id ? sourceById.get(row.source_event_id)?.source : null;
     return !(source && HIDDEN_CRM_SIGNAL_SOURCES.has(source) && HIDDEN_CRM_SIGNAL_KEYS.has(row.signal_key));
   });
+  const dedupedRows: SignalRow[] = [];
+  const seenRows = new Set<string>();
+  for (const row of visibleRows) {
+    const source = row.source_event_id ? sourceById.get(row.source_event_id) : null;
+    const logicalSourceId = source?.source_event_id ?? source?.source_url ?? source?.title ?? source?.id ?? row.id;
+    const key = [
+      row.signal_key,
+      row.signal_scope,
+      row.company_id ?? '',
+      row.contact_id ?? '',
+      source?.source ?? 'unknown',
+      logicalSourceId,
+    ].join('|');
+    if (seenRows.has(key)) continue;
+    seenRows.add(key);
+    dedupedRows.push(row);
+  }
 
   const companyName = new Map<string, string>(
     ((companiesRes.data ?? []) as Array<{ id: string; company_name: string | null }>).map((c) => [
@@ -406,7 +440,7 @@ export async function GET(req: Request) {
     }];
   };
 
-  for (const r of visibleRows) {
+  for (const r of dedupedRows) {
     // Drop signals on archived companies or archived contacts.
     if (r.company_id && archivedCompanyIds.has(r.company_id)) continue;
     const contact = r.contact_id ? contactById.get(r.contact_id) : null;
@@ -460,10 +494,10 @@ export async function GET(req: Request) {
     const velCompanyIds = [...new Set(velocityItems.map((it) => it.companyId).filter((v): v is string => !!v))];
     // Generous 120-day window so the 90-day velocity window is fully covered.
     const patentCutoff = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: patentRows } = await supabase
+    const { data: patentRows } = await readClient
       .from('signal_source_events')
       .select('entity_company_id, source_url, event_at, summary, metadata')
-      .eq('user_id', user.id)
+      .in('user_id', visibleUserIds)
       .in('entity_company_id', velCompanyIds)
       .in('source_event_type', ['patent_filed_or_granted', 'patent_application_published', 'patent_granted'])
       .gte('event_at', patentCutoff)

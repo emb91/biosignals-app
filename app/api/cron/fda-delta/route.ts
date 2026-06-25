@@ -1,9 +1,9 @@
 /**
- * Weekly FDA delta sync + per-user monitor — Vercel cron entrypoint.
+ * FDA delta sync + shared-target monitor — Vercel cron entrypoint.
  *
  * Same pattern as patents-delta: pulls fresh drugsfda / 510k / PMA into the
- * local mirrors, then runs runFdaRegulatoryMonitor for every user with
- * non-archived companies.
+ * local mirrors, then dispatches due account subscribers from the shared
+ * sweep-target cadence tables.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';

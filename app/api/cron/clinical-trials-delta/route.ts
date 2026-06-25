@@ -1,8 +1,8 @@
 /**
- * Daily clinical-trials delta sync + per-user monitor — Vercel cron entrypoint.
+ * Clinical-trials delta sync + shared-target monitor — Vercel cron entrypoint.
  *
  * Pulls recently-updated trials into the local clinical_trials mirror, then
- * runs runClinicalTrialsMonitor for every user with non-archived companies.
+ * dispatches due account subscribers from the shared sweep-target cadence tables.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';

@@ -1,12 +1,12 @@
 /**
- * Conference exhibitor delta sync + per-user conference monitor — Vercel cron.
+ * Conference exhibitor delta sync + shared-target conference monitor — Vercel cron.
  *
  * Step 1: refresh the shared conference_exhibitors_local mirror from each active
  *         conference's platform adapter (syncConferenceDelta), resolving
  *         exhibitor names to canonical companies once.
- * Step 2: walk every user with active companies and, when their plan cadence is
- *         due (monitorDueForUser, runner 'conferences' — growth weekly /
- *         starter+free monthly), run runConferenceMonitor against the mirror.
+ * Step 2: dispatch due account subscribers from the shared sweep-target cadence
+ *         tables and run runConferenceMonitor against the mirror for one
+ *         representative member per org/company.
  *
  * Per-user failures are isolated. Mirrors app/api/cron/grants-delta/route.ts.
  */

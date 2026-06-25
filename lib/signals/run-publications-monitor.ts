@@ -60,7 +60,7 @@ type PubMedAuthor = {
 };
 
 /** Parsed result from efetch XML for a single article. */
-type PubMedArticle = {
+export type PubMedArticle = {
   pmid: string;
   title: string;
   abstract: string;
@@ -73,6 +73,18 @@ type PubMedArticle = {
   doi: string | null;
 };
 
+export type PublicationsPubMedCache = {
+  search: Map<string, Promise<string[]>>;
+  fetch: Map<string, Promise<Map<string, PubMedArticle>>>;
+};
+
+export function createPublicationsPubMedCache(): PublicationsPubMedCache {
+  return {
+    search: new Map(),
+    fetch: new Map(),
+  };
+}
+
 export type PublicationsMonitorInput = {
   userId: string;
   companyIds?: string[];
@@ -83,6 +95,8 @@ export type PublicationsMonitorInput = {
   maxPerCompany?: number;
   /** Max PMIDs returned per contact esearch call. Default 10. */
   maxPerContact?: number;
+  /** Shared per-cron PubMed cache so reveal runs do not duplicate acquisition. */
+  pubmedCache?: PublicationsPubMedCache;
 };
 
 export type PublicationsMonitorResult = {
@@ -269,6 +283,37 @@ async function pubmedFetch(pmids: string[]): Promise<Map<string, PubMedArticle>>
     if (i + 200 < pmids.length) await sleep(pubmedIntervalMs());
   }
   return result;
+}
+
+async function cachedPubmedSearch(
+  cache: PublicationsPubMedCache | undefined,
+  term: string,
+  relDays: number,
+  retMax: number,
+): Promise<string[]> {
+  if (!cache) return pubmedSearch(term, relDays, retMax);
+  const key = JSON.stringify({ term, relDays, retMax });
+  let promise = cache.search.get(key);
+  if (!promise) {
+    promise = pubmedSearch(term, relDays, retMax);
+    cache.search.set(key, promise);
+  }
+  return promise;
+}
+
+async function cachedPubmedFetch(
+  cache: PublicationsPubMedCache | undefined,
+  pmids: string[],
+): Promise<Map<string, PubMedArticle>> {
+  if (!cache) return pubmedFetch(pmids);
+  const unique = [...new Set(pmids)].sort();
+  const key = unique.join(',');
+  let promise = cache.fetch.get(key);
+  if (!promise) {
+    promise = pubmedFetch(unique);
+    cache.fetch.set(key, promise);
+  }
+  return promise;
 }
 
 // ── Matching helpers ───────────────────────────────────────────────────────────
@@ -473,6 +518,7 @@ export async function runPublicationsMonitor(
   const lookbackDays = Math.min(60, Math.max(1, Math.floor(input.lookbackDays ?? 30)));
   const maxPerCompany = Math.min(50, Math.max(1, input.maxPerCompany ?? 20));
   const maxPerContact = Math.min(20, Math.max(1, input.maxPerContact ?? 10));
+  const pubmedCache = input.pubmedCache;
   const intervalMs = pubmedIntervalMs();
 
   // ── Load user's active companies ────────────────────────────────────────────
@@ -592,7 +638,7 @@ export async function runPublicationsMonitor(
 
       try {
         await sleep(intervalMs);
-        const pmids = await pubmedSearch(`"${name}"[Affiliation]`, lookbackDays, maxPerCompany);
+        const pmids = await cachedPubmedSearch(pubmedCache, `"${name}"[Affiliation]`, lookbackDays, maxPerCompany);
         if (pmids.length === 0) {
           companiesProcessed += 1;
           continue;
@@ -602,7 +648,7 @@ export async function runPublicationsMonitor(
         const existingIds = await fetchExistingSourceEventIds(admin, input.userId, SOURCE, candidateIds);
 
         await sleep(intervalMs);
-        const articles = await pubmedFetch(pmids);
+        const articles = await cachedPubmedFetch(pubmedCache, pmids);
         companyArticlesScanned += articles.size;
 
         const aliases = (row.aliases ?? []).filter(Boolean) as string[];
@@ -885,7 +931,7 @@ export async function runPublicationsMonitor(
 
       try {
         await sleep(intervalMs);
-        const pmids = await pubmedSearch(query, lookbackDays, maxPerContact);
+        const pmids = await cachedPubmedSearch(pubmedCache, query, lookbackDays, maxPerContact);
         if (pmids.length === 0) {
           contactsProcessed += 1;
           continue;
@@ -895,7 +941,7 @@ export async function runPublicationsMonitor(
         const existingIds = await fetchExistingSourceEventIds(admin, input.userId, SOURCE, candidateIds);
 
         await sleep(intervalMs);
-        const articles = await pubmedFetch(pmids);
+        const articles = await cachedPubmedFetch(pubmedCache, pmids);
         contactArticlesScanned += articles.size;
 
         let emittedAny = false;

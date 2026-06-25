@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { runJobChangeMonitor } from '@/lib/signals/run-job-change-monitor';
+import {
+  runJobChangeMonitor,
+  scrapeLinkedInProfiles,
+  type JobChangeContactRecord,
+} from '@/lib/signals/run-job-change-monitor';
 import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { markContactSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
@@ -14,6 +18,15 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const CHUNK_SIZE = 100;
+const CONTACT_READ_CHUNK_SIZE = 500;
+
+function chunked<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
 
 async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -47,21 +60,59 @@ async function runCron(request: Request) {
   const failedPersons = new Set<string>();
   const unmarkedPersons = new Set<string>();
   const subscriberPersonIds = new Set(subscribers.map((item) => item.personId));
+  const subscriberContactIds = [...new Set(subscribers.map((item) => item.contactId))];
+  const frozenContactRows: JobChangeContactRecord[] = [];
+  for (const ids of chunked(subscriberContactIds, CONTACT_READ_CHUNK_SIZE)) {
+    const { data, error } = await admin
+      .from('contacts')
+      .select(
+        'id, user_id, person_id, company_id, full_name, linkedin_url, email, ' +
+        'resolved_current_company_name, resolved_current_company_domain, ' +
+        'resolved_current_job_title, seniority_level, business_area, profile_enrichment_status'
+      )
+      .in('id', ids)
+      .is('archived_at', null);
+    if (error) throw new Error(`[cron/contact-job-change] contact snapshot read failed: ${error.message}`);
+    frozenContactRows.push(...((data ?? []) as unknown as JobChangeContactRecord[]));
+  }
+  const frozenContactById = new Map(frozenContactRows.map((row) => [row.id, row]));
+  const hasLinkedInByPerson = new Map<string, boolean>();
+  for (const item of subscribers) {
+    const row = frozenContactById.get(item.contactId);
+    hasLinkedInByPerson.set(item.personId, hasLinkedInByPerson.get(item.personId) === true || Boolean(row?.linkedin_url));
+  }
+  const profilesByLinkedInUrl = await scrapeLinkedInProfiles(frozenContactRows, {
+    orgId: null,
+    userId: null,
+  });
   for (const [userId, items] of byUser) {
     for (let index = 0; index < items.length; index += CHUNK_SIZE) {
       const chunk = items.slice(index, index + CHUNK_SIZE);
       const contactIds = chunk.map((item) => item.contactId);
+      const contactRows = chunk
+        .map((item) => frozenContactById.get(item.contactId))
+        .filter((row): row is JobChangeContactRecord => Boolean(row));
+      const missingContactIds = new Set(
+        chunk
+          .filter((item) => !frozenContactById.has(item.contactId))
+          .map((item) => item.contactId),
+      );
+      for (const contactId of missingContactIds) {
+        failures.push({ user_id: userId, contact_ids: [contactId], error: 'contact snapshot missing' });
+      }
       try {
         const result = await runJobChangeMonitor({
           userId,
           contactIds,
+          contactRows,
+          profilesByLinkedInUrl,
           limit: CHUNK_SIZE,
         });
-        const failedIds = new Set(result.failures.map((item) => item.contact_id));
+        const failedIds = new Set([...missingContactIds, ...result.failures.map((item) => item.contact_id)]);
         const unmarked = await markContactSubscriberSweeps({
           items: chunk,
           statusForItem: (item) => failedIds.has(item.contactId) ? 'failed' : 'succeeded',
-          providerCostUsdForItem: () => 0.004,
+          providerCostUsdForItem: () => 0,
           onFailure: (failure) => {
             failures.push({ user_id: failure.user_id, contact_ids: [failure.contact_id], error: failure.error });
             console.error('[cron/contact-job-change] subscriber source mark failed:', failure);
@@ -102,7 +153,7 @@ async function runCron(request: Request) {
     source: 'job_change',
     cadenceDays: target.cadenceDays,
     status: failedPersons.has(target.personId) ? 'failed' : 'succeeded',
-    providerCostUsd: 0.004,
+    providerCostUsd: hasLinkedInByPerson.get(target.personId) ? 0.004 : 0,
   })));
 
   const { count: overdue } = await admin.from('contact_source_sweep_targets')

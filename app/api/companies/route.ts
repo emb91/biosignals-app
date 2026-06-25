@@ -309,7 +309,7 @@ export async function GET(request: Request) {
     const needsIcps = rows.some((r) => Boolean(r.matched_icp_id));
 
     const orgId = await orgIdForUser(supabase, user.id);
-    const [icpResult, companyCrmStatuses, companySequenceStatuses, orgOverrideResult] = await Promise.all([
+    const [icpResult, companyCrmStatuses, companySequenceStatuses, orgOverrideResult, orgReadinessResult] = await Promise.all([
       needsIcps
         ? scopeIcpsToUser(
             supabase.from('icps').select('id, name, created_at'),
@@ -328,12 +328,25 @@ export async function GET(request: Request) {
             .eq('org_id', orgId)
             .in('company_id', sliceCompanyIds)
         : Promise.resolve({ data: [], error: null }),
+      orgId && sliceCompanyIds.length > 0
+        ? supabase
+            .from('org_companies')
+            .select('company_id, readiness_score')
+            .eq('org_id', orgId)
+            .in('company_id', sliceCompanyIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     const orgOverridesByCompanyId = new Map<string, Record<string, unknown>>();
     if (!orgOverrideResult.error && orgOverrideResult.data) {
       for (const row of orgOverrideResult.data as Array<{ company_id: string; overrides: Record<string, unknown> | null }>) {
         orgOverridesByCompanyId.set(row.company_id, row.overrides ?? {});
+      }
+    }
+    const orgReadinessByCompanyId = new Map<string, number | null>();
+    if (!orgReadinessResult.error && orgReadinessResult.data) {
+      for (const row of orgReadinessResult.data as Array<{ company_id: string; readiness_score: number | null }>) {
+        orgReadinessByCompanyId.set(row.company_id, row.readiness_score);
       }
     }
 
@@ -370,10 +383,11 @@ export async function GET(request: Request) {
       // stays intrinsic; suppression is applied here at read time so it can't
       // go stale when CRM state changes.
       const fitNorm = normalizeScore01(row.company_fit_score);
+      const effectiveStoredReadiness = row.readiness_score ?? orgReadinessByCompanyId.get(row.id) ?? null;
       const priorityPolicy = resolveEffectivePriority({
         intrinsicPriority: row.priority_score ?? null,
         companyFit: fitNorm,
-        intrinsicReadiness: row.readiness_score ?? 0,
+        intrinsicReadiness: effectiveStoredReadiness ?? 0,
         crmState: crmEntry?.state ?? null,
         crmClosedAt: crmEntry?.closedAt ?? null,
       });
@@ -427,7 +441,7 @@ export async function GET(request: Request) {
         data_provenance_imported_at: row.uc_added_at,
         readiness_label: row.readiness_label,
         readiness_score: priorityPolicy.effectiveReadiness,
-        raw_readiness_score: row.readiness_score ?? null,
+        raw_readiness_score: effectiveStoredReadiness,
         priority_score: priorityPolicy.effectivePriority,
         intrinsic_priority_score: priorityPolicy.intrinsicPriority,
         crm_is_suppressed: priorityPolicy.isSuppressed,

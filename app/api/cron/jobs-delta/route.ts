@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { runHiringMonitor } from '@/lib/signals/run-hiring-monitor';
+import { runHiringMonitor, syncLinkedInJobsForCompanies } from '@/lib/signals/run-hiring-monitor';
 import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { markAccountSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
@@ -34,6 +34,14 @@ async function runCron(request: Request) {
     companyIds: targets.map((target) => target.companyId),
     runner: 'hiring',
   });
+  const subscriberCompanyIds = new Set(subscribers.map((item) => item.companyId));
+  const syncResult = await syncLinkedInJobsForCompanies({
+    companyIds: [...subscriberCompanyIds],
+    orgId: null,
+    userId: null,
+  });
+  const syncFailedCompanies = new Set(syncResult.failures.map((item) => item.company_id));
+  const syncJobsByCompany = new Map(syncResult.details.map((item) => [item.company_id, item.jobs_seen]));
   const byUser = new Map<string, typeof subscribers>();
   for (const item of subscribers) {
     const list = byUser.get(item.userId) ?? [];
@@ -43,20 +51,48 @@ async function runCron(request: Request) {
   const failedCompanies = new Set<string>();
   const unmarkedCompanies = new Set<string>();
   const resultCountsByCompany = new Map<string, number>();
-  const subscriberCompanyIds = new Set(subscribers.map((item) => item.companyId));
+  for (const failure of syncResult.failures) {
+    failedCompanies.add(failure.company_id);
+    failures.push({ org_id: failure.company_id, error: failure.error });
+  }
+  for (const [companyId, count] of syncJobsByCompany) {
+    resultCountsByCompany.set(companyId, count);
+  }
   for (const [userId, items] of byUser) {
     try {
+      const cadenceLookback = Math.max(1, ...items.map((item) => item.lookbackDays));
+      const runnableItems = items.filter((item) => !syncFailedCompanies.has(item.companyId));
+      if (!runnableItems.length) {
+        const unmarked = await markAccountSubscriberSweeps({
+          items,
+          statusForItem: () => 'failed',
+          resultCountForItem: (item) => syncJobsByCompany.get(item.companyId) ?? 0,
+          providerCostUsdForItem: () => 0,
+          onFailure: (failure) => {
+            failures.push({ org_id: failure.company_id, error: failure.error });
+            console.error('[cron/jobs-delta] subscriber source mark failed:', failure);
+          },
+        });
+        for (const companyId of unmarked) unmarkedCompanies.add(companyId);
+        failed += items.length;
+        continue;
+      }
       const result = await runHiringMonitor({
         userId,
-        companyIds: [...new Set(items.map((item) => item.companyId))],
+        companyIds: [...new Set(runnableItems.map((item) => item.companyId))],
+        lookbackDays: cadenceLookback,
       });
       const failedIds = new Set(result.failures.map((item) => item.company_id));
       const resultCounts = new Map(result.details.map((item) => [item.company_id, item.postings_scraped]));
       const unmarked = await markAccountSubscriberSweeps({
         items,
-        statusForItem: (item) => failedIds.has(item.companyId) ? 'failed' : 'succeeded',
-        resultCountForItem: (item) => resultCounts.get(item.companyId) ?? 0,
-        providerCostUsdForItem: (item) => (resultCounts.get(item.companyId) ?? 0) * 0.001,
+        statusForItem: (item) => (
+          syncFailedCompanies.has(item.companyId) || failedIds.has(item.companyId)
+            ? 'failed'
+            : 'succeeded'
+        ),
+        resultCountForItem: (item) => resultCounts.get(item.companyId) ?? syncJobsByCompany.get(item.companyId) ?? 0,
+        providerCostUsdForItem: () => 0,
         onFailure: (failure) => {
           failures.push({ org_id: failure.company_id, error: failure.error });
           console.error('[cron/jobs-delta] subscriber source mark failed:', failure);
@@ -68,9 +104,9 @@ async function runCron(request: Request) {
         const resultCount = resultCounts.get(item.companyId) ?? 0;
         resultCountsByCompany.set(
           item.companyId,
-          Math.max(resultCountsByCompany.get(item.companyId) ?? 0, resultCount),
+          Math.max(resultCountsByCompany.get(item.companyId) ?? 0, syncJobsByCompany.get(item.companyId) ?? resultCount),
         );
-        if (didFail || unmarked.has(item.companyId)) {
+        if (syncFailedCompanies.has(item.companyId) || didFail || unmarked.has(item.companyId)) {
           failedCompanies.add(item.companyId);
           failed += 1;
         } else {
@@ -85,6 +121,7 @@ async function runCron(request: Request) {
       const unmarked = await markAccountSubscriberSweeps({
         items,
         statusForItem: () => 'failed',
+        providerCostUsdForItem: () => 0,
         onFailure: (failure) => {
           failures.push({ org_id: failure.company_id, error: failure.error });
           console.error('[cron/jobs-delta] subscriber source mark failed:', failure);
@@ -102,7 +139,7 @@ async function runCron(request: Request) {
     cadenceDays: target.cadenceDays,
     status: failedCompanies.has(target.companyId) ? 'failed' : 'succeeded',
     resultCount: resultCountsByCompany.get(target.companyId) ?? 0,
-    providerCostUsd: (resultCountsByCompany.get(target.companyId) ?? 0) * 0.001,
+    providerCostUsd: (syncJobsByCompany.get(target.companyId) ?? 0) * 0.001,
   })));
 
   const { count: overdue } = await admin.from('account_source_sweep_targets')
@@ -117,6 +154,7 @@ async function runCron(request: Request) {
     overdue: overdue ?? 0,
     dispatcherLimit,
     unmarked_targets: unmarkedCompanies.size,
+    jobs_sync: syncResult,
     refresh_monitoring_universe: monitoringRefresh,
     failures,
   });

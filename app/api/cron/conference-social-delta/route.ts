@@ -1,11 +1,12 @@
 /**
- * Conference social-intent sync + per-user social monitor — Vercel cron.
+ * Conference social-intent sync + shared-target social monitor — Vercel cron.
  *
  * Step 1: sweep each in-window conference's LinkedIn hashtag(s) into
  *         conference_social_attendees_local (syncConferenceSocialDelta) — windowed,
  *         confidence-filtered, cost-capped. Standalone from profile enrichment.
- * Step 2: walk every active user and, when due (monitorDueForUser, runner
- *         'conference-social'), run the contact-scoped runConferenceSocialMonitor.
+ * Step 2: dispatch due contact subscribers from the shared sweep-target cadence
+ *         tables and run the contact-scoped runConferenceSocialMonitor against
+ *         the mirror for one representative member per org/person.
  *
  * Mirrors app/api/cron/conference-delta/route.ts. Per-user failures isolated.
  */

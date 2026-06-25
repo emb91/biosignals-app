@@ -1,12 +1,12 @@
 /**
- * Conference presenter delta sync + per-user presenter monitor — Vercel cron.
+ * Conference presenter delta sync + shared-target presenter monitor — Vercel cron.
  *
  * Step 1: refresh conference_appearances_local from each active conference's
  *         agenda adapter (syncPresentersDelta), resolving speakers to canonical
  *         person + company once.
- * Step 2: walk every active user and, when their plan cadence is due
- *         (monitorDueForUser, runner 'conference-presenters'), run the
- *         contact-scoped runPresenterMonitor against the mirror.
+ * Step 2: dispatch due contact subscribers from the shared sweep-target cadence
+ *         tables and run the contact-scoped runPresenterMonitor against the
+ *         mirror for one representative member per org/person.
  *
  * Mirrors app/api/cron/conference-delta/route.ts. Per-user failures isolated.
  */
