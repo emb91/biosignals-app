@@ -1096,21 +1096,22 @@ async function orgMemberIds(admin: ReturnType<typeof createAdminClient>, orgId: 
   const { data, error } = await admin
     .from('org_members')
     .select('user_id')
-    .eq('org_id', orgId);
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: true })
+    .order('user_id', { ascending: true });
   if (error) throw new Error(`org member lookup failed: ${error.message}`);
   return dedupe((data ?? []).map((row) => row.user_id as string).filter(Boolean));
 }
 
-function chooseRepresentativeLink(
-  links: OrgContactLinkRow[],
-  userId: string,
-): OrgContactLinkRow | null {
-  const own = links.find((link) => link.user_id === userId);
-  if (own) return own;
+function chooseRepresentativeLink(links: OrgContactLinkRow[], memberIds: string[]): OrgContactLinkRow | null {
+  const memberRank = new Map(memberIds.map((userId, index) => [userId, index]));
   return [...links].sort((a, b) => {
-    const aUpdated = Date.parse(a.updated_at ?? a.created_at ?? '') || 0;
-    const bUpdated = Date.parse(b.updated_at ?? b.created_at ?? '') || 0;
-    if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+    const rankDiff = (memberRank.get(a.user_id) ?? Number.MAX_SAFE_INTEGER) -
+      (memberRank.get(b.user_id) ?? Number.MAX_SAFE_INTEGER);
+    if (rankDiff !== 0) return rankDiff;
+    const aCreated = Date.parse(a.created_at ?? '') || Number.MAX_SAFE_INTEGER;
+    const bCreated = Date.parse(b.created_at ?? '') || Number.MAX_SAFE_INTEGER;
+    if (aCreated !== bCreated) return aCreated - bCreated;
     return a.id.localeCompare(b.id);
   })[0] ?? null;
 }
@@ -1157,23 +1158,29 @@ async function listOrgContactRows(params: {
   const personIds = dedupe(states.map((row) => row.person_id));
   const stateByPersonId = new Map(states.map((row) => [row.person_id, row]));
 
-  const [peopleResult, linksResult] = await Promise.all([
-    admin.from('people').select(PERSON_LIST_SELECT).in('id', personIds),
-    admin
-      .from('user_contacts')
-      .select(
-        'id, user_id, person_id, company_id, source, contact_fit_score, readiness_score, priority_score, crm_is_suppressed, contact_panel_summary, contact_fit_summary, fit_score, overall_fit_score, created_at, updated_at',
-      )
-      .in('user_id', memberIds)
-      .in('person_id', personIds)
-      .is('archived_at', null),
-  ]);
+  const peopleRows: Array<Record<string, unknown>> = [];
+  const linkRows: OrgContactLinkRow[] = [];
+  for (const personIdChunk of chunks(personIds)) {
+    const [peopleResult, linksResult] = await Promise.all([
+      admin.from('people').select(PERSON_LIST_SELECT).in('id', personIdChunk),
+      admin
+        .from('user_contacts')
+        .select(
+          'id, user_id, person_id, company_id, source, contact_fit_score, readiness_score, priority_score, crm_is_suppressed, contact_panel_summary, contact_fit_summary, fit_score, overall_fit_score, created_at, updated_at',
+        )
+        .in('user_id', memberIds)
+        .in('person_id', personIdChunk)
+        .is('archived_at', null),
+    ]);
 
-  if (peopleResult.error) throw new Error(`people lookup failed: ${peopleResult.error.message}`);
-  if (linksResult.error) throw new Error(`org contact links lookup failed: ${linksResult.error.message}`);
+    if (peopleResult.error) throw new Error(`people lookup failed: ${peopleResult.error.message}`);
+    if (linksResult.error) throw new Error(`org contact links lookup failed: ${linksResult.error.message}`);
+    peopleRows.push(...((peopleResult.data ?? []) as Array<Record<string, unknown>>));
+    linkRows.push(...((linksResult.data ?? []) as OrgContactLinkRow[]));
+  }
 
   const linksByPersonId = new Map<string, OrgContactLinkRow[]>();
-  for (const link of (linksResult.data ?? []) as OrgContactLinkRow[]) {
+  for (const link of linkRows) {
     if (!link.person_id) continue;
     const current = linksByPersonId.get(link.person_id) ?? [];
     current.push(link);
@@ -1187,21 +1194,23 @@ async function listOrgContactRows(params: {
   );
   const companiesById = new Map<string, Record<string, unknown>>();
   if (companyIds.length > 0) {
-    const { data: companies } = await admin
-      .from('companies')
-      .select('id, company_name, domain, company_type, funding_stage')
-      .in('id', companyIds);
-    for (const company of (companies ?? []) as Array<Record<string, unknown>>) {
-      if (typeof company.id === 'string') companiesById.set(company.id, company);
+    for (const companyIdChunk of chunks(companyIds)) {
+      const { data: companies } = await admin
+        .from('companies')
+        .select('id, company_name, domain, company_type, funding_stage')
+        .in('id', companyIdChunk);
+      for (const company of (companies ?? []) as Array<Record<string, unknown>>) {
+        if (typeof company.id === 'string') companiesById.set(company.id, company);
+      }
     }
   }
 
   const taxonomySet = new Set(params.taxonomyCompanyIds);
-  const rows = ((peopleResult.data ?? []) as Array<Record<string, unknown>>)
+  const rows = peopleRows
     .map((person): LeadRow | null => {
       const personId = person.id as string;
       const state = stateByPersonId.get(personId);
-      const link = chooseRepresentativeLink(linksByPersonId.get(personId) ?? [], params.userId);
+      const link = chooseRepresentativeLink(linksByPersonId.get(personId) ?? [], memberIds);
       if (!state || !link) return null;
 
       const companyId = state.company_id ?? link.company_id ?? (person.company_id as string | null) ?? null;

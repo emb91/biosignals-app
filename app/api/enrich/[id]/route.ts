@@ -4,10 +4,10 @@ import {
   runContactResolutionPipelineForContact,
 } from '@/lib/enrichment-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { createClient } from '@/lib/supabase-server';
 import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
-import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
+import { getOrgContext } from '@/lib/org-context';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 
 type ContactJobRow = {
   id: string;
@@ -254,45 +254,45 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const admin = createAdminClient();
-    const { data: member } = await admin.from('org_members').select('org_id')
-      .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-    if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
+    const access = await resolveOrgContactAccess({
+      id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
+
     const operationId = _request.headers.get('x-operation-id') || crypto.randomUUID();
     const reservation = await reserveCredits({
-      orgId: member.org_id,
-      userId: user.id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
       action: 'manual_contact_refresh',
       idempotencyKey: `contact-refresh:${operationId}`,
       entityType: 'contact',
-      entityId: id,
+      entityId: access.personId,
     });
     if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
 
     const now = new Date().toISOString();
     const claimState = await claimLeadRefreshJob(admin, {
-      userId: user.id,
-      id,
+      userId: access.ownerUserId,
+      id: access.contactId,
       now,
     });
 
     if (claimState === 'claimed') {
       const backgroundTask = () =>
         runContactResolutionPipelineForContact(admin, {
-          contactId: id,
-          userId: user.id,
+          contactId: access.contactId,
+          userId: access.ownerUserId,
         }).then(async () => {
-          await refreshMonitoringUniverse(member.org_id);
+          await refreshMonitoringUniverse(ctx.orgId);
           await settleCredits(reservation.transactionId);
         }).catch(async (error) => {
           await refundCredits(reservation.transactionId).catch(() => {});
@@ -344,18 +344,21 @@ export async function DELETE(
 ) {
   try {
     const { id } = await context.params;
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const admin = createAdminClient();
-    const row = await loadContactJobRow(admin, user.id, id);
+    const access = await resolveOrgContactAccess({
+      id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
+
+    const row = await loadContactJobRow(admin, access.ownerUserId, access.contactId);
 
     if (!row) {
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
@@ -366,8 +369,8 @@ export async function DELETE(
     }
 
     await applyUserCancellationToLeadEnrichment(admin, {
-      contactId: id,
-      userId: user.id,
+      contactId: access.contactId,
+      userId: access.ownerUserId,
     });
 
     return NextResponse.json({ ok: true }, { status: 200 });
