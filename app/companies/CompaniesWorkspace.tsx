@@ -3082,7 +3082,7 @@ export default function CompaniesPage() {
                                 Priority score
                               </p>
                               <p className="mt-2 text-[12.5px] leading-[1.55] text-[#1f475a]">
-                                Priority blends this company&apos;s fit with its best mapped contact and live readiness signals.
+                                Priority blends this company&apos;s fit with live readiness signals. The best contact fit isn&apos;t part of the score &mdash; it shapes the recommended action instead.
                               </p>
                             </div>
 
