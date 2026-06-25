@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
+import { fitScoreArcColor } from '@/lib/fit-gauge';
 import '@/app/contacts/contacts-layout.css';
 
 export type CompanyFitComponentKey =
@@ -247,25 +249,24 @@ export function CompanyIcpFitDetailPanel({
 
   const heroFitCard = (
     <div className="contacts-fit-card">
-      <div className="contacts-fit-head">
-        <span className="contacts-fit-head-title">Company fit</span>
-        <span className="contacts-fit-head-num">
-          {loading ? (
-            <span className="text-[13px] font-medium text-[#7d909a]">…</span>
-          ) : heroN != null ? (
-            <>
-              {heroN}
-              <span>%</span>
-            </>
-          ) : (
-            <span className="text-[15px] font-semibold text-[#7d909a]">—</span>
-          )}
-        </span>
-      </div>
-      <div className="contacts-fit-bar" aria-hidden>
-        {!loading && heroN != null ? (
-          <span className="contacts-fit-bar-fill" style={{ width: `${Math.min(100, heroN)}%` }} />
-        ) : null}
+      {/* Hero ring — reads consistently with the Priority & Signals gauges (design Fit hero) */}
+      <div className="flex flex-col items-center pb-3 pt-1">
+        <AnimatedCircularProgressBar
+          value={heroN ?? 0}
+          gaugePrimaryColor={fitScoreArcColor(heroN)}
+          gaugeSecondaryColor="rgba(13,53,71,0.09)"
+          animateOnMount
+          deferAnimationMs={160}
+          label={
+            <span className="block text-xl font-semibold leading-snug tabular-nums text-[#0d3547]">
+              {loading ? '…' : heroN != null ? heroN : '—'}
+            </span>
+          }
+          className="size-24 [--transition-length:0.95s]"
+        />
+        <p className="mt-3 font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
+          Company fit
+        </p>
       </div>
       <div className="contacts-fit-criteria">
         {loading ? (
