@@ -40,13 +40,13 @@ Key columns:
 - Location: `location` (raw), `city`, `country`
 - Tenure: `years_in_current_role`
 - Company (denormalised): `company_name`, `company_domain`, `company_linkedin_url`
-- Scores: `fit_score` (0–1), `intent_score` (0–1, currently hardcoded to 1.0), `priority_score` (generated: `fit_score × intent_score`)
+- Scores: company fit, contact fit, readiness, and priority are now stored as mirrors of the org/contact scoring pipeline. Contact priority is `min(companyFit, contactFit) × (0.5 + 0.5 × effectiveReadiness)`, where effective readiness combines account and contact readiness.
 - Fit detail: `fit_score_reasoning` (text), `fit_score_matched_on` (text[]), `fit_score_gaps` (text), `scored_against_persona_id` (uuid FK → personas)
 - Meta: `source`, `last_enriched_at`, `created_at`, `updated_at`
 
 Unique constraint: `(user_id, linkedin_url)`
 
-**Important:** `priority_score` is a generated column computed as `fit_score * intent_score`. Do not write to it directly.
+**Important:** `priority_score` is a denormalized mirror, not the scoring policy itself. Recompute through the shared priority helpers / database refresh functions; do not hand-code a new formula in API routes.
 
 #### `companies`
 Enriched company records. Deduplicated by `(user_id, domain)`.
@@ -302,7 +302,7 @@ IMPORT_WEBHOOK_SECRET=              # Shared secret for Clay callback auth heade
 - **Scoring is the product.** The LLM scoring is not keyword matching — it reasons about semantic equivalence of job titles in life sciences. Do not replace with deterministic logic.
 - **Headline matters.** The LinkedIn `headline` field (e.g. "Head of Clinical Operations | ex-Pfizer | mRNA") is included in the scoring prompt and meaningfully improves accuracy for edge cases.
 - **Taxonomy must be exact.** `seniority_level` and `business_area` values from enrichment must match the persona form taxonomy character-for-character. Any drift silently breaks scoring.
-- **Priority score is generated.** `contacts.priority_score` is a Postgres generated column (`fit_score * intent_score`). Never write to it directly.
+- **Priority score is policy-backed.** Contact priority uses the weaker of company fit and contact fit as the fit floor, then applies the readiness boost. Treat stored `priority_score` as a mirror that can be refreshed, not as a place to invent or preserve alternate formulas.
 - **Two dedup passes.** First dedup is at import time (before enrichment). Second dedup is at callback time (after enrichment, before scoring). Both are necessary because enrichment can surface a LinkedIn URL that reveals a duplicate not caught on raw name alone.
 - **Rescore is fire-and-forget.** When a persona changes, all contacts are rescored in the background. The response to the persona save does not wait for rescoring to complete.
 - **intent_score is a placeholder.** Currently hardcoded to `1.0`. The column and schema are ready for real signal-based intent scoring but it is not yet implemented.

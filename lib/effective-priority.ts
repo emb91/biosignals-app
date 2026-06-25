@@ -87,9 +87,10 @@ export function computeIntrinsicPriority(input: {
     input.contactFit === undefined ? 1 : normalizeScore01(input.contactFit);
   if (contactFit == null) return null;
 
+  const fitFloor = Math.min(companyFit, contactFit);
   return Math.max(
     0,
-    Math.min(1, companyFit * contactFit * (0.5 + 0.5 * readiness)),
+    Math.min(1, fitFloor * (0.5 + 0.5 * readiness)),
   );
 }
 
@@ -109,9 +110,9 @@ export type EffectivePriorityResult = {
  * Resolve the intrinsic/effective score pair for every consumer.
  *
  * `crmIsSuppressed` is for denormalized SQL-side state. When omitted, live CRM
- * state + close time determine eligibility. A stored intrinsic priority is
- * preferred when unsuppressed; suppressed priority is always recomputed from
- * fit and the policy readiness floor.
+ * state + close time determine eligibility. When fit/readiness components are
+ * usable, live computation wins over stored mirrors so stale database values
+ * cannot preserve an older formula. Stored priority is only a fallback.
  */
 export function resolveEffectivePriority(input: {
   intrinsicPriority?: number | null;
@@ -138,7 +139,7 @@ export function resolveEffectivePriority(input: {
     readiness: intrinsicReadiness,
   });
   const storedIntrinsic = normalizeScore01(input.intrinsicPriority);
-  const intrinsicPriority = storedIntrinsic ?? computedIntrinsic;
+  const intrinsicPriority = computedIntrinsic ?? storedIntrinsic;
   const effectivePriority = isSuppressed
     ? computeIntrinsicPriority({
         companyFit: input.companyFit,
