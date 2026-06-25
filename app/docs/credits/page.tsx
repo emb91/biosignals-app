@@ -87,7 +87,7 @@ const freeActions = [
 const packageMix = [
   ["Imported enrichments", "10", "250", "1,200"],
   ["Net-new leads", "5", "50", "200"],
-  ["Generated sequences", "2", "95", "300"],
+  ["Generated sequences", "1", "66", "214"],
   ["Email finds", "1", "25", "60"],
   ["Phone reveals", "1", "3", "12"],
 ]
@@ -265,19 +265,19 @@ export default function CreditsDocsPage() {
               <article>
                 <div className="example-plan">Free example</div>
                 <h3>Explore the core workflow</h3>
-                <p>10 enrichments <b>40</b> + 5 net-new leads <b>20</b> + 2 sequences <b>10</b> + 1 email find <b>11</b> + 1 phone reveal <b>20</b></p>
+                <p>10 enrichments <b>40</b> + 5 net-new leads <b>20</b> + 1 sequence <b>7</b> + 1 email find <b>11</b> + 1 phone reveal <b>20</b></p>
                 <div className="example-total"><span>Package</span><b>100 included credits</b></div>
               </article>
               <article>
                 <div className="example-plan">Starter example</div>
                 <h3>Run a focused outbound month</h3>
-                <p>250 imported enrichments <b>1,000</b> + 50 net-new leads <b>200</b> + 95 sequences <b>475</b> + 25 email finds <b>275</b> + 3 phone reveals <b>60</b></p>
+                <p>250 imported enrichments <b>1,000</b> + 50 net-new leads <b>200</b> + 65 sequences <b>455</b> + 25 email finds <b>275</b> + 3 phone reveals <b>60</b></p>
                 <div className="example-total"><span>Package</span><b>2,000 included credits</b></div>
               </article>
               <article>
                 <div className="example-plan">Growth example</div>
                 <h3>Cover a larger active market</h3>
-                <p>1,200 imported enrichments <b>4,800</b> + 200 net-new leads <b>800</b> + 300 sequences <b>1,500</b> + 60 email finds <b>660</b> + 12 phone reveals <b>240</b></p>
+                <p>1,200 imported enrichments <b>4,800</b> + 200 net-new leads <b>800</b> + 214 sequences <b>1,498</b> + 60 email finds <b>660</b> + 12 phone reveals <b>240</b></p>
                 <div className="example-total"><span>Package</span><b>8,000 included credits</b></div>
               </article>
             </div>

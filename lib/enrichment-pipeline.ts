@@ -786,6 +786,8 @@ async function upsertResolvedCompany(
   };
   const linkCompanyToWorkspace = async (companyId: string, archivedAt: string | null = null) => {
     const now = new Date().toISOString();
+    const activeArchiveClear =
+      archivedAt === null ? { archived_by: null, archived_reason: null } : {};
     const orgId = await orgIdForUser(supabase as any, userId);
     if (orgId) {
       const upsertOrgLink = await supabase
@@ -797,6 +799,7 @@ async function upsertResolvedCompany(
             source: input.source,
             created_by: userId,
             archived_at: archivedAt,
+            ...activeArchiveClear,
             updated_at: now,
           },
           { onConflict: 'org_id,company_id' },
@@ -815,6 +818,7 @@ async function upsertResolvedCompany(
           company_id: companyId,
           source: input.source,
           archived_at: archivedAt,
+          ...activeArchiveClear,
           updated_at: now,
         },
         { onConflict: 'user_id,company_id' },
