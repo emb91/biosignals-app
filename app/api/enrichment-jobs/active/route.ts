@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
-import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { getOrgContext, scopeIcpsToUser } from '@/lib/org-context';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { listOrgContactAccesses } from '@/lib/org-contact-access';
 
 type EnrichmentJob = {
   id: string;
@@ -43,36 +44,48 @@ function sortJobs(a: EnrichmentJob, b: EnrichmentJob): number {
   return bTime - aTime;
 }
 
+function chunkValues<T>(values: T[], size: number = 500): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size));
+  }
+  return chunks;
+}
+
 export async function GET() {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const orgId = await orgIdForUser(supabase, user.id);
-    const [icpResult, contactResult] = await Promise.all([
-      scopeIcpsToUser(
-        supabase
-          .from('icps')
-          .select('id, name, reenrichment_status, reenrichment_last_error, reenrichment_started_at, reenrichment_finished_at'),
-        orgId,
-        user.id,
-      ).in('reenrichment_status', ['running', 'failed']),
-      supabase
-        .from('contacts')
-        .select('id, full_name, first_name, last_name, company_name, resolved_current_company_name, enrichment_refresh_status, enrichment_refresh_last_error, enrichment_refresh_started_at, enrichment_refresh_finished_at')
-        .eq('user_id', user.id)
-        .in('enrichment_refresh_status', ['running', 'failed']),
-    ]);
+    const admin = createAdminClient();
+    const contactAccesses = await listOrgContactAccesses({
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    const contactIds = contactAccesses.map((access) => access.contactId);
+    const icpResult = await scopeIcpsToUser(
+      ctx.supabase
+        .from('icps')
+        .select('id, name, reenrichment_status, reenrichment_last_error, reenrichment_started_at, reenrichment_finished_at'),
+      ctx.orgId,
+      ctx.user.id,
+    ).in('reenrichment_status', ['running', 'failed']);
 
     if (icpResult.error) throw icpResult.error;
-    if (contactResult.error) throw contactResult.error;
+
+    const contactRows: Array<Record<string, unknown>> = [];
+    for (const contactIdChunk of chunkValues(contactIds)) {
+      const { data, error } = await admin
+        .from('contacts')
+        .select('id, full_name, first_name, last_name, company_name, resolved_current_company_name, enrichment_refresh_status, enrichment_refresh_last_error, enrichment_refresh_started_at, enrichment_refresh_finished_at')
+        .in('id', contactIdChunk)
+        .in('enrichment_refresh_status', ['running', 'failed']);
+      if (error) throw error;
+      contactRows.push(...((data || []) as Array<Record<string, unknown>>));
+    }
 
     const icpJobs: EnrichmentJob[] = ((icpResult.data || []) as Array<Record<string, unknown>>).map((row) => {
       const status = row.reenrichment_status === 'failed' ? 'failed' : 'running';
@@ -91,7 +104,7 @@ export async function GET() {
       };
     });
 
-    const leadJobs: EnrichmentJob[] = ((contactResult.data || []) as Array<Record<string, unknown>>).map((row) => {
+    const leadJobs: EnrichmentJob[] = contactRows.map((row) => {
       const status = row.enrichment_refresh_status === 'failed' ? 'failed' : 'running';
       const id = String(row.id);
 

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 
-import { createClient } from '@/lib/supabase-server';
+import { getOrgContext } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 import { isMissingColumnError } from '@/lib/supabase-column-compat';
 
 function isMissingRelationError(error: unknown): boolean {
@@ -45,24 +47,28 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const admin = createAdminClient();
+    const access = await resolveOrgContactAccess({
+      id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    if (!access) {
+      return NextResponse.json({ error: 'Contact not found.' }, { status: 404 });
+    }
 
-    const contactResult = await supabase
+    const contactResult = await admin
       .from('contacts')
       .select(
         'id, scored_against_persona_id, contact_fit_score, contact_fit_breakdown, contact_fit_coverage, contact_fit_scored_at, contact_fit_version',
       )
-      .eq('id', id)
-      .eq('user_id', user.id)
+      .eq('id', access.contactId)
+      .eq('user_id', access.ownerUserId)
       .maybeSingle();
 
     if (contactResult.error && isSchemaUnavailableError(contactResult.error)) {
@@ -84,11 +90,11 @@ export async function GET(
 
     const contact = contactResult.data as Record<string, unknown>;
 
-    const scoreResult = await supabase
+    const scoreResult = await admin
       .from('contact_persona_scores')
       .select('persona_id, icp_id, final_score, raw_score, coverage, breakdown')
-      .eq('contact_id', id)
-      .eq('user_id', user.id)
+      .eq('contact_id', access.contactId)
+      .eq('user_id', access.ownerUserId)
       .order('final_score', { ascending: false });
 
     const schemaUnavailable = Boolean(scoreResult.error && isSchemaUnavailableError(scoreResult.error));
@@ -114,7 +120,7 @@ export async function GET(
     let icpNamesById = new Map<string, string | null>();
 
     if (personaIds.length > 0) {
-      const personaResult = await supabase
+      const personaResult = await admin
         .from('personas')
         .select('id, name, icp_id')
         .in('id', personaIds);
@@ -136,7 +142,7 @@ export async function GET(
     ])] as string[];
 
     if (derivedIcpIds.length > 0) {
-      const icpResult = await supabase
+      const icpResult = await admin
         .from('icps')
         .select('id, name')
         .in('id', derivedIcpIds);
@@ -160,7 +166,7 @@ export async function GET(
 
     return NextResponse.json({
       data: {
-        contact_id: id,
+        contact_id: access.contactId,
         contact_fit_score: normalizeNumber(contact.contact_fit_score),
         contact_fit_coverage: normalizeNumber(contact.contact_fit_coverage),
         contact_fit_scored_at:

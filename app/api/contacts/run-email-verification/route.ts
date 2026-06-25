@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import {
   buildRefreshEmailCandidates,
   type RefreshEmailCandidate,
@@ -22,7 +21,8 @@ import {
 } from '@/lib/provider-usage';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
-import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
+import { getOrgContext } from '@/lib/org-context';
+import { listOrgContactAccesses } from '@/lib/org-contact-access';
 
 type ContactForVerification = {
   id: string;
@@ -103,6 +103,14 @@ function normalizeLimit(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed)) return DEFAULT_LIMIT;
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(parsed)));
+}
+
+function chunkValues<T>(values: T[], size: number = 500): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size));
+  }
+  return chunks;
 }
 
 function contactDisplayName(contact: ContactForVerification): string | null {
@@ -237,13 +245,8 @@ export async function POST(request: Request) {
   let creditTransactionId: string | null = null;
   let billableValidationCount = 0;
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -257,32 +260,43 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as { limit?: unknown; operationId?: string };
     const limit = normalizeLimit(body.limit);
     const priorityMin = configuredPriorityMin();
+    const admin = createAdminClient();
+    const accesses = await listOrgContactAccesses({
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+      admin,
+    });
+    const accessByContactId = new Map(accesses.map((access) => [access.contactId, access]));
+    const representativeContactIds = accesses.map((access) => access.contactId);
 
-    const { data, error } = await supabase
-      .from('contacts')
-      .select(
-        'id, user_id, first_name, last_name, full_name, email, email_status, email_deliverability, priority_score, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain',
-      )
-      .eq('user_id', user.id)
-      .is('archived_at', null)
-      .eq('crm_is_suppressed', false)
-      .gt('priority_score', priorityMin)
-      .order('priority_score', { ascending: false, nullsFirst: false })
-      .limit(limit);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    const contactRows: ContactForVerification[] = [];
+    for (const contactIdChunk of chunkValues(representativeContactIds)) {
+      const { data, error } = await admin
+        .from('contacts')
+        .select(
+          'id, user_id, first_name, last_name, full_name, email, email_status, email_deliverability, priority_score, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain',
+        )
+        .in('id', contactIdChunk)
+        .is('archived_at', null)
+        .eq('crm_is_suppressed', false)
+        .gt('priority_score', priorityMin);
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      contactRows.push(...((data || []) as ContactForVerification[]));
     }
 
-    const contacts = (data || []) as ContactForVerification[];
+    const contacts = contactRows
+      .filter((contact) => accessByContactId.has(contact.id))
+      .sort((a, b) => (b.priority_score ?? -1) - (a.priority_score ?? -1))
+      .slice(0, limit);
     const contactIds = contacts.map((contact) => contact.id);
     const { data: contactEmailRows, error: contactEmailError } = contactIds.length
-      ? await supabase
+      ? await admin
           .from('contact_emails')
           .select(
             'id, contact_id, email, category, created_at, email_deliverability, email_deliverability_provider',
           )
-          .eq('user_id', user.id)
           .in('contact_id', contactIds)
       : { data: [], error: null };
 
@@ -305,13 +319,9 @@ export async function POST(request: Request) {
       return sum + candidates.length;
     }, 0);
     if (maxValidationRequests > 0) {
-      const admin = createAdminClient();
-      const { data: member } = await admin.from('org_members').select('org_id')
-        .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-      if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
       const reservation = await reserveCredits({
-        orgId: member.org_id,
-        userId: user.id,
+        orgId: ctx.orgId,
+        userId: ctx.user.id,
         action: 'email_validation',
         quantity: maxValidationRequests,
         idempotencyKey: `bulk-email-validation:${body.operationId?.trim() || crypto.randomUUID()}`,
@@ -360,7 +370,7 @@ export async function POST(request: Request) {
       );
 
       if (params.contactEmailId) {
-        const { error: updateEmailError } = await supabase
+        const { error: updateEmailError } = await admin
           .from('contact_emails')
           .update({
             email_deliverability: params.emailDeliverability,
@@ -369,14 +379,13 @@ export async function POST(request: Request) {
             email_deliverability_metadata: params.verification as Record<string, unknown>,
             updated_at: checkedAt,
           })
-          .eq('id', params.contactEmailId)
-          .eq('user_id', user.id);
+          .eq('id', params.contactEmailId);
 
         if (updateEmailError) throw updateEmailError;
       } else if (params.source === 'finder') {
-        const { error: insertEmailError } = await supabase.from('contact_emails').insert({
+        const { error: insertEmailError } = await admin.from('contact_emails').insert({
           contact_id: params.contact.id,
-          user_id: user.id,
+          user_id: params.contact.user_id,
           email: params.email,
           category,
           label: null,
@@ -417,11 +426,11 @@ export async function POST(request: Request) {
           contactPatch.email_status_reasoning = 'Email domain matches the resolved current company.';
         }
 
-        const { error: updateContactError } = await supabase
+        const { error: updateContactError } = await admin
           .from('contacts')
           .update(contactPatch)
           .eq('id', params.contact.id)
-          .eq('user_id', user.id);
+          .eq('user_id', params.contact.user_id);
 
         if (updateContactError) throw updateContactError;
       }
@@ -440,7 +449,7 @@ export async function POST(request: Request) {
       const emailDeliverability = normalizeZeroBounceStatus(verification);
 
       recordProviderUsage({
-        userId: user.id,
+        userId: ctx.user.id,
         contactId: params.contact.id,
         provider: 'zerobounce',
         eventType: 'zerobounce_email_validate',
@@ -486,7 +495,7 @@ export async function POST(request: Request) {
 
         result.finderFound += 1;
         recordProviderUsage({
-          userId: user.id,
+          userId: ctx.user.id,
           contactId: contact.id,
           provider: 'zerobounce',
           eventType: 'zerobounce_email_finder',
