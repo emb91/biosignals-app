@@ -75,6 +75,7 @@ import {
   AlertTriangle,
   Maximize2,
   Minimize2,
+  Phone,
 } from 'lucide-react';
 import { EntitySignalsList } from '@/components/EntitySignalsList';
 
@@ -1319,12 +1320,6 @@ const getLeadRefreshStatusMeta = (
       };
   }
 };
-
-function isAvanzadoTestContact(lead: { full_name?: string | null; linkedin_url?: string | null }): boolean {
-  const name = (lead.full_name || '').toLowerCase();
-  const linkedin = (lead.linkedin_url || '').toLowerCase();
-  return name.includes('avanzado') || linkedin.includes('a-avanzado');
-}
 
 function getEmailDeliverabilityMeta(
   status: string | null | undefined,
@@ -5001,32 +4996,80 @@ export function ContactsWorkspace() {
                                             });
                                           })()}
                                         </div>
-                                        {isAvanzadoTestContact(selectedLead) && (
-                                          <div className="mt-3 space-y-1.5">
-                                            <div className="flex flex-wrap gap-2">
+                                        {/* Singular email refresh (find-new-email · 11 credits) + last-checked.
+                                            Distinct from the full batch "Refresh enrichment" in the Data source box. */}
+                                        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleFindNewEmail(selectedLead.id)}
+                                            disabled={findingEmailLeadId === selectedLead.id}
+                                            className="inline-flex items-center gap-1.5 rounded-[9px] border border-arcova-teal/30 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            {findingEmailLeadId === selectedLead.id ? (
+                                              <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                              <MailCheck className="h-3.5 w-3.5" />
+                                            )}
+                                            {findingEmailLeadId === selectedLead.id ? 'Finding…' : 'Find new email · 11 credits'}
+                                          </button>
+                                          {(() => {
+                                            // Most recent deliverability check across this contact's emails.
+                                            const lastChecked = (selectedLead.contact_emails ?? [])
+                                              .map((e) => e.email_deliverability_checked_at)
+                                              .filter((d): d is string => Boolean(d))
+                                              .sort()
+                                              .pop();
+                                            if (!lastChecked) return null;
+                                            return (
+                                              <span className="text-[11px] text-[#7d909a]">
+                                                Last checked {formatLastUpdated(lastChecked)}
+                                              </span>
+                                            );
+                                          })()}
+                                        </div>
+                                        {findEmailErrorByLeadId[selectedLead.id] && (
+                                          <p className="mt-1.5 text-xs leading-snug text-rose-600">
+                                            {findEmailErrorByLeadId[selectedLead.id]}
+                                          </p>
+                                        )}
+                                      </div>
+                                      {/* Phone row — show numbers on file, else offer the singular reveal (20 credits) */}
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Phone
+                                        </p>
+                                        {(() => {
+                                          const phones = (selectedLead.contact_phones ?? []).filter((p) => (p.phone || '').trim());
+                                          if (phones.length > 0) {
+                                            return (
+                                              <div className="mt-2 space-y-1">
+                                                {phones.map((p) => (
+                                                  <p key={p.id} className="break-all text-sm leading-snug text-[#0d3547]">
+                                                    {p.phone}
+                                                  </p>
+                                                ))}
+                                              </div>
+                                            );
+                                          }
+                                          return (
+                                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                              <span className="text-sm leading-snug text-[#7d909a]">Not on file yet</span>
                                               <button
                                                 type="button"
-                                                onClick={() => void handleFindNewEmail(selectedLead.id)}
-                                                disabled={findingEmailLeadId === selectedLead.id}
-                                                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                onClick={() => void handleRevealPhone(selectedLead.id)}
+                                                disabled={revealingPhoneLeadId === selectedLead.id}
+                                                className="inline-flex items-center gap-1.5 rounded-[9px] border border-arcova-teal/30 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
                                               >
-                                                {findingEmailLeadId === selectedLead.id ? (
+                                                {revealingPhoneLeadId === selectedLead.id ? (
                                                   <RotateCw className="h-3.5 w-3.5 animate-spin" />
                                                 ) : (
-                                                  <MailCheck className="h-3.5 w-3.5" />
+                                                  <Phone className="h-3.5 w-3.5" />
                                                 )}
-                                                {findingEmailLeadId === selectedLead.id
-                                                  ? 'Testing…'
-                                                  : 'Test: get new email'}
+                                                {revealingPhoneLeadId === selectedLead.id ? 'Revealing…' : 'Reveal phone · 20 credits'}
                                               </button>
                                             </div>
-                                            {findEmailErrorByLeadId[selectedLead.id] && (
-                                              <p className="text-xs leading-snug text-rose-600">
-                                                {findEmailErrorByLeadId[selectedLead.id]}
-                                              </p>
-                                            )}
-                                          </div>
-                                        )}
+                                          );
+                                        })()}
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
