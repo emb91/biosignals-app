@@ -491,7 +491,7 @@ function SignalCategoryGroup({
 }
 
 /** Company signals split into ordered, collapsible category groups. */
-function GroupedCompanySignals({ items }: { items: SignalItem[] }) {
+function GroupedCompanySignals({ items, label = 'Company signals' }: { items: SignalItem[]; label?: string }) {
   const order = [...SIGNAL_CATEGORIES.map((c) => c.title), 'Other signals'];
   const byCategory = new Map<string, SignalItem[]>();
   for (const item of items) {
@@ -505,7 +505,7 @@ function GroupedCompanySignals({ items }: { items: SignalItem[] }) {
     .map((title) => ({ title, items: byCategory.get(title)! }));
   return (
     <div className="space-y-2.5">
-      <SignalGroupHeader label="Company signals" count={items.length} />
+      <SignalGroupHeader label={label} count={items.length} />
       {groups.map((g) => (
         <SignalCategoryGroup key={g.title} title={g.title} items={g.items} defaultOpen={g.items.length <= 3} />
       ))}
@@ -644,8 +644,12 @@ export function EntitySignalsList({
         ) : null}
       </div>
 
-      {/* Signal list — grouped Contact / Company when both are shown, else a single group. */}
-      {(contactId && companyId) ? (() => {
+      {/* Signal list. `grouped` (side-panel design) takes precedence: all signals
+         split into collapsible category cards. Otherwise: Contact/Company split
+         when both scopes are shown, else a single flat group. */}
+      {grouped ? (
+        <GroupedCompanySignals items={items} label={contactId ? 'Signals' : 'Company signals'} />
+      ) : (contactId && companyId) ? (() => {
         const contactItems = items.filter((i) => i.contactId === contactId);
         const companyItems = items.filter((i) => !contactItems.includes(i));
         const [firstGroup, secondGroup] = primaryScope === 'contact'
@@ -663,9 +667,7 @@ export function EntitySignalsList({
             )}
           </div>
         );
-      })() : grouped && companyId && !contactId ? (
-        <GroupedCompanySignals items={items} />
-      ) : (
+      })() : (
         <div className="space-y-2">
           <SignalGroupHeader
             label={contactId && !companyId ? 'Contact signals' : 'Company signals'}
