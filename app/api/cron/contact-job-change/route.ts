@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { runJobChangeMonitor } from '@/lib/signals/run-job-change-monitor';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { markContactSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   contactSweepSubscribersForTargets,
@@ -22,15 +21,10 @@ async function runCron(request: Request) {
   }
 
   const admin = createAdminClient();
-  const { searchParams } = new URL(request.url);
   const dispatcherLimit = Math.max(1, Number(process.env.CONTACT_MONITOR_DISPATCH_LIMIT ?? '1500'));
   let processed = 0;
   let failed = 0;
   const failures: Array<{ org_id?: string; user_id?: string; contact_ids?: string[]; error: string }> = [];
-  const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-    searchParams,
-    envName: 'CONTACT_JOB_CHANGE_REFRESH_MONITORING_UNIVERSE',
-  });
 
   const targets = await listDueContactSweepTargets({ source: 'job_change', limit: dispatcherLimit });
   const subscribers = await contactSweepSubscribersForTargets({
@@ -117,7 +111,6 @@ async function runCron(request: Request) {
     overdue: overdue ?? 0,
     dispatcherLimit,
     unmarked_targets: unmarkedPersons.size,
-    refresh_monitoring_universe: monitoringRefresh,
     failures,
   });
 }

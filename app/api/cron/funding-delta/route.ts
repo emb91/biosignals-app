@@ -1,11 +1,10 @@
 /**
- * Daily SEC filings delta sync + per-user funding monitor — Vercel cron entrypoint.
+ * SEC filings delta sync + shared target subscriber monitor — Vercel cron entrypoint.
  *
  * Step 1: pull Form D / 8-K / 424B filings from EDGAR's daily-index files for
  *         the last N days into the local sec_filings_local mirror.
- * Step 2: walk every user with non-archived companies and run runFundingMonitor
- *         against the fresh mirror so signals land in their feeds without
- *         them having to press the admin test button.
+ * Step 2: dispatch due subscribers of active shared targets by plan cadence,
+ *         then run runFundingMonitor against the fresh mirror.
  *
  * Halts gracefully on SEC rate-limit errors (logged via sec_delta_sync_runs).
  * Per-user monitor failures are isolated — one user's failure doesn't block
@@ -14,7 +13,6 @@
 import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { observeCron } from '@/lib/cron-observability';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureTrackedCompanyCiks } from '@/lib/signals/company-cik';
 import { persistRunHistory } from '@/lib/signals/run-history';
@@ -61,10 +59,6 @@ async function runCron(request: Request) {
     const overlapDays = overlapDaysRaw ? Math.max(1, Math.trunc(Number(overlapDaysRaw) || 2)) : 2;
     const admin = createAdminClient();
     const dispatcherLimit = Math.max(1, Number(process.env.FUNDING_MONITOR_DISPATCH_LIMIT ?? '2500'));
-    const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-      searchParams,
-      envName: 'FUNDING_REFRESH_MONITORING_UNIVERSE',
-    });
     const targets = await listDueAccountSweepTargets({ source: 'funding', limit: dispatcherLimit });
     const subscribers = await accountSweepSubscribersForTargets({
       companyIds: targets.map((target) => target.companyId),
@@ -77,12 +71,12 @@ async function runCron(request: Request) {
     // Decide the sync plan from the most recent run:
     //  - a prior partial / rate-limit-halted run leaves a resume_date → resume there;
     //  - a recent SUCCESS within the reuse window → skip the heavy pull (the
-    //    per-user monitor still runs against the existing mirror);
+    //    subscriber monitor still runs against the existing mirror);
     //  - otherwise pull the standard overlap window.
     // A soft deadline keeps each invocation under the serverless timeout.
     const reuseSeconds = nonNegFromEnv('FUNDING_SYNC_REUSE_SECONDS', 6 * 24 * 60 * 60);
-    // Budget the sync against time ALREADY spent this request (refreshAll + CIK
-    // priming) and reserve headroom for the per-user monitor that runs after it,
+    // Budget the sync against time ALREADY spent this request (CIK priming) and
+    // reserve headroom for the subscriber monitor that runs after it,
     // so the whole handler stays under the serverless function limit (300s).
     const requestBudgetMs = Math.max(60_000, Number(process.env.FUNDING_REQUEST_BUDGET_MS) || 270_000);
     const monitorReserveMs = Math.max(0, Number(process.env.FUNDING_MONITOR_RESERVE_MS) || 30_000);
@@ -123,7 +117,7 @@ async function runCron(request: Request) {
 
     // Surface a non-success live sync to Sentry. (observeCron only alerts on
     // HTTP/logical failures of the whole cron; a partial or failed sync still
-    // returns success:true so the per-user monitor can run on prior data.)
+    // returns success:true so the subscriber monitor can run on prior data.)
     if ('status' in syncResult && syncResult.status !== 'success') {
       Sentry.captureMessage(`SEC funding sync ${syncResult.status}`, {
         level: syncResult.status === 'partial' ? 'warning' : 'error',
@@ -241,7 +235,6 @@ async function runCron(request: Request) {
       subscribers_due: subscribers.length,
       overdue: overdue ?? 0,
       unmarked_targets: unmarkedCompanies.size,
-      refresh_monitoring_universe: monitoringRefresh,
       monitor: {
         users_total: byUser.size,
         users_succeeded: monitorOk,

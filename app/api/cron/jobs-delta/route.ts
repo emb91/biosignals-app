@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { runHiringMonitor } from '@/lib/signals/run-hiring-monitor';
-import { maybeRefreshMonitoringUniverses } from '@/lib/cron/monitoring-refresh';
 import { markAccountSubscriberSweeps } from '@/lib/signals/cron-sweep-marking';
 import {
   accountSweepSubscribersForTargets,
@@ -18,16 +17,11 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const admin = createAdminClient();
-  const { searchParams } = new URL(request.url);
 
   const dispatcherLimit = Math.max(1, Number(process.env.ACCOUNT_MONITOR_DISPATCH_LIMIT ?? '2500'));
   let processed = 0;
   let failed = 0;
   const failures: Array<{ org_id: string; error: string }> = [];
-  const monitoringRefresh = await maybeRefreshMonitoringUniverses({
-    searchParams,
-    envName: 'JOBS_REFRESH_MONITORING_UNIVERSE',
-  });
 
   const targets = await listDueAccountSweepTargets({ source: 'hiring', limit: dispatcherLimit });
   const subscribers = await accountSweepSubscribersForTargets({
@@ -117,7 +111,6 @@ async function runCron(request: Request) {
     overdue: overdue ?? 0,
     dispatcherLimit,
     unmarked_targets: unmarkedCompanies.size,
-    refresh_monitoring_universe: monitoringRefresh,
     failures,
   });
 }
