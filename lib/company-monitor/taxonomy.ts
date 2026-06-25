@@ -12,6 +12,7 @@ import {
   MODALITY_OPTIONS,
   THERAPEUTIC_AREA_OPTIONS,
   canonicalizeCompanyType,
+  canonicalizeDevelopmentStage,
   canonicalizeModality,
   canonicalizeTherapeuticArea,
   expandModalitiesWithParents,
@@ -169,16 +170,6 @@ function canonicalizeArray<T extends string>(
 
 function normalizeConfidence(value: unknown): CompanyTaxonomyResult['confidence'] {
   return value === 'high' || value === 'medium' || value === 'low' ? value : 'low';
-}
-
-function canonicalizeDevelopmentStage(value: unknown): DevelopmentStage | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return (
-    (DEVELOPMENT_STAGE_OPTIONS as readonly string[]).find(
-      (opt) => opt.toLowerCase() === normalized
-    ) as DevelopmentStage | undefined
-  ) ?? null;
 }
 
 function parseTaxonomyJson(text: string): {

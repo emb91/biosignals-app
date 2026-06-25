@@ -445,6 +445,48 @@ export function canonicalizeModality(value: unknown): Modality | null {
   return aliases[normalized] ?? canonicalizeFromOptions(value, MODALITY_OPTIONS);
 }
 
+export function canonicalizeDevelopmentStage(value: unknown): DevelopmentStage | null {
+  if (typeof value !== 'string') return null;
+
+  const aliases: Record<string, DevelopmentStage> = {
+    'phase 1': 'Phase I',
+    phase1: 'Phase I',
+    'phase i': 'Phase I',
+    'phase 2': 'Phase II',
+    phase2: 'Phase II',
+    'phase ii': 'Phase II',
+    'phase 3': 'Phase III',
+    phase3: 'Phase III',
+    'phase iii': 'Phase III',
+    approved: 'Commercial',
+    marketed: 'Commercial',
+    discovery: 'Preclinical',
+    research: 'Preclinical',
+    'research stage': 'Preclinical',
+    'all stage': 'All stages',
+    'all stages': 'All stages',
+  };
+
+  const normalized = normalizeTaxonomyText(value);
+  return aliases[normalized] ?? canonicalizeFromOptions(value, DEVELOPMENT_STAGE_OPTIONS);
+}
+
+export function canonicalizeCompanySize(value: unknown): CompanySize | null {
+  return canonicalizeFromOptions(value, COMPANY_SIZE_OPTIONS);
+}
+
+export function canonicalizeLiFollowerSize(value: unknown): LiFollowerSize | null {
+  return canonicalizeFromOptions(value, LI_FOLLOWER_OPTIONS);
+}
+
+export function canonicalizeBusinessArea(value: unknown): BusinessArea | null {
+  return canonicalizeFromOptions(value, BUSINESS_AREA_OPTIONS);
+}
+
+export function canonicalizeSeniorityLevel(value: unknown): SeniorityLevel | null {
+  return canonicalizeFromOptions(value, SENIORITY_LEVEL_OPTIONS);
+}
+
 export function expandModalitiesWithParents(values: readonly Modality[]): Modality[] {
   const expanded: Modality[] = [];
 
@@ -471,6 +513,9 @@ export function canonicalizeFundingStage(
   companyStatus?: string | null,
 ): FundingStage | null {
   if (stage) {
+    const exact = canonicalizeFromOptions(stage, FUNDING_STAGE_OPTIONS);
+    if (exact) return exact;
+
     const normalized = stage.trim().toLowerCase().replace(/[\s-]+/g, '_');
     const stageMap: Record<string, FundingStage> = {
       bootstrapped: 'Bootstrapped',
