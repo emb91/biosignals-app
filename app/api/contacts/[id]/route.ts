@@ -19,6 +19,7 @@ import {
   accountReadinessByCompanyIdForOrg,
   contactReadinessByContactIdForOrg,
 } from '@/lib/org-readiness-snapshots';
+import { createAdminClient } from '@/lib/supabase-admin';
 
 type LeadUpdateBody = {
   full_name?: string;
@@ -40,6 +41,29 @@ type LeadUpdateBody = {
   user_phones?: unknown;
   /** Manual deliverability overrides keyed by email address. */
   email_deliverability_overrides?: unknown;
+};
+
+const PERSON_DETAIL_SELECT =
+  'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, email_deliverability, linkedin_url, profile_photo_url, profile_photo_cached, company_name, company_domain, company_linkedin_url, location, city, country, contact_bio, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, enrichment_refresh_status, enrichment_refresh_finished_at, profile_enrichment_status, profile_enrichment_completed_at, linkedin_resolution_status, created_at, updated_at, company_id';
+
+const COMPANY_DETAIL_SELECT =
+  'id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, sub_industry, employee_count, employee_range, company_size_bucket, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_summary, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at';
+
+type OrgContactLinkRow = {
+  id: string;
+  user_id: string;
+  person_id: string;
+  company_id: string | null;
+  source: string | null;
+  contact_fit_score: number | null;
+  readiness_score: number | null;
+  priority_score: number | null;
+  contact_panel_summary: string | null;
+  contact_fit_summary: string | null;
+  fit_score: number | null;
+  overall_fit_score: number | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 const normalizeString = (value: unknown): string | null => {
@@ -126,6 +150,114 @@ function applyContactOverrides<T extends Record<string, unknown>>(row: T, overri
   return next as T;
 }
 
+function chooseRepresentativeLink(
+  links: OrgContactLinkRow[],
+  userId: string,
+): OrgContactLinkRow | null {
+  const own = links.find((link) => link.user_id === userId);
+  if (own) return own;
+  return [...links].sort((a, b) => {
+    const aUpdated = Date.parse(a.updated_at ?? a.created_at ?? '') || 0;
+    const bUpdated = Date.parse(b.updated_at ?? b.created_at ?? '') || 0;
+    if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+    return a.id.localeCompare(b.id);
+  })[0] ?? null;
+}
+
+async function orgMemberIds(admin: ReturnType<typeof createAdminClient>, orgId: string): Promise<string[]> {
+  const { data, error } = await admin
+    .from('org_members')
+    .select('user_id')
+    .eq('org_id', orgId);
+  if (error) throw new Error(`org member lookup failed: ${error.message}`);
+  return [...new Set((data ?? []).map((row) => row.user_id as string).filter(Boolean))];
+}
+
+async function resolveOrgContactDetail(params: {
+  id: string;
+  orgId: string;
+  userId: string;
+}): Promise<Record<string, unknown> | null> {
+  const admin = createAdminClient();
+  const memberIds = await orgMemberIds(admin, params.orgId);
+  if (memberIds.length === 0) return null;
+
+  const { data: requestedLink, error: requestedLinkError } = await admin
+    .from('user_contacts')
+    .select('id, user_id, person_id')
+    .eq('id', params.id)
+    .maybeSingle();
+  if (requestedLinkError) throw new Error(`contact link lookup failed: ${requestedLinkError.message}`);
+
+  if (requestedLink && !memberIds.includes(requestedLink.user_id as string)) return null;
+  const requestedPersonId = requestedLink ? (requestedLink.person_id as string | null) : params.id;
+  if (!requestedPersonId) return null;
+
+  const { data: state, error: stateError } = await admin
+    .from('org_contact_state')
+    .select('person_id, company_id, source, added_at, updated_at')
+    .eq('org_id', params.orgId)
+    .eq('person_id', requestedPersonId)
+    .is('archived_at', null)
+    .maybeSingle();
+  if (stateError) throw new Error(`org contact state lookup failed: ${stateError.message}`);
+  if (!state?.person_id) return null;
+
+  const [personResult, linksResult] = await Promise.all([
+    admin.from('people').select(PERSON_DETAIL_SELECT).eq('id', requestedPersonId).maybeSingle(),
+    admin
+      .from('user_contacts')
+      .select(
+        'id, user_id, person_id, company_id, source, contact_fit_score, readiness_score, priority_score, contact_panel_summary, contact_fit_summary, fit_score, overall_fit_score, created_at, updated_at',
+      )
+      .in('user_id', memberIds)
+      .eq('person_id', requestedPersonId)
+      .is('archived_at', null),
+  ]);
+
+  if (personResult.error) throw new Error(`person lookup failed: ${personResult.error.message}`);
+  if (linksResult.error) throw new Error(`org contact links lookup failed: ${linksResult.error.message}`);
+  if (!personResult.data) return null;
+
+  const link = chooseRepresentativeLink((linksResult.data ?? []) as OrgContactLinkRow[], params.userId);
+  if (!link) return null;
+
+  const companyId =
+    (state.company_id as string | null) ??
+    link.company_id ??
+    ((personResult.data as Record<string, unknown>).company_id as string | null) ??
+    null;
+  let company: Record<string, unknown> | null = null;
+  if (companyId) {
+    const { data: companyRow } = await admin
+      .from('companies')
+      .select(COMPANY_DETAIL_SELECT)
+      .eq('id', companyId)
+      .maybeSingle();
+    company = (companyRow as Record<string, unknown> | null) ?? null;
+  }
+
+  return {
+    ...(personResult.data as Record<string, unknown>),
+    id: link.id,
+    person_id: requestedPersonId,
+    user_id: params.userId,
+    owner_user_id: link.user_id,
+    company_id: companyId,
+    source: (state.source as string | null) ?? link.source ?? (personResult.data as Record<string, unknown>).source ?? null,
+    created_at: (state.added_at as string | null) ?? link.created_at ?? (personResult.data as Record<string, unknown>).created_at ?? null,
+    updated_at: (state.updated_at as string | null) ?? link.updated_at ?? (personResult.data as Record<string, unknown>).updated_at ?? null,
+    contact_fit_score: link.contact_fit_score ?? null,
+    readiness_score: link.readiness_score ?? null,
+    priority_score: link.priority_score ?? null,
+    contact_panel_summary: link.contact_panel_summary ?? (personResult.data as Record<string, unknown>).contact_panel_summary ?? null,
+    contact_fit_summary: link.contact_fit_summary ?? (personResult.data as Record<string, unknown>).contact_fit_summary ?? null,
+    fit_score: link.fit_score ?? (personResult.data as Record<string, unknown>).fit_score ?? null,
+    overall_fit_score: link.overall_fit_score ?? (personResult.data as Record<string, unknown>).overall_fit_score ?? null,
+    companies: company,
+  };
+}
+
 function buildContactOverridePatch(input: Record<ContactOverrideField, string | null>): {
   set: ContactOverrides;
   clear: ContactOverrideField[];
@@ -143,32 +275,6 @@ function buildContactOverridePatch(input: Record<ContactOverrideField, string | 
   return { set, clear };
 }
 
-async function fetchOrgContactOverride(
-  supabase: { from: (table: string) => any },
-  orgId: string,
-  contactId: string,
-): Promise<{ personId: string | null; overrides: Record<string, unknown> | null }> {
-  const { data: link } = await supabase
-    .from('user_contacts')
-    .select('person_id')
-    .eq('id', contactId)
-    .maybeSingle();
-  const personId = (link as { person_id: string | null } | null)?.person_id ?? null;
-  if (!personId) return { personId: null, overrides: null };
-
-  const { data: overrideRow } = await supabase
-    .from('org_contact_overrides')
-    .select('overrides')
-    .eq('org_id', orgId)
-    .eq('person_id', personId)
-    .maybeSingle();
-
-  return {
-    personId,
-    overrides: (overrideRow as { overrides: Record<string, unknown> | null } | null)?.overrides ?? null,
-  };
-}
-
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> }
@@ -181,23 +287,11 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Full lead detail for the side panel + agent context. Includes the
-    // complete companies(...) nested data (firmographics, products, funding,
-    // criteria) that the lean list response omits.
-    const { data, error } = await ctx.supabase
-      .from('contacts')
-      .select(
-        // Note: org-scoped ICP/fit fields are not selectable on the canonical
-        // companies row.
-        'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, email_deliverability, linkedin_url, profile_photo_url, profile_photo_cached, company_name, company_domain, company_linkedin_url, location, city, country, contact_bio, contact_panel_summary, contact_fit_summary, fit_score, readiness_score, overall_fit_score, contact_fit_score, priority_score, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, enrichment_refresh_status, enrichment_refresh_finished_at, profile_enrichment_status, profile_enrichment_completed_at, linkedin_resolution_status, source, created_at, updated_at, company_id, companies(id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, sub_industry, employee_count, employee_range, company_size_bucket, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_summary, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)'
-      )
-      .eq('user_id', ctx.user.id)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    const data = await resolveOrgContactDetail({
+      id,
+      orgId: ctx.orgId,
+      userId: ctx.user.id,
+    });
 
     if (!data) {
       return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
@@ -206,24 +300,33 @@ export async function GET(
     try {
       const contactRow = data as Record<string, unknown>;
       const companyId = typeof contactRow.company_id === 'string' ? contactRow.company_id : null;
+      const contactId = typeof contactRow.id === 'string' ? contactRow.id : id;
+      const personId = typeof contactRow.person_id === 'string' ? contactRow.person_id : null;
 
       const [
-        { overrides },
+        overrideResult,
         emailsGrouped,
         phonesGrouped,
         accountResult,
         accountReadinessByCompany,
         contactReadinessByContact,
       ] = await Promise.all([
-        fetchOrgContactOverride(ctx.supabase, ctx.orgId, id),
-        fetchContactEmailsForContacts(ctx.supabase, [id]),
-        fetchContactPhonesForContacts(ctx.supabase, [id]),
+        personId
+          ? ctx.supabase
+              .from('org_contact_overrides')
+              .select('overrides')
+              .eq('org_id', ctx.orgId)
+              .eq('person_id', personId)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        fetchContactEmailsForContacts(ctx.supabase, [contactId]),
+        fetchContactPhonesForContacts(ctx.supabase, [contactId]),
         companyId
           ? ctx.supabase
-              .from('accounts_view')
+              .from('org_companies')
               .select('company_fit_score, readiness_score')
-              .eq('user_id', ctx.user.id)
-              .eq('id', companyId)
+              .eq('org_id', ctx.orgId)
+              .eq('company_id', companyId)
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
         companyId
@@ -236,10 +339,14 @@ export async function GET(
         contactReadinessByContactIdForOrg({
           orgId: ctx.orgId,
           userId: ctx.user.id,
-          contactIds: [id],
+          contactIds: [contactId],
         }),
       ]);
 
+      const overrides =
+        overrideResult && typeof overrideResult === 'object' && 'data' in overrideResult
+          ? ((overrideResult as { data?: { overrides?: Record<string, unknown> | null } | null }).data?.overrides ?? null)
+          : null;
       const accountRow =
         accountResult && typeof accountResult === 'object' && 'data' in accountResult
           ? ((accountResult as { data?: Record<string, unknown> | null }).data ?? null)
@@ -247,7 +354,7 @@ export async function GET(
       const companyFit = finiteScoreNumber(accountRow?.company_fit_score);
       const teamAccountReadiness = companyId ? accountReadinessByCompany.get(companyId)?.score ?? null : null;
       const companyReadiness = teamAccountReadiness ?? finiteScoreNumber(accountRow?.readiness_score);
-      const contactReadiness = contactReadinessByContact.get(id)?.score ?? null;
+      const contactReadiness = contactReadinessByContact.get(contactId)?.score ?? null;
       const priority = priorityFromScores({
         companyFit,
         contactFit: contactRow.contact_fit_score,
@@ -263,8 +370,8 @@ export async function GET(
           contact_readiness_score: contactReadiness,
           priority_score: priority,
           intrinsic_priority_score: priority,
-          contact_emails: emailsGrouped.get(id) ?? [],
-          contact_phones: phonesGrouped.get(id) ?? [],
+          contact_emails: emailsGrouped.get(contactId) ?? [],
+          contact_phones: phonesGrouped.get(contactId) ?? [],
         },
       });
     } catch {
