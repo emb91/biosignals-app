@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "/tmp/arcova-taxonomy-tests",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "incremental": false,
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "lib/arcova-taxonomy.ts",
+    "lib/icp-taxonomy.ts",
+    "lib/icp-taxonomy.test.ts"
+  ]
+}

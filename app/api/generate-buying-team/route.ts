@@ -3,20 +3,12 @@ import { completeLlm } from '@/lib/llm-client';
 import {
   BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
+  SENIORITY_LEVEL_OPTIONS,
   employeeCountToSizeBucket,
   totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { guardAuthenticatedAction } from '@/lib/api-security';
-
-const SENIORITY_LEVEL_OPTIONS = [
-  'C-Level',
-  'VP / SVP',
-  'Director',
-  'Head of / Senior Manager',
-  'Manager',
-  'Individual Contributor',
-] as const;
 
 type OrgScaleBand = 'micro' | 'small' | 'mid' | 'large' | 'unknown';
 

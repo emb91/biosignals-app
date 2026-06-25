@@ -4,6 +4,7 @@ import { orgIdForUser } from '@/lib/org-context';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parsePlatformCategoryInput } from '@/lib/platform-category';
+import { normalizeIcpTaxonomyPayload } from '@/lib/icp-taxonomy';
 import {
   isMissingColumnError,
   withoutPlatformCategory,
@@ -72,20 +73,21 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const orgId = await orgIdForUser(supabase, user.id);
     const scopeCol = orgId ? 'org_id' : 'user_id';
     const scopeVal = orgId ?? user.id;
+    const taxonomy = normalizeIcpTaxonomyPayload(body as Record<string, unknown>);
 
     const icpData: Record<string, unknown> = {
       name: body.name || '',
-      company_type: body.companyType || '',
+      company_type: taxonomy.company_type,
       platform_category: platformCategory,
-      therapeutic_areas: body.therapeuticAreas || [],
-      modalities: body.modalities || [],
-      development_stages: body.developmentStages || [],
-      customer_therapeutic_areas: body.customerTherapeuticAreas ?? [],
-      customer_modalities: body.customerModalities ?? [],
-      customer_development_stages: body.customerDevelopmentStages ?? [],
-      company_sizes: body.companySizes || [],
-      li_follower_sizes: body.liFollowerSizes || [],
-      funding_stages: body.fundingStages || [],
+      therapeutic_areas: taxonomy.therapeutic_areas,
+      modalities: taxonomy.modalities,
+      development_stages: taxonomy.development_stages,
+      customer_therapeutic_areas: taxonomy.customer_therapeutic_areas,
+      customer_modalities: taxonomy.customer_modalities,
+      customer_development_stages: taxonomy.customer_development_stages,
+      company_sizes: taxonomy.company_sizes,
+      li_follower_sizes: taxonomy.li_follower_sizes,
+      funding_stages: taxonomy.funding_stages,
       // Signals are universal now, so ICP updates no longer write per-ICP selections.
       example_companies: body.exampleCompanies || [],
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
