@@ -10,6 +10,10 @@ import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser } from '@/lib/org-context';
 import { listActiveCompanyStateForUser } from '@/lib/org-company-state';
 import {
+  accountReadinessByCompanyIdForOrg,
+  contactReadinessByContactIdForOrg,
+} from '@/lib/org-readiness-snapshots';
+import {
   fetchContactEmailsForContacts,
   type ContactEmailRow,
 } from '@/lib/contact-emails';
@@ -496,6 +500,8 @@ async function attachEnrichmentMetadataBestEffort(
 async function attachReadinessBestEffort(
   supabase: SupabaseClientLike,
   rows: LeadRow[],
+  userId: string,
+  orgId: string | null,
 ): Promise<LeadRow[]> {
   const contactIds = dedupe(
     rows
@@ -506,6 +512,18 @@ async function attachReadinessBestEffort(
     return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
   }
   try {
+    const orgReadiness = await contactReadinessByContactIdForOrg({ orgId, userId, contactIds });
+    if (orgReadiness.size > 0) {
+      return rows.map((row) => {
+        const r = typeof row.id === 'string' ? orgReadiness.get(row.id) : null;
+        return {
+          ...row,
+          contact_readiness_label: r?.label ?? null,
+          contact_readiness_score: r?.score ?? null,
+        };
+      });
+    }
+
     const { data, error } = await supabase
       .from('contact_readiness_snapshots')
       .select('contact_id, overall_label, overall_score')
@@ -607,6 +625,7 @@ async function attachUserCompanyScoresBestEffort(
   supabase: SupabaseClientLike,
   rows: LeadRow[],
   userId: string,
+  orgId: string | null,
 ): Promise<LeadRow[]> {
   const companyIds = dedupe(
     rows
@@ -656,27 +675,10 @@ async function attachUserCompanyScoresBestEffort(
     }
 
     // The account/org compat views can carry stale org_companies.readiness_score
-    // after the readiness model recomputes. /companies reads
-    // account_readiness_snapshots via list_user_accounts; use the same
-    // authoritative source here so contact priority does not collapse to an old
-    // account readiness value.
-    const { data: snapshotRows, error: snapshotError } = await supabase
-      .from('account_readiness_snapshots')
-      .select('company_id, overall_score')
-      .eq('user_id', userId)
-      .in('company_id', companyIds);
-
-    const readinessByCompanyId =
-      snapshotError || !snapshotRows
-        ? new Map<string, number | null>()
-        : new Map(
-            (snapshotRows as Array<{ company_id: string; overall_score: unknown }>)
-              .filter((row) => typeof row.company_id === 'string')
-              .map((row) => [
-                row.company_id,
-                finiteScoreNumber(row.overall_score),
-              ]),
-          );
+    // after the readiness model recomputes. Use the freshest org-member
+    // account_readiness_snapshots row so a teammate sees the representative
+    // monitoring result instead of their own stale per-user row.
+    const orgReadiness = await accountReadinessByCompanyIdForOrg({ orgId, userId, companyIds });
 
     const scoreMap = new Map<string, { fit: number | null; readiness: number | null }>(
       data.map((r) => [
@@ -700,8 +702,8 @@ async function attachUserCompanyScoresBestEffort(
           ? rowCompanyFit
           : null;
       const snapshotReadiness =
-        typeof row.company_id === 'string' && readinessByCompanyId.has(row.company_id)
-          ? readinessByCompanyId.get(row.company_id) ?? null
+        typeof row.company_id === 'string' && orgReadiness.has(row.company_id)
+          ? orgReadiness.get(row.company_id)?.score ?? null
           : null;
       return {
         ...row,
@@ -1278,8 +1280,8 @@ export async function GET(request: Request) {
       attachContactEmailsBestEffort(supabase, baseRows),
       attachContactPhonesBestEffort(supabase, baseRows),
       attachHubSpotLeadStateBestEffort(supabase, baseRows),
-      attachReadinessBestEffort(supabase, baseRows),
-      attachUserCompanyScoresBestEffort(supabase, baseRows, user.id),
+      attachReadinessBestEffort(supabase, baseRows, user.id, orgId),
+      attachUserCompanyScoresBestEffort(supabase, baseRows, user.id, orgId),
       attachContactAttributionBestEffort(supabase, baseRows),
       attachLatestSequenceStatusBestEffort(supabase, baseRows, user.id),
       attachOrgContactOverridesBestEffort(supabase, baseRows, orgId),

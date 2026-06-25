@@ -15,6 +15,10 @@ import {
 } from '@/lib/contact-phones';
 import { effectiveReadiness } from '@/lib/lead-action';
 import { getOrgContext } from '@/lib/org-context';
+import {
+  accountReadinessByCompanyIdForOrg,
+  contactReadinessByContactIdForOrg,
+} from '@/lib/org-readiness-snapshots';
 
 type LeadUpdateBody = {
   full_name?: string;
@@ -208,7 +212,8 @@ export async function GET(
         emailsGrouped,
         phonesGrouped,
         accountResult,
-        contactReadinessResult,
+        accountReadinessByCompany,
+        contactReadinessByContact,
       ] = await Promise.all([
         fetchOrgContactOverride(ctx.supabase, ctx.orgId, id),
         fetchContactEmailsForContacts(ctx.supabase, [id]),
@@ -221,25 +226,28 @@ export async function GET(
               .eq('id', companyId)
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
-        ctx.supabase
-          .from('contact_readiness_snapshots')
-          .select('overall_score')
-          .eq('user_id', ctx.user.id)
-          .eq('contact_id', id)
-          .maybeSingle(),
+        companyId
+          ? accountReadinessByCompanyIdForOrg({
+              orgId: ctx.orgId,
+              userId: ctx.user.id,
+              companyIds: [companyId],
+            })
+          : Promise.resolve(new Map()),
+        contactReadinessByContactIdForOrg({
+          orgId: ctx.orgId,
+          userId: ctx.user.id,
+          contactIds: [id],
+        }),
       ]);
 
       const accountRow =
         accountResult && typeof accountResult === 'object' && 'data' in accountResult
           ? ((accountResult as { data?: Record<string, unknown> | null }).data ?? null)
           : null;
-      const contactReadinessRow =
-        contactReadinessResult && typeof contactReadinessResult === 'object' && 'data' in contactReadinessResult
-          ? ((contactReadinessResult as { data?: Record<string, unknown> | null }).data ?? null)
-          : null;
       const companyFit = finiteScoreNumber(accountRow?.company_fit_score);
-      const companyReadiness = finiteScoreNumber(accountRow?.readiness_score);
-      const contactReadiness = finiteScoreNumber(contactReadinessRow?.overall_score);
+      const teamAccountReadiness = companyId ? accountReadinessByCompany.get(companyId)?.score ?? null : null;
+      const companyReadiness = teamAccountReadiness ?? finiteScoreNumber(accountRow?.readiness_score);
+      const contactReadiness = contactReadinessByContact.get(id)?.score ?? null;
       const priority = priorityFromScores({
         companyFit,
         contactFit: contactRow.contact_fit_score,
