@@ -75,6 +75,7 @@ import {
   AlertTriangle,
   Maximize2,
   Minimize2,
+  Phone,
 } from 'lucide-react';
 import { EntitySignalsList } from '@/components/EntitySignalsList';
 
@@ -804,17 +805,23 @@ function ScoreRow({
   pct,
   arcColor,
   onOpen,
+  divider,
 }: {
   label: string;
   pct: number | null;
   arcColor: string;
   onOpen: () => void;
+  divider?: boolean;
 }) {
+  // Design score-row: mini ring + label + chevron, rows divided inside one card.
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="w-full rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 flex items-center gap-4 text-left transition-colors hover:bg-arcova-teal/5"
+      className={cn(
+        'flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-white/70',
+        divider && 'border-t border-[rgba(13,53,71,0.06)]',
+      )}
     >
       <AnimatedCircularProgressBar
         value={pct ?? 0}
@@ -823,20 +830,14 @@ function ScoreRow({
         animateOnMount
         deferAnimationMs={160}
         label={
-          <span className="block text-xs font-semibold text-gray-800 leading-snug tabular-nums">
+          <span className="block text-[11px] font-bold leading-snug tabular-nums text-[#0d3547]">
             {pct != null ? pct : '—'}
           </span>
         }
-        className="size-12 shrink-0 [--transition-length:0.95s]"
+        className="size-9 shrink-0 [--transition-length:0.95s]"
       />
-      <div className="flex-1 min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
-          {label}
-        </p>
-        <p className="mt-1 text-[11px] font-semibold text-arcova-teal">
-          See details →
-        </p>
-      </div>
+      <span className="flex-1 text-[13.5px] font-semibold text-[#0d3547]">{label}</span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-[#b6c2c8]" aria-hidden />
     </button>
   );
 }
@@ -1345,12 +1346,6 @@ const getLeadRefreshStatusMeta = (
       };
   }
 };
-
-function isAvanzadoTestContact(lead: { full_name?: string | null; linkedin_url?: string | null }): boolean {
-  const name = (lead.full_name || '').toLowerCase();
-  const linkedin = (lead.linkedin_url || '').toLowerCase();
-  return name.includes('avanzado') || linkedin.includes('a-avanzado');
-}
 
 function getEmailDeliverabilityMeta(
   status: string | null | undefined,
@@ -3310,8 +3305,32 @@ export function ContactsWorkspace() {
                       {ok === 'pass' ? '✓' : ok === 'warn' ? '~' : '✗'}
                     </span>
                     <span className="contacts-fit-criterion-text">{component.label}</span>
-                    <span className="contacts-fit-criterion-val">
-                      {formatPercentValue(component.score01) ?? '—'}
+                    {/* Design .crit-right — % stacked over a short match qualifier, right-aligned. */}
+                    <span className="flex flex-col items-end gap-0.5 pl-2 text-right">
+                      <span
+                        className={cn(
+                          'text-[13px] font-bold leading-none tabular-nums',
+                          ok === 'pass' ? 'text-[#0a7b88]' : ok === 'warn' ? 'text-[#c08328]' : 'text-[#c46b7a]',
+                        )}
+                      >
+                        {formatPercentValue(component.score01) ?? '—'}
+                      </span>
+                      {(() => {
+                        const qual =
+                          component.matchStatus === 'exact'
+                            ? 'Exact match'
+                            : component.matchStatus === 'mismatch'
+                              ? 'No match'
+                              : component.matchStatus === 'partial'
+                                ? 'Partial match'
+                                : null;
+                        if (!qual) return null;
+                        return (
+                          <span className={cn('whitespace-nowrap text-[11px] font-semibold', ok === 'miss' ? 'text-[#c46b7a]' : 'text-[#7d909a]')}>
+                            {qual}
+                          </span>
+                        );
+                      })()}
                     </span>
                   </button>
                   {isOpen && hasDetail && (
@@ -4447,7 +4466,7 @@ export function ContactsWorkspace() {
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
                             {selectedPreview === 'contact'
-                              ? 'Contact'
+                              ? 'Details'
                               : selectedPreview === 'hubspot'
                                 ? 'CRM'
                               : selectedPreview === 'scoring'
@@ -4498,7 +4517,7 @@ export function ContactsWorkspace() {
                           row-button entries still work as deep-links into a tab. */}
                       <div className="relative z-[1] flex items-center gap-0.5 border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-2.5 py-2">
                         {([
-                          { key: 'contact', label: 'Contact' },
+                          { key: 'contact', label: 'Details' },
                           { key: 'scoring', label: 'Fit' },
                           { key: 'priority', label: 'Priority' },
                           { key: 'hubspot', label: 'CRM' },
@@ -5013,32 +5032,80 @@ export function ContactsWorkspace() {
                                             });
                                           })()}
                                         </div>
-                                        {isAvanzadoTestContact(selectedLead) && (
-                                          <div className="mt-3 space-y-1.5">
-                                            <div className="flex flex-wrap gap-2">
+                                        {/* Singular email refresh (find-new-email · 11 credits) + last-checked.
+                                            Distinct from the full batch "Refresh enrichment" in the Data source box. */}
+                                        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleFindNewEmail(selectedLead.id)}
+                                            disabled={findingEmailLeadId === selectedLead.id}
+                                            className="inline-flex items-center gap-1.5 rounded-[9px] border border-arcova-teal/30 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            {findingEmailLeadId === selectedLead.id ? (
+                                              <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                              <MailCheck className="h-3.5 w-3.5" />
+                                            )}
+                                            {findingEmailLeadId === selectedLead.id ? 'Finding…' : 'Find new email · 11 credits'}
+                                          </button>
+                                          {(() => {
+                                            // Most recent deliverability check across this contact's emails.
+                                            const lastChecked = (selectedLead.contact_emails ?? [])
+                                              .map((e) => e.email_deliverability_checked_at)
+                                              .filter((d): d is string => Boolean(d))
+                                              .sort()
+                                              .pop();
+                                            if (!lastChecked) return null;
+                                            return (
+                                              <span className="text-[11px] text-[#7d909a]">
+                                                Last checked {formatLastUpdated(lastChecked)}
+                                              </span>
+                                            );
+                                          })()}
+                                        </div>
+                                        {findEmailErrorByLeadId[selectedLead.id] && (
+                                          <p className="mt-1.5 text-xs leading-snug text-rose-600">
+                                            {findEmailErrorByLeadId[selectedLead.id]}
+                                          </p>
+                                        )}
+                                      </div>
+                                      {/* Phone row — show numbers on file, else offer the singular reveal (20 credits) */}
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Phone
+                                        </p>
+                                        {(() => {
+                                          const phones = (selectedLead.contact_phones ?? []).filter((p) => (p.phone || '').trim());
+                                          if (phones.length > 0) {
+                                            return (
+                                              <div className="mt-2 space-y-1">
+                                                {phones.map((p) => (
+                                                  <p key={p.id} className="break-all text-sm leading-snug text-[#0d3547]">
+                                                    {p.phone}
+                                                  </p>
+                                                ))}
+                                              </div>
+                                            );
+                                          }
+                                          return (
+                                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                              <span className="text-sm leading-snug text-[#7d909a]">Not on file yet</span>
                                               <button
                                                 type="button"
-                                                onClick={() => void handleFindNewEmail(selectedLead.id)}
-                                                disabled={findingEmailLeadId === selectedLead.id}
-                                                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                onClick={() => void handleRevealPhone(selectedLead.id)}
+                                                disabled={revealingPhoneLeadId === selectedLead.id}
+                                                className="inline-flex items-center gap-1.5 rounded-[9px] border border-arcova-teal/30 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-[#0a7b88] transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
                                               >
-                                                {findingEmailLeadId === selectedLead.id ? (
+                                                {revealingPhoneLeadId === selectedLead.id ? (
                                                   <RotateCw className="h-3.5 w-3.5 animate-spin" />
                                                 ) : (
-                                                  <MailCheck className="h-3.5 w-3.5" />
+                                                  <Phone className="h-3.5 w-3.5" />
                                                 )}
-                                                {findingEmailLeadId === selectedLead.id
-                                                  ? 'Testing…'
-                                                  : 'Test: get new email'}
+                                                {revealingPhoneLeadId === selectedLead.id ? 'Revealing…' : 'Reveal phone · 20 credits'}
                                               </button>
                                             </div>
-                                            {findEmailErrorByLeadId[selectedLead.id] && (
-                                              <p className="text-xs leading-snug text-rose-600">
-                                                {findEmailErrorByLeadId[selectedLead.id]}
-                                              </p>
-                                            )}
-                                          </div>
-                                        )}
+                                          );
+                                        })()}
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
@@ -5330,7 +5397,7 @@ export function ContactsWorkspace() {
                                         </div>
                                         {deal.deal_stage ? (
                                           <span className="inline-flex items-center rounded-full bg-[#fff1ec] px-2.5 py-1 text-[11px] font-medium text-[#cc5b3f]">
-                                            {deal.deal_stage}
+                                            {formatHubSpotStageLabel(deal.deal_stage) || deal.deal_stage}
                                           </span>
                                         ) : null}
                                       </div>
@@ -5778,6 +5845,7 @@ export function ContactsWorkspace() {
                             contactId={selectedLead.id}
                             companyId={selectedLead.company_id ?? undefined}
                             primaryScope="contact"
+                            grouped
                             // Same value the Priority tab's readiness row uses (CRM-suppressed),
                             // so the Signals hero gauge and Priority can't show different numbers.
                             effectiveReadinessScore={displayEffectiveReadiness(selectedLead)}
@@ -5810,8 +5878,8 @@ export function ContactsWorkspace() {
                             const priorityPct = percentDisplayNumber(priorityNorm);
                             return (
                               <div className="space-y-3">
-                                {/* Priority — large gauge, number only */}
-                                <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-6">
+                                {/* Priority — large gauge hero with caption + supporting line */}
+                                <div className="flex flex-col items-center justify-center rounded-[14px] border border-[rgba(13,53,71,0.06)] bg-[rgba(246,250,250,0.7)] px-4 py-6 text-center">
                                   <AnimatedCircularProgressBar
                                     value={priorityPct ?? 0}
                                     gaugePrimaryColor={priorityScoreArcColor(priorityPct)}
@@ -5825,7 +5893,7 @@ export function ContactsWorkspace() {
                                     }
                                     className="size-24 [--transition-length:0.95s]"
                                   />
-                                  <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                                  <p className="mt-3 font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                     Priority score
                                   </p>
                                   {(() => {
@@ -5847,31 +5915,36 @@ export function ContactsWorkspace() {
                                     });
                                     if (!blurb) return null;
                                     return (
-                                      <p className="mt-3 text-[12.5px] leading-[1.55] text-[#1f475a]">
+                                      <p className="mt-2 text-[12.5px] leading-[1.55] text-[#1f475a]">
                                         {blurb}
                                       </p>
                                     );
                                   })()}
                                 </div>
 
-                                <ScoreRow
-                                  label="Company fit"
-                                  pct={companyFitPct}
-                                  arcColor={fitScoreArcColor(companyFitPct)}
-                                  onOpen={() => setSelectedPreview('scoring')}
-                                />
-                                <ScoreRow
-                                  label="Contact fit"
-                                  pct={fitPct}
-                                  arcColor={fitScoreArcColor(fitPct)}
-                                  onOpen={() => setSelectedPreview('scoring')}
-                                />
-                                <ScoreRow
-                                  label="Readiness score"
-                                  pct={readinessPct}
-                                  arcColor={fitScoreArcColor(readinessPct)}
-                                  onOpen={() => setSelectedPreview('signals')}
-                                />
+                                {/* Score breakdown — company fit / contact fit / readiness, one card */}
+                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                  <ScoreRow
+                                    label="Company fit"
+                                    pct={companyFitPct}
+                                    arcColor={fitScoreArcColor(companyFitPct)}
+                                    onOpen={() => setSelectedPreview('scoring')}
+                                  />
+                                  <ScoreRow
+                                    label="Contact fit"
+                                    pct={fitPct}
+                                    arcColor={fitScoreArcColor(fitPct)}
+                                    onOpen={() => setSelectedPreview('scoring')}
+                                    divider
+                                  />
+                                  <ScoreRow
+                                    label="Readiness score"
+                                    pct={readinessPct}
+                                    arcColor={fitScoreArcColor(readinessPct)}
+                                    onOpen={() => setSelectedPreview('signals')}
+                                    divider
+                                  />
+                                </div>
                               </div>
                             );
                           })()
