@@ -61,8 +61,7 @@ app/landing-test-6/
 - **Pricing** — Free / Starter $149 workspace / Growth $799 workspace. Annual
   prices are $1,490 and $7,990. Edit once in `data.ts` → `PLANS`; commercial
   source of truth is `strategy/pricing/pricing-model-codex-20260619/ARCOVA_PRICING_AND_CREDIT_SPEC.md`.
-- **Signup / demo URLs** — CTAs point at `/signup` (doesn't exist yet) and
-  `/contact-us`.
+- **Signup / demo URLs** — CTAs point at `/signup` and `/contact-us`.
 - **OG image** — reuses `/images/network-og.png`.
 - **Logos** — no customer logo wall (none available); proof is the impact band +
   pillars instead.

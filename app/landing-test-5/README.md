@@ -58,8 +58,7 @@ app/landing-test-5/
 
 - **Hero headline** — currently `"Know which life science accounts are ready to buy."`
   is a placeholder (final tagline TBD). One-line swap in `data.ts` → `HERO.headline`.
-- **Signup / demo URLs** — CTAs link to `/signup` (does not exist yet) and
-  `/contact-us`. Point `data.ts` / sections at the real signup route.
+- **Signup / demo URLs** — CTAs link to `/signup` and `/contact-us`.
 - **Pricing** — Free / Starter $149 workspace / Growth $799 workspace. Annual
   prices are $1,490 and $7,990. Edit once in `data.ts` → `TIERS`; commercial
   source of truth is `strategy/pricing/pricing-model-codex-20260619/ARCOVA_PRICING_AND_CREDIT_SPEC.md`.
