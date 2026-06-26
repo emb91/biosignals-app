@@ -3772,6 +3772,8 @@ export default function SetupFlow({
   const [suggestionIdx, setSuggestionIdx] = useState(0);
   /** A typed/inferred target company awaiting the user's confirmation before we enrich it. */
   const [pendingTarget, setPendingTarget] = useState<{ name: string; domain: string } | null>(null);
+  /** Already-saved ICPs, so regenerated "suggest another" picks never overlap them. */
+  const existingIcpsForOverlapRef = useRef<TargetCompanyProfile[]>([]);
 
   // ── Accumulated form data (refs avoid stale closure in async callbacks) ──
   const companyRef = useRef({
@@ -4716,9 +4718,15 @@ export default function SetupFlow({
     const profile = editingFindingsData;
     if (profile && typeof profile === 'object' && Object.keys(profile).length > 0) {
       setThinking(true);
-      const shown = new Set(icpSuggestions.map((s) => normalizeDomain(s.domain)));
-      const fresh = (await generateIcpSuggestions(profile as Record<string, unknown>)).filter(
-        (s) => !shown.has(normalizeDomain(s.domain)),
+      const existingIcps = existingIcpsForOverlapRef.current;
+      // Exclude both companies we've already shown and the user's saved ICPs (no overlap).
+      const excluded = new Set(icpSuggestions.map((s) => normalizeDomain(s.domain)));
+      for (const icp of existingIcps) {
+        const d = normalizeDomain(icp.example_company_url || icp.example_company_enrichment?.website || '');
+        if (d) excluded.add(d);
+      }
+      const fresh = (await generateIcpSuggestions(profile as Record<string, unknown>, existingIcps)).filter(
+        (s) => !excluded.has(normalizeDomain(s.domain)),
       );
       setThinking(false);
       if (fresh.length > 0) {
@@ -4731,6 +4739,8 @@ export default function SetupFlow({
         return;
       }
     }
+    // Nothing fresh to offer — drop the suggestion pill and let them type their own.
+    setSuggestionIdx(icpSuggestions.length);
     await sayBeats(['That’s the shortlist I’d start with. Type a target company you have in mind and I’ll set it up.']);
     setInput(true);
   }, [suggestionIdx, icpSuggestions, editingFindingsData, generateIcpSuggestions, suggestionReasonBeat, sayBeats]);
@@ -5793,9 +5803,8 @@ export default function SetupFlow({
           const domain = prettyDomain(beginAnalysis.website_url);
           const name = beginAnalysis.company_name?.trim() || domain;
           setPendingTarget({ name, domain: beginAnalysis.website_url });
-          if (response.displayParts.length) {
-            await sayBeats(response.displayParts);
-          }
+          // Don't echo the model's own pre-amble here — it tends to say "analysing X now",
+          // which contradicts the confirmation we're about to ask for.
           await sayBeats([`I found ${name} (${domain}). Want me to build the target profile around them? You can also type a different company.`]);
           setInput(true);
           return;
@@ -6070,6 +6079,7 @@ export default function SetupFlow({
         ]);
         const existingAnalysis = analysesRes.ok ? ((await analysesRes.json())?.analyses?.[0] ?? null) : null;
         const existingIcps: TargetCompanyProfile[] = icpsRes.ok ? ((await icpsRes.json())?.data ?? []) : [];
+        existingIcpsForOverlapRef.current = existingIcps;
 
         if (existingAnalysis) {
           setEditingFindingsData(existingAnalysis as Record<string, unknown>);
