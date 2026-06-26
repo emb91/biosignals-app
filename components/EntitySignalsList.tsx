@@ -9,7 +9,20 @@
  */
 
 import { useEffect, useState } from 'react';
-import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
+import {
+  ChevronDown,
+  ExternalLink,
+  Loader2,
+  Calendar,
+  Banknote,
+  FlaskConical,
+  FileText,
+  Users,
+  BookOpen,
+  RefreshCw,
+  Sparkles,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
 import { fitScoreArcColor, percentDisplayNumber } from '@/lib/fit-gauge';
@@ -135,14 +148,6 @@ const SIGNAL_LABELS: Record<string, string> = {
   key_contact_departed: 'Contact Departed',
 };
 
-const DIMENSION_COLORS: Record<string, string> = {
-  new_budget: 'bg-emerald-500',
-  new_needs: 'bg-blue-500',
-  new_people: 'bg-violet-500',
-  new_strategy: 'bg-amber-500',
-  caution: 'bg-rose-500',
-};
-
 const DIMENSION_PILL_STYLES: Record<string, string> = {
   new_budget: 'bg-emerald-50 text-emerald-700',
   new_needs: 'bg-blue-50 text-blue-700',
@@ -266,13 +271,13 @@ function extractDealRows(signalKey: string, metadata: Record<string, unknown>): 
 function DealDetails({ rows }: { rows: DealRow[] }) {
   if (rows.length === 0) return null;
   return (
-    <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md border border-slate-100 bg-slate-50 px-2.5 py-2">
+    <dl className="mt-2 grid grid-cols-2 gap-x-3.5 gap-y-1 rounded-lg bg-[rgba(13,53,71,0.03)] px-2.5 py-2">
       {rows.map(({ label, value }) => (
         <div key={label} className="col-span-1 min-w-0">
-          <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-400 leading-none mb-0.5">
+          <dt className="mb-0.5 text-[10px] font-bold uppercase leading-none tracking-[0.1em] text-[#7d909a]">
             {label}
           </dt>
-          <dd className="text-[11px] text-slate-700 font-medium leading-snug truncate" title={value}>
+          <dd className="truncate text-[11.5px] font-medium leading-snug text-[#4a6470]" title={value}>
             {value}
           </dd>
         </div>
@@ -284,8 +289,6 @@ function DealDetails({ rows }: { rows: DealRow[] }) {
 // ── Signal card ────────────────────────────────────────────────────────────
 
 function SignalCard({ item }: { item: SignalItem }) {
-  const primaryDim = item.dimensions[0] ?? '';
-  const accent = DIMENSION_COLORS[primaryDim] ?? 'bg-slate-300';
   const dealRows = extractDealRows(item.signalKey, item.sourceMetadata ?? {});
 
   // Conference signals are forward-looking: event_at is the show's START date, so
@@ -300,61 +303,55 @@ function SignalCard({ item }: { item: SignalItem }) {
   const excerpt = isConference ? null : (item.evidenceExcerpt || item.sourceSummary || null);
   const showSource = !isConference && item.sourceUrl;
 
+  // Flat, divided row — design .sigline (dividers come from the group container).
   return (
-    <div className="relative flex gap-2.5 rounded-lg border border-slate-100 bg-white px-3 py-2.5 hover:border-slate-200 transition-colors">
-      {/* Left accent bar */}
-      <div className={cn('mt-1 h-3 w-1 shrink-0 rounded-full', accent)} />
-
-      <div className="min-w-0 flex-1 space-y-1">
-        {/* Title row */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-[13px] font-semibold text-slate-900 leading-tight">
-            {title}
+    <div className="py-[11px]">
+      {/* Title + time (design .sigline-head / .conf-title) */}
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0 font-manrope text-[13px] font-bold leading-tight tracking-[-0.01em] text-[#0d3547]">
+          {title}
+        </span>
+        {!isConference && (
+          // When the event actually happened (event_at), not when we scraped it.
+          <span className="shrink-0 text-[11px] tabular-nums text-[#7d909a]">
+            {relativeTime(item.eventAt ?? item.observedAt)}
           </span>
-          {!isConference && (
-            <span className="text-[11px] text-slate-400 ml-auto shrink-0">
-              {/* When the event actually happened (event_at), not when we scraped
-                  it (observed_at). A patent filed in April shouldn't read as "1w
-                  ago" because we detected it last month. */}
-              {relativeTime(item.eventAt ?? item.observedAt)}
-            </span>
-          )}
-        </div>
-
-        {/* Conference booth / date pills */}
-        {conference && conference.pills.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {conference.pills.map((pill) => (
-              <span
-                key={pill}
-                className="inline-flex items-center rounded-md bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600"
-              >
-                {pill}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Excerpt / rationale */}
-        {excerpt && (
-          <p className="text-[12px] leading-snug text-slate-500 line-clamp-2">{excerpt}</p>
-        )}
-
-        {/* Structured deal / event details */}
-        <DealDetails rows={dealRows} />
-
-        {/* Source link */}
-        {showSource && (
-          <a
-            href={item.sourceUrl!}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-[11px] text-arcova-teal hover:underline"
-          >
-            Source <ExternalLink className="h-2.5 w-2.5" />
-          </a>
         )}
       </div>
+
+      {/* Conference booth / date pills (design .sig-pills) */}
+      {conference && conference.pills.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {conference.pills.map((pill) => (
+            <span
+              key={pill}
+              className="inline-flex items-center rounded-full bg-[rgba(13,53,71,0.05)] px-2.5 py-1 text-[11.5px] font-medium text-[#4a6470]"
+            >
+              {pill}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Excerpt / rationale (design .sigline-ex) */}
+      {excerpt && (
+        <p className="mt-1.5 text-[12.5px] leading-snug text-[#4a6470] line-clamp-2">{excerpt}</p>
+      )}
+
+      {/* Structured deal / event details */}
+      <DealDetails rows={dealRows} />
+
+      {/* Source link (design .sig-src) */}
+      {showSource && (
+        <a
+          href={item.sourceUrl!}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#0a7b88] hover:underline"
+        >
+          Source <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
     </div>
   );
 }
@@ -453,17 +450,45 @@ function categorizeSignal(key: string): string {
   return SIGNAL_CATEGORIES.find((c) => c.match(key))?.title ?? 'Other signals';
 }
 
-/** One collapsible category card (design SignalGroup). Large groups start collapsed. */
+// Per-category icon chip (design .sig-ic) — colour language pulled from the
+// design files, extended across all live buckets so the look stays coherent.
+const CATEGORY_ICONS: Record<string, { icon: ReactNode; chip: string }> = {
+  conf: { icon: <Calendar />, chip: 'bg-[rgba(192,131,40,0.12)] text-[#c08328]' },
+  deal: { icon: <Banknote />, chip: 'bg-[rgba(45,138,138,0.12)] text-[#2d8a8a]' },
+  clinical: { icon: <FlaskConical />, chip: 'bg-[rgba(0,164,180,0.12)] text-[#0a7b88]' },
+  patent: { icon: <FileText />, chip: 'bg-[rgba(196,107,122,0.14)] text-[#c46b7a]' },
+  hire: { icon: <Users />, chip: 'bg-[rgba(13,102,128,0.10)] text-[#0d6680]' },
+  pub: { icon: <BookOpen />, chip: 'bg-[rgba(13,53,71,0.06)] text-[#1f475a]' },
+  crm: { icon: <RefreshCw />, chip: 'bg-[rgba(255,122,89,0.10)] text-[#e0613f]' },
+  other: { icon: <Sparkles />, chip: 'bg-[rgba(13,53,71,0.05)] text-[#7d909a]' },
+};
+
+/** Most-recent signal in a group, as a relative label (design .grp-latest).
+ *  Uses observedAt (always in the past) so forward-dated conferences don't skew it. */
+function latestRelative(items: SignalItem[]): string | null {
+  let latest = 0;
+  for (const it of items) {
+    const t = new Date(it.observedAt).getTime();
+    if (Number.isFinite(t) && t > latest) latest = t;
+  }
+  return latest ? relativeTime(new Date(latest).toISOString()) : null;
+}
+
+/** One collapsible category card (design .sig-group-card). Large groups start collapsed. */
 function SignalCategoryGroup({
+  categoryKey,
   title,
   items,
   defaultOpen,
 }: {
+  categoryKey: string;
   title: string;
   items: SignalItem[];
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const cat = CATEGORY_ICONS[categoryKey] ?? CATEGORY_ICONS.other;
+  const latest = latestRelative(items);
   return (
     <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
       <button
@@ -471,16 +496,22 @@ function SignalCategoryGroup({
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center justify-between gap-2 px-3.5 py-3 text-left transition-colors hover:bg-white/60"
       >
-        <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">{title}</span>
-        <span className="inline-flex items-center gap-2">
+        <span className="inline-flex min-w-0 items-center gap-2.5">
+          <span className={cn('grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[8px] [&_svg]:h-3.5 [&_svg]:w-3.5', cat.chip)}>
+            {cat.icon}
+          </span>
+          <span className="truncate font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">{title}</span>
           <span className="rounded-full bg-[rgba(13,53,71,0.06)] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#7d909a]">
             {items.length}
           </span>
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-2">
+          {latest && <span className="text-[11px] tabular-nums text-[#7d909a]">{latest}</span>}
           <ChevronDown className={cn('h-4 w-4 shrink-0 text-[#7d909a] transition-transform duration-200', open ? '' : '-rotate-90')} />
         </span>
       </button>
       {open && (
-        <div className="space-y-2 border-t border-[rgba(13,53,71,0.06)] px-2.5 py-2.5">
+        <div className="divide-y divide-[rgba(13,53,71,0.06)] border-t border-[rgba(13,53,71,0.06)] px-3.5 pb-1.5 pt-0.5">
           {items.map((item) => (
             <SignalCard key={item.id} item={item} />
           ))}
@@ -492,6 +523,7 @@ function SignalCategoryGroup({
 
 /** Company signals split into ordered, collapsible category groups. */
 function GroupedCompanySignals({ items, label = 'Company signals' }: { items: SignalItem[]; label?: string }) {
+  const titleToKey = new Map(SIGNAL_CATEGORIES.map((c) => [c.title, c.key]));
   const order = [...SIGNAL_CATEGORIES.map((c) => c.title), 'Other signals'];
   const byCategory = new Map<string, SignalItem[]>();
   for (const item of items) {
@@ -502,12 +534,18 @@ function GroupedCompanySignals({ items, label = 'Company signals' }: { items: Si
   }
   const groups = order
     .filter((title) => byCategory.has(title))
-    .map((title) => ({ title, items: byCategory.get(title)! }));
+    .map((title) => ({ title, key: titleToKey.get(title) ?? 'other', items: byCategory.get(title)! }));
   return (
     <div className="space-y-2.5">
       <SignalGroupHeader label={label} count={items.length} />
       {groups.map((g) => (
-        <SignalCategoryGroup key={g.title} title={g.title} items={g.items} defaultOpen={g.items.length <= 3} />
+        <SignalCategoryGroup
+          key={g.title}
+          categoryKey={g.key}
+          title={g.title}
+          items={g.items}
+          defaultOpen={g.items.length <= 3}
+        />
       ))}
     </div>
   );
