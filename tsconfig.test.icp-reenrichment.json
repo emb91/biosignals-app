@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-icp-reenrichment-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/icp-reenrichment.ts",
+    "lib/icp-reenrichment.test.ts"
+  ]
+}
