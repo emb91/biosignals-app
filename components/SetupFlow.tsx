@@ -3843,6 +3843,10 @@ export default function SetupFlow({
     setBuyingTeamEditMode(snapshot.buyingTeamEditMode);
     setPhase(snapshot.phase);
     setInput(snapshot.inputEnabled);
+    // A pending confirm or an advanced suggestion index shouldn't survive a manual
+    // back/forward jump — reset to a clean suggestion view for the restored phase.
+    setPendingTarget(null);
+    setSuggestionIdx(0);
   }, []);
 
   // ── Enrichment navigation guard ────────────────────────────────────────────
@@ -4847,6 +4851,8 @@ export default function SetupFlow({
       pushManualNavigationSnapshot();
       manualForwardHistoryRef.current = [];
     }
+    // Deliberate step navigation discards any in-flight target confirmation.
+    setPendingTarget(null);
     if (stepIndex === 0) {
       const latestProfile = editingFindingsData ?? getLatestResultsData();
       const rec = latestProfile && typeof latestProfile === 'object'
@@ -5049,6 +5055,9 @@ export default function SetupFlow({
     setPendingTransition(null);
     setAnalysisError('');
     setIcpSuggestions([]);
+    setSuggestionIdx(0);
+    setPendingTarget(null);
+    existingIcpsForOverlapRef.current = [];
     setChipSel([]);
     setBuyingTeamEditMode(false);
     setIcpEditMode(false);
