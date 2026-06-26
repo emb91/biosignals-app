@@ -140,8 +140,8 @@ export const COMPARE: CompareGroup[] = [
   {
     group: "Enrichment",
     rows: [
-      { label: "CRM lead enrichments", m: ["10/month", "250/month", "1,200/month"], a: ["10/month", "3,000/year", "14,400/year"] },
-      { label: "New enriched leads", m: ["5/month", "50/month", "200/month"], a: ["5/month", "600/year", "2,400/year"] },
+      { label: "Lead enrichment credits", m: ["60/month", "1,200/month", "5,600/month"], a: ["60/month", "14,400/year", "67,200/year"] },
+      { label: "Shared enrichment actions", vals: ["Imports, company-only, net-new", "Imports, company-only, net-new", "Imports, company-only, net-new"] },
       { label: "Email finds", m: ["1/month", "25/month", "60/month"], a: ["1/month", "300/year", "720/year"] },
       { label: "Phone reveals", m: ["1/month", "3/month", "12/month"], a: ["1/month", "36/year", "144/year"] },
       { label: "Exports", vals: ["Unlimited", "Unlimited", "Unlimited"] },

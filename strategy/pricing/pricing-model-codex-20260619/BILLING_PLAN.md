@@ -96,9 +96,9 @@ Vercel. Stripe subscription quantity must remain `1` because the subscription re
 - Monthly, annual, purchased, and adjustment buckets expire correctly.
 - Concurrent requests cannot overspend the workspace.
 - Failed and partial actions return credits to their original buckets.
-- Imported enrichment switches to purchased credits after its included allocation.
+- Lead-enrichment actions switch to purchased credits after the shared included lead-enrichment credit pool is exhausted.
 - Purchased credits do not override active ICP capacity, active-lead capacity, or monitoring cadence.
-- Imported enrichment and net-new data can continue with purchased credits until active-lead capacity is reached.
+- Imported contact+company enrichment, company-only enrichment, and net-new data can continue with purchased credits until active-lead capacity is reached.
 - New ICP creation is blocked at the active ICP cap; editing an existing ICP remains allowed.
 - Annual customers see pace warnings before unusually large burns of their annual included credits.
 - Payment failure enters grace, then pauses paid actions without hiding customer data.

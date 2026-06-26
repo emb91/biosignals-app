@@ -51,6 +51,8 @@ export type CreditBalanceBySource = {
   total: { granted: number; available: number };
 };
 
+export const LEAD_ENRICHMENT_CREDIT_USAGE_ACTION = 'lead_enrichment_credit';
+
 export function creditEnforcementEnabled(action?: string): boolean {
   if (process.env.ARCOVA_CREDIT_ENFORCEMENT === 'true') return true;
   if (!action) return false;
@@ -376,6 +378,118 @@ export async function reserveCreditsWithIncludedAllowance(params: {
     }
   }
   return reservation;
+}
+
+export async function reserveCreditsWithIncludedCreditAllowance(params: {
+  orgId: string;
+  userId?: string | null;
+  action: CreditAction | string;
+  operationKey: string;
+  allowanceLimitCredits: number;
+  window: 'utc_day' | 'utc_month' | 'rolling_24h';
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  idempotencyKey: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  quantity?: number;
+  credits?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<CreditReservation> {
+  const quantity = params.quantity ?? 1;
+  const unitCredits = params.credits
+    ?? ACTION_CREDITS[params.action as CreditAction]
+    ?? 0;
+  const credits = roundCredits(unitCredits * quantity);
+  const sharedUsage = await checkAndIncrementUsage({
+    orgId: params.orgId,
+    userId: params.userId,
+    action: LEAD_ENRICHMENT_CREDIT_USAGE_ACTION,
+    quantity: credits,
+    operationKey: params.operationKey,
+    window: params.window,
+    windowStart: params.windowStart,
+    windowEnd: params.windowEnd,
+    limit: params.allowanceLimitCredits,
+    metadata: {
+      ...(params.metadata ?? {}),
+      lead_enrichment_action: params.action,
+      lead_enrichment_quantity: quantity,
+    },
+  });
+  const includedAllowanceAvailable = sharedUsage.ok;
+  const reservation = await reserveCredits({
+    orgId: params.orgId,
+    userId: params.userId,
+    action: params.action,
+    quantity,
+    credits: params.credits,
+    idempotencyKey: params.idempotencyKey,
+    entityType: params.entityType,
+    entityId: params.entityId,
+    purchasedOnly: !includedAllowanceAvailable,
+    metadata: {
+      ...(params.metadata ?? {}),
+      lead_enrichment_allowance_included: includedAllowanceAvailable,
+    },
+  });
+  if (!reservation.ok) {
+    if (includedAllowanceAvailable) {
+      await settleUsage({
+        orgId: params.orgId,
+        action: LEAD_ENRICHMENT_CREDIT_USAGE_ACTION,
+        operationKey: params.operationKey,
+        quantity: 0,
+      }).catch(() => {});
+    }
+    return reservation;
+  }
+  try {
+    await recordMeteredUsage({
+      orgId: params.orgId,
+      userId: params.userId,
+      action: params.action,
+      quantity,
+      operationKey: params.operationKey,
+      window: params.window,
+      windowStart: params.windowStart,
+      windowEnd: params.windowEnd,
+      metadata: params.metadata,
+    });
+  } catch (error) {
+    await refundCredits(reservation.transactionId ?? null).catch(() => {});
+    await settleUsage({
+      orgId: params.orgId,
+      action: LEAD_ENRICHMENT_CREDIT_USAGE_ACTION,
+      operationKey: params.operationKey,
+      quantity: 0,
+    }).catch(() => {});
+    throw error;
+  }
+  return reservation;
+}
+
+export async function settleLeadEnrichmentUsage(params: {
+  orgId: string;
+  operationKey: string;
+  action: string;
+  actionQuantity: number;
+  credits: number;
+}): Promise<void> {
+  await Promise.all([
+    settleUsage({
+      orgId: params.orgId,
+      action: LEAD_ENRICHMENT_CREDIT_USAGE_ACTION,
+      operationKey: params.operationKey,
+      quantity: params.credits,
+    }),
+    settleUsage({
+      orgId: params.orgId,
+      action: params.action,
+      operationKey: params.operationKey,
+      quantity: params.actionQuantity,
+    }),
+  ]);
 }
 
 /** Finalize a provisional usage-cap event after provider work completes. */

@@ -22,8 +22,7 @@ const plans = [
     monitoring: "Monthly",
     purchasedCredits: "Not available",
     pack: "Not available",
-    importedEnrichment: `${FREE_TIER.caps.importedEnrichmentsHardCapMonthly} / month`,
-    netNewLeads: `${FREE_TIER.caps.netNewEnrichedLeadsMonthly} / month`,
+    leadEnrichmentCredits: `${FREE_TIER.caps.leadEnrichmentCreditsIncludedMonthly} / month`,
     sequences: `${FREE_TIER.caps.outreachSequencesIncludedMonthly} / month`,
     phone: `${FREE_TIER.caps.phoneRevealsIncludedMonthly} / month`,
     emailFinder: `${FREE_TIER.caps.emailFinderRequestsIncludedMonthly} / month`,
@@ -40,8 +39,7 @@ const plans = [
     monitoring: "Monthly",
     purchasedCredits: "Available; rollover",
     pack: `$${PLANS.starter.creditPackUsdPer1k} / 1,000`,
-    importedEnrichment: `${PLANS.starter.caps.importedEnrichmentsIncludedMonthly} normal pace; buy more until lead capacity`,
-    netNewLeads: `${PLANS.starter.caps.netNewEnrichedLeadsMonthly} normal pace; buy more until lead capacity`,
+    leadEnrichmentCredits: `${PLANS.starter.caps.leadEnrichmentCreditsIncludedMonthly.toLocaleString()} normal pace; buy more until lead capacity`,
     sequences: `${PLANS.starter.caps.outreachSequencesIncludedMonthly} / month`,
     phone: `${PLANS.starter.caps.phoneRevealsIncludedMonthly} / month`,
     emailFinder: `${PLANS.starter.caps.emailFinderRequestsIncludedMonthly} / month`,
@@ -58,8 +56,7 @@ const plans = [
     monitoring: "Weekly",
     purchasedCredits: "Available; rollover",
     pack: `$${PLANS.growth.creditPackUsdPer1k} / 1,000`,
-    importedEnrichment: `${PLANS.growth.caps.importedEnrichmentsIncludedMonthly.toLocaleString()} normal pace; buy more until lead capacity`,
-    netNewLeads: `${PLANS.growth.caps.netNewEnrichedLeadsMonthly.toLocaleString()} normal pace; buy more until lead capacity`,
+    leadEnrichmentCredits: `${PLANS.growth.caps.leadEnrichmentCreditsIncludedMonthly.toLocaleString()} normal pace; buy more until lead capacity`,
     sequences: `${PLANS.growth.caps.outreachSequencesIncludedMonthly} / month`,
     phone: `${PLANS.growth.caps.phoneRevealsIncludedMonthly} / month`,
     emailFinder: `${PLANS.growth.caps.emailFinderRequestsIncludedMonthly} / month`,
@@ -85,8 +82,7 @@ const freeActions = [
 ]
 
 const packageMix = [
-  ["Imported enrichments", "10", "250", "1,200"],
-  ["Net-new leads", "5", "50", "200"],
+  ["Lead-enrichment credits", "60", "1,200", "5,600"],
   ["Generated sequences", "1", "66", "214"],
   ["Email finds", "1", "25", "60"],
   ["Phone reveals", "1", "3", "12"],
@@ -101,8 +97,7 @@ const planRows: Array<[string, keyof (typeof plans)[number]]> = [
   ["Annual credits", "annualCredits"],
   ["Workspace lead capacity", "activeLeads"],
   ["Monitoring cadence", "monitoring"],
-  ["Imported enrichment guide", "importedEnrichment"],
-  ["Net-new lead guide", "netNewLeads"],
+  ["Lead-enrichment credit guide", "leadEnrichmentCredits"],
   ["Sequence generation", "sequences"],
   ["Phone reveals", "phone"],
   ["Email finder", "emailFinder"],
@@ -246,7 +241,8 @@ export default function CreditsDocsPage() {
               <div className="docs-kicker">Credit math</div>
               <h2>What your included package covers</h2>
               <p>
-                Plans are action-first. Credits explain the underlying package value; extra actions use
+                Plans are action-first. Lead-enrichment credits are shared across imported contact+company
+                enrichment, company-only enrichment, and net-new delivered leads. Extra actions use
                 purchased credits after the relevant included allowance is used.
               </p>
             </div>
@@ -265,19 +261,19 @@ export default function CreditsDocsPage() {
               <article>
                 <div className="example-plan">Free example</div>
                 <h3>Explore the core workflow</h3>
-                <p>10 enrichments <b>40</b> + 5 net-new leads <b>20</b> + 1 sequence <b>7</b> + 1 email find <b>11</b> + 1 phone reveal <b>20</b></p>
+                <p>Lead-enrichment pool <b>60</b> + 1 sequence <b>7</b> + 1 email find <b>11</b> + 1 phone reveal <b>20</b></p>
                 <div className="example-total"><span>Package</span><b>100 included credits</b></div>
               </article>
               <article>
                 <div className="example-plan">Starter example</div>
                 <h3>Run a focused outbound month</h3>
-                <p>250 imported enrichments <b>1,000</b> + 50 net-new leads <b>200</b> + 65 sequences <b>455</b> + 25 email finds <b>275</b> + 3 phone reveals <b>60</b></p>
+                <p>Shared lead-enrichment pool <b>1,200</b> + 66 sequences <b>462</b> + 25 email finds <b>275</b> + 3 phone reveals <b>60</b></p>
                 <div className="example-total"><span>Package</span><b>2,000 included credits</b></div>
               </article>
               <article>
                 <div className="example-plan">Growth example</div>
                 <h3>Cover a larger active market</h3>
-                <p>1,200 imported enrichments <b>4,800</b> + 200 net-new leads <b>800</b> + 214 sequences <b>1,498</b> + 60 email finds <b>660</b> + 12 phone reveals <b>240</b></p>
+                <p>Shared lead-enrichment pool <b>5,600</b> + 214 sequences <b>1,498</b> + 60 email finds <b>660</b> + 12 phone reveals <b>240</b></p>
                 <div className="example-total"><span>Package</span><b>8,000 included credits</b></div>
               </article>
             </div>

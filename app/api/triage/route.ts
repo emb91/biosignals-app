@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgContext } from '@/lib/org-context';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
-import { FREE_TIER, PLANS, isPlanKey } from '@/lib/billing/config';
+import { ACTION_CREDITS, FREE_TIER, PLANS, isPlanKey, type UsageCaps } from '@/lib/billing/config';
 import {
   findPendingTriageRowForOrg,
   listPendingTriageRowsForOrg,
@@ -30,7 +30,7 @@ const TRIAGE_ORDER: Record<TriageGroup | 'untriaged', number> = {
 };
 
 // Fallback only — actual monthly enrichment throughput comes from the org's
-// plan (importedEnrichmentsIncludedMonthly), not a fixed guess.
+// shared lead-enrichment credit pool, not a fixed guess.
 const MONTHLY_HIGH_FIT_THROUGHPUT = 300;
 
 function isTriageGroup(value: unknown): value is TriageGroup {
@@ -169,7 +169,7 @@ async function resolveMonthlyThroughput(
   orgId: string,
 ): Promise<number> {
   const entitlements = await getOrgEntitlements(orgId).catch(() => null);
-  if (entitlements) return entitlements.caps.importedEnrichmentsIncludedMonthly;
+  if (entitlements) return contactCompanyEquivalentThroughput(entitlements.caps);
 
   const { data: subscription } = await admin
     .from('org_subscriptions')
@@ -181,8 +181,14 @@ async function resolveMonthlyThroughput(
     subscription &&
     ['active', 'trialing', 'past_due'].includes(subscription.status ?? '') &&
     isPlanKey(planKey);
-  if (live && isPlanKey(planKey)) return PLANS[planKey].caps.importedEnrichmentsIncludedMonthly;
-  return FREE_TIER.caps.importedEnrichmentsIncludedMonthly;
+  if (live && isPlanKey(planKey)) return contactCompanyEquivalentThroughput(PLANS[planKey].caps);
+  return contactCompanyEquivalentThroughput(FREE_TIER.caps);
+}
+
+function contactCompanyEquivalentThroughput(caps: UsageCaps): number {
+  return Math.floor(
+    caps.leadEnrichmentCreditsIncludedMonthly / ACTION_CREDITS.imported_contact_company_enrichment,
+  );
 }
 
 export async function PATCH(request: Request) {

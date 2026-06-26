@@ -1,11 +1,12 @@
 import { after, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { ACTION_CREDITS } from '@/lib/billing/config';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  recordMeteredUsage,
   refundCredits,
-  reserveCredits,
-  settleUsage,
+  reserveCreditsWithIncludedCreditAllowance,
+  settleLeadEnrichmentUsage,
   settleCredits,
 } from '@/lib/billing/credits';
 import { processQueuedRowsInBackground } from '@/lib/import-queue';
@@ -43,27 +44,26 @@ export async function POST(request: Request) {
 
   const estimate = {
     eligibleRecords: rows.length,
-    estimatedCredits: rows.length * 4,
+    estimatedCredits: rows.length * ACTION_CREDITS.imported_contact_company_enrichment,
   };
   if (!body.confirm) return NextResponse.json({ preflight: estimate });
 
   const operationId = body.operationId?.trim() || crypto.randomUUID();
-  const usage = await recordMeteredUsage({
-    orgId: member.org_id,
-    userId: user.id,
-    action: 'imported_enrichment',
-    quantity: rows.length,
-    operationKey: operationId,
-    window: 'utc_month',
-  });
-  if (!usage.ok) return NextResponse.json(usage, { status: 429 });
-
-  const reservation = await reserveCredits({
+  const entitlements = await getOrgEntitlements(member.org_id);
+  const allowanceLimitCredits = entitlements.caps.leadEnrichmentCreditsIncludedMonthly *
+    (entitlements.billingInterval === 'annual' ? 12 : 1);
+  const reservation = await reserveCreditsWithIncludedCreditAllowance({
     orgId: member.org_id,
     userId: user.id,
     action: 'imported_contact_company_enrichment',
     quantity: rows.length,
+    operationKey: operationId,
+    window: 'utc_month',
+    windowStart: entitlements.currentPeriodStart,
+    windowEnd: entitlements.currentPeriodEnd,
+    allowanceLimitCredits,
     idempotencyKey: `import-enrichment:${operationId}`,
+    metadata: { usage_action: 'imported_enrichment' },
   });
   if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
 
@@ -97,21 +97,27 @@ export async function POST(request: Request) {
         .eq('org_id', member.org_id)
         .in('id', rows.map((row) => row.id as string))
         .eq('status', 'enriched');
-      await settleCredits(reservation.transactionId, (successful ?? 0) * 4);
-      await settleUsage({
+      const successfulRows = successful ?? 0;
+      await settleCredits(
+        reservation.transactionId,
+        successfulRows * ACTION_CREDITS.imported_contact_company_enrichment,
+      );
+      await settleLeadEnrichmentUsage({
         orgId: member.org_id,
-        action: 'imported_enrichment',
         operationKey: operationId,
-        quantity: successful ?? 0,
+        action: 'imported_contact_company_enrichment',
+        actionQuantity: successfulRows,
+        credits: successfulRows * ACTION_CREDITS.imported_contact_company_enrichment,
       });
     } catch (caught) {
       console.error('[import-contacts/enrich] background job failed:', caught);
       await refundCredits(reservation.transactionId);
-      await settleUsage({
+      await settleLeadEnrichmentUsage({
         orgId: member.org_id,
-        action: 'imported_enrichment',
         operationKey: operationId,
-        quantity: 0,
+        action: 'imported_contact_company_enrichment',
+        actionQuantity: 0,
+        credits: 0,
       });
     }
   });

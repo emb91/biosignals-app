@@ -32,8 +32,7 @@ Arcova uses action-specific included allowances backed by Arcova credits.
 | Internal monitored-account ceiling (not customer-facing) | 100 | 1,250 | 2,500 |
 | Monitoring cadence | Monthly | Monthly | Weekly |
 | New imported records triaged/month | 500 | 10,000 | 50,000 |
-| Imported enrichments included/month | 10 | 250 | 1,200 |
-| Net-new delivered-leads included/month | 5 | 50 | 200 |
+| Lead-enrichment credits included/month | 60 | 1,200 | 5,600 |
 | Sequence generation package/month | 1 | 66 | 214 |
 | Email finder package/month | 1 | 25 | 60 |
 | Phone reveal package/month | 1 | 3 | 12 |
@@ -109,39 +108,40 @@ When an ICP is added or changed:
 - Arcova does not blanket re-enrich the database through Apollo, Apify or ZeroBounce; and
 - repeated ICP edits should be debounced into one recalculation operation.
 
-### 4. Enrich imported leads
+### 4. Use lead-enrichment credits
 
 An imported lead enrichment costs **4 credits** and represents the contact-plus-company enrichment bundle. When the enrichment returns an email address, ZeroBounce validation is included in this bundle. Finding a missing or replacement email later remains the separate email-finder action.
 
 The COGS model must include that validation. Imported enrichment is not just Apollo plus Apify; it is Apollo plus Apify plus expected ZeroBounce validation when an email is returned. Customers still see one imported-enrichment action, not a separate validation charge.
 
-The decided Starter allowance is **250 monthly contact-plus-company enrichments**. Keep docs, calculators and implementation language aligned to that action allowance; do not reinterpret it as 250 raw imports or 250 provider calls.
+Imported contact-plus-company enrichment, company-only import/enrichment and net-new delivered leads now share one customer-facing **lead-enrichment credit** allowance. Users can spend the pool on any mix:
+
+- imported contact + company enrichment: **4 credits**;
+- company-only import/enrichment: **3 credits**; and
+- net-new delivered/enriched lead or data purchase: **4 credits**.
 
 #### Free
 
-- Up to 10 imported enrichments/month.
-- Up to 5 net-new enriched leads/month.
+- **60 lead-enrichment credits/month**, equal to the prior 10 imported contact-plus-company enrichments (40 credits) plus 5 net-new enriched leads (20 credits).
 - Active-lead cap: 100.
 
 #### Starter
 
-- Up to 250 imported enrichments/month may be funded from the included monthly credit allowance.
-- At 4 credits each, this uses 1,000 of the 2,000 included credits.
-- Starter also includes 50 net-new enriched leads/month, using 200 credits.
+- **1,200 lead-enrichment credits/month**, equal to the prior 250 imported contact-plus-company enrichments (1,000 credits) plus 50 net-new enriched leads (200 credits).
+- Starter can spend those 1,200 credits on contact-plus-company imports, company-only imports, net-new leads, or combinations.
 - This preserves the package room for generated sequences, email finds and phone reveals.
-- Purchased credits can fund additional imported enrichment until the workspace reaches active-lead capacity.
-- Monthly billing shows the 250/month imported-enrichment package pace, but does not impose an artificial monthly enrichment ceiling.
+- Purchased credits can fund additional lead-enrichment actions until the workspace reaches active-lead capacity.
+- Monthly billing shows the 1,200-credit lead-enrichment package pace, but does not impose an artificial monthly enrichment ceiling.
 - Annual billing can spend annual credits upfront, with pace warnings instead of an artificial monthly commercial cap.
 - Active-lead cap: 5,000.
 
 #### Growth
 
-- Up to 1,200 imported enrichments/month may be funded from the included credit allowance.
-- At 4 credits each, this uses 4,800 of the 8,000 included credits.
-- Growth also includes 200 net-new enriched leads/month, using 800 credits.
+- **5,600 lead-enrichment credits/month**, equal to the prior 1,200 imported contact-plus-company enrichments (4,800 credits) plus 200 net-new enriched leads (800 credits).
+- Growth can spend those 5,600 credits on contact-plus-company imports, company-only imports, net-new leads, or combinations.
 - This preserves the package room for generated sequences, email finds and phone reveals.
-- Purchased credits can fund additional imported enrichment until the workspace reaches active-lead capacity.
-- Monthly billing shows the 1,200/month imported-enrichment package pace, but does not impose an artificial monthly enrichment ceiling.
+- Purchased credits can fund additional lead-enrichment actions until the workspace reaches active-lead capacity.
+- Monthly billing shows the 5,600-credit lead-enrichment package pace, but does not impose an artificial monthly enrichment ceiling.
 - Annual billing can spend annual credits upfront, with pace warnings instead of an artificial monthly commercial cap.
 - Active-lead cap: 10,000.
 
@@ -151,12 +151,12 @@ Purchased credits add spending power but do not increase active ICP capacity, ac
 
 | Action | Arcova credits | Limit behavior |
 |---|---:|---|
-| Imported lead enrichment | 4 | Included imported-enrichment allowance first; purchased credits after that; active-lead capacity still applies |
-| Company-only import/enrichment | 3 | Charged only for complete, non-duplicate companies; no Haiku triage step |
+| Imported lead enrichment | 4 | Shared lead-enrichment credit pool first; purchased credits after that; active-lead capacity still applies |
+| Company-only import/enrichment | 3 | Shared lead-enrichment credit pool first; charged only for complete, non-duplicate companies; no Haiku triage step |
 | Email validation | 0.5 | Included in enrichment when an email is returned; standalone validation only when explicitly exposed |
 | Find a new email | 11 | Included email-finder allowance first; purchased credits after that |
 | Phone reveal | 20 | Included phone-reveal allowance first; purchased credits after that |
-| Net-new enriched lead | 4 | Shared balance plus active-lead capacity |
+| Net-new enriched lead | 4 | Shared lead-enrichment credit pool first; purchased credits after that; active-lead capacity still applies |
 | Manual lead refresh | 4 | Shared balance |
 | Seven-touch outreach sequence | 7 | Included sequence allowance first; purchased credits after that |
 | Scheduled monitoring | 0 | Included within active-lead cap |
@@ -190,11 +190,8 @@ For company-only imports, incomplete rows and duplicate companies are not billab
 - The UI shows how many genuinely new leads will be delivered and the maximum credit reservation.
 - Each successfully delivered enriched lead costs **4 credits**.
 - Failed, duplicate or fresh-cache records do not consume credits.
-- Included monthly package allowances:
-  - Free: 5.
-  - Starter: 50.
-  - Growth: 200.
-- Additional net-new leads use purchased credits until active-lead capacity is reached.
+- Net-new delivered leads spend the shared lead-enrichment credit pool.
+- Additional net-new leads use purchased credits after that shared pool is exhausted, until active-lead capacity is reached.
 - Annual billing can spend annual credits upfront, but active-lead capacity still applies.
 
 Net-new data remains inside the Arcova credit system. There is no separate $1-per-lead currency.
@@ -257,13 +254,13 @@ Each included action allowance has a credit value underneath. Monthly credits ar
 spending pool; action allowances are guardrails on the shape of that spend, not a promise that
 every action category can be maxed simultaneously.
 
-- Free: 100 included monthly credits, with guardrails of 10 imported enrichments, 5 net-new leads, 2 sequences, 1 email find, and 1 phone reveal.
-- Starter: 2,000 included monthly credits, with guardrails of 250 imported contact-plus-company enrichments, 50 net-new leads, 66 sequences, 25 email finds, and 3 phone reveals.
-- Growth: 8,000 included monthly credits, with guardrails of 1,200 imported contact-plus-company enrichments, 200 net-new leads, 214 sequences, 60 email finds, and 12 phone reveals.
+- Free: 100 included monthly credits, with guardrails of 60 shared lead-enrichment credits, 2 sequences, 1 email find, and 1 phone reveal.
+- Starter: 2,000 included monthly credits, with guardrails of 1,200 shared lead-enrichment credits, 66 sequences, 25 email finds, and 3 phone reveals.
+- Growth: 8,000 included monthly credits, with guardrails of 5,600 shared lead-enrichment credits, 214 sequences, 60 email finds, and 12 phone reveals.
 
 The app shows action-specific counters such as:
 
-- imported enrichment: `184 / 250 included this month`;
+- lead-enrichment credits: `736 / 1,200 included this month`;
 - active ICPs: `2 / 3`;
 - active lead capacity: `3,810 / 5,000`;
 - triage: `6,200 / 10,000 records this month`;
@@ -318,11 +315,11 @@ Annual customers should see:
 
 1. Separate raw import from paid enrichment. The current import route enriches every non-duplicate row.
 2. Add the pre-enrichment triage stage.
-3. Implement the included imported-enrichment allocation and active-lead capacity boundary.
+3. Implement the included shared lead-enrichment credit allocation and active-lead capacity boundary.
 4. Stop automatic Apollo phone reveal in the enrichment pipeline.
 5. Add a unified credit ledger with pending, settled and refunded states.
 6. Add separately expiring monthly, annual and purchased credit buckets.
-7. Add workspace-level action counters for triage, imported enrichment, active leads, net-new leads, sequences, phone reveals and email finding.
+7. Add workspace-level counters for triage, shared lead-enrichment credits, active leads, sequences, phone reveals and email finding while retaining raw action telemetry for audit.
 8. Add the active-lead universe cap to scheduled monitoring.
 9. Preserve free cached ICP re-evaluation behavior.
 10. Expose credit costs and cap status before every deliberate paid action.

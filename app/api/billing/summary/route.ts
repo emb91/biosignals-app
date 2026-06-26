@@ -11,7 +11,10 @@ import {
   planAnnualPriceId,
   planPriceId,
 } from '@/lib/billing/config';
-import { creditBalanceBySource } from '@/lib/billing/credits';
+import {
+  LEAD_ENRICHMENT_CREDIT_USAGE_ACTION,
+  creditBalanceBySource,
+} from '@/lib/billing/credits';
 import { canBuyCreditPacksWithStripe } from '@/lib/billing/checkout-eligibility';
 import { isBillingPortalConfigured } from '@/lib/billing/portal-config';
 
@@ -151,9 +154,19 @@ export async function GET() {
       used: monthly.import_triage ?? 0,
       limit: entitlements.caps.importedRecordsTriagedMonthly,
     },
+    leadEnrichmentCredits: {
+      used: leadEnrichmentCreditUsage(monthly),
+      included: entitlements.caps.leadEnrichmentCreditsIncludedMonthly * allowanceMultiplier,
+      importedContactCompanyCredits: ACTION_CREDITS.imported_contact_company_enrichment,
+      companyOnlyCredits: ACTION_CREDITS.company_enrichment,
+      netNewLeadCredits: ACTION_CREDITS.net_new_enriched_lead,
+    },
     importedEnrichments: {
-      used: monthly.imported_enrichment ?? 0,
-      included: entitlements.caps.importedEnrichmentsIncludedMonthly * allowanceMultiplier,
+      used: (monthly.imported_contact_company_enrichment ?? 0) + (monthly.imported_enrichment ?? 0),
+      included: Math.floor(
+        (entitlements.caps.leadEnrichmentCreditsIncludedMonthly * allowanceMultiplier) /
+          ACTION_CREDITS.imported_contact_company_enrichment,
+      ),
       hardCap: entitlements.caps.importedEnrichmentsHardCapMonthly * allowanceMultiplier,
     },
     activeLeads: {
@@ -164,7 +177,10 @@ export async function GET() {
     },
     netNewLeads: {
       used: monthly.net_new_enriched_lead ?? 0,
-      limit: entitlements.caps.netNewEnrichedLeadsMonthly * allowanceMultiplier,
+      limit: Math.floor(
+        (entitlements.caps.leadEnrichmentCreditsIncludedMonthly * allowanceMultiplier) /
+          ACTION_CREDITS.net_new_enriched_lead,
+      ),
     },
     sequences: {
       used: monthly.outreach_sequence ?? 0,
@@ -240,13 +256,23 @@ function usageMap(rows: Array<{ action_type: string; quantity: number }> | null)
   return result;
 }
 
+function leadEnrichmentCreditUsage(monthly: Record<string, number>): number {
+  const recorded = monthly[LEAD_ENRICHMENT_CREDIT_USAGE_ACTION];
+  if (recorded != null) return recorded;
+  return (
+    ((monthly.imported_contact_company_enrichment ?? 0) + (monthly.imported_enrichment ?? 0)) *
+      ACTION_CREDITS.imported_contact_company_enrichment +
+    (monthly.company_enrichment ?? 0) * ACTION_CREDITS.company_enrichment +
+    (monthly.net_new_enriched_lead ?? 0) * ACTION_CREDITS.net_new_enriched_lead
+  );
+}
+
 function complimentaryCreditBalance(
   granted: number,
   monthly: Record<string, number>,
 ) {
   const used =
-    (monthly.imported_enrichment ?? 0) * ACTION_CREDITS.imported_contact_company_enrichment +
-    (monthly.net_new_enriched_lead ?? 0) * ACTION_CREDITS.net_new_enriched_lead +
+    leadEnrichmentCreditUsage(monthly) +
     (monthly.email_finder ?? 0) * ACTION_CREDITS.email_finder +
     (monthly.phone_reveal ?? 0) * ACTION_CREDITS.phone_reveal +
     (monthly.outreach_sequence ?? 0) * ACTION_CREDITS.outreach_sequence;
