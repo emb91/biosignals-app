@@ -72,7 +72,7 @@ const nextConfig = {
     return [
       {
         source: '/sign-up',
-        destination: '/invite',
+        destination: '/signup',
         permanent: true,
       },
       {
