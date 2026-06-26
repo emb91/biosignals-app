@@ -72,6 +72,11 @@ const TOOLS: Anthropic.Tool[] = [
           description:
             "Use 'own_company' only when collecting the user's own company URL. Use 'target_customer' when they gave a target prospect URL or name, or when you inferred a well-known exemplar company's domain from how they described their target segment.",
         },
+        company_name: {
+          type: 'string',
+          description:
+            'The full, recognisable company name for this website (e.g. "Charles River Laboratories", never "criver"). Always provide this for target_customer companies so the user can confirm the right company before we analyse it.',
+        },
       },
       required: ['website_url', 'analysis_type'],
     },
@@ -159,7 +164,7 @@ type ConversationMessage =
 
 type OnboardingAction =
   | { type: 'capture_name'; first_name: string }
-  | { type: 'begin_analysis'; website_url: string; analysis_type: 'own_company' | 'target_customer' }
+  | { type: 'begin_analysis'; website_url: string; analysis_type: 'own_company' | 'target_customer'; company_name?: string }
   | { type: 'confirm_transition'; target: 'proceed_to_customer_url' | 'confirm_own_company' | 'resume_continue' | 'restart'; button_label: string };
 
 function normalizeWebsiteUrl(value: string): string {
@@ -595,15 +600,19 @@ export async function POST(request: Request) {
         }
 
         if (toolUse.name === 'begin_analysis') {
-          const toolInput = toolUse.input as { website_url?: unknown; analysis_type?: unknown };
+          const toolInput = toolUse.input as { website_url?: unknown; analysis_type?: unknown; company_name?: unknown };
           const rawWebsite =
             typeof toolInput.website_url === 'string' ? toolInput.website_url : '';
           const websiteUrl = normalizeWebsiteUrl(rawWebsite);
           const analysisType: 'own_company' | 'target_customer' =
             toolInput.analysis_type === 'target_customer' ? 'target_customer' : 'own_company';
+          const inferredName =
+            typeof toolInput.company_name === 'string' && toolInput.company_name.trim()
+              ? toolInput.company_name.trim()
+              : undefined;
 
           if (websiteUrl) {
-            actions.push({ type: 'begin_analysis', website_url: websiteUrl, analysis_type: analysisType });
+            actions.push({ type: 'begin_analysis', website_url: websiteUrl, analysis_type: analysisType, company_name: inferredName });
           }
 
           toolResults.push(
