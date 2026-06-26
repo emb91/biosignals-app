@@ -3770,8 +3770,10 @@ export default function SetupFlow({
   const [icpSuggestions, setIcpSuggestions] = useState<IcpSuggestion[]>([]);
   /** Which single suggestion is currently being offered (one at a time). */
   const [suggestionIdx, setSuggestionIdx] = useState(0);
-  /** A typed/inferred target company awaiting the user's confirmation before we enrich it. */
-  const [pendingTarget, setPendingTarget] = useState<{ name: string; domain: string } | null>(null);
+  /** A target company awaiting the user's confirmation before we enrich it. `fromSuggestion`
+   *  marks whether it came from tapping the on-screen suggestion (vs typed/inferred), which
+   *  decides whether "No, suggest a different one" advances past the current suggestion. */
+  const [pendingTarget, setPendingTarget] = useState<{ name: string; domain: string; fromSuggestion?: boolean } | null>(null);
   /** Already-saved ICPs, so regenerated "suggest another" picks never overlap them. */
   const existingIcpsForOverlapRef = useRef<TargetCompanyProfile[]>([]);
 
@@ -4686,10 +4688,10 @@ export default function SetupFlow({
    * Put a chosen company (tapped suggestion OR typed/inferred) into a single confirm step.
    * Nothing is enriched until the user taps the confirm pill — both paths share this gate.
    */
-  const proposeTargetCompany = useCallback(async (name: string, domainOrUrl: string) => {
+  const proposeTargetCompany = useCallback(async (name: string, domainOrUrl: string, fromSuggestion = false) => {
     const display = prettyDomain(domainOrUrl);
     const label = name.trim() || display;
-    setPendingTarget({ name: label, domain: domainOrUrl });
+    setPendingTarget({ name: label, domain: domainOrUrl, fromSuggestion });
     await sayBeats([`Build the profile around ${label} (${display})? You can also type a different target customer.`]);
     setInput(true);
   }, [prettyDomain, sayBeats]);
@@ -4853,7 +4855,11 @@ export default function SetupFlow({
       entryPoint === 'target-company'
         ? uniqueSuggestionsByDomain(loadStoredSuggestions())
         : unenrolledSuggestions();
-    if (stored.length > 0) setIcpSuggestions(stored);
+    if (stored.length > 0) {
+      setIcpSuggestions(stored);
+      // Show from the top — a stale index from a prior exhausted state would hide the pill.
+      setSuggestionIdx(0);
+    }
   }, [phase, icpSuggestions.length]);
 
   // ── Progress step navigation ──────────────────────────────────────────────
@@ -6776,7 +6782,17 @@ export default function SetupFlow({
                         <button
                           type="button"
                           disabled={thinking}
-                          onClick={() => void showNextSuggestion()}
+                          onClick={() => {
+                            // Declining a tapped suggestion advances past it; declining a typed
+                            // company just drops the confirm and re-shows the standing suggestion
+                            // (which the user never explicitly rejected).
+                            if (pendingTarget?.fromSuggestion) {
+                              void showNextSuggestion();
+                            } else {
+                              pushText('user', 'No, suggest a different one');
+                              setPendingTarget(null);
+                            }
+                          }}
                           className="inline-flex w-full items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white/80 px-3.5 py-2 font-manrope text-sm font-medium leading-snug text-arcova-navy/65 transition-colors hover:border-arcova-navy/20 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
                         >
                           No, suggest a different one
@@ -6800,7 +6816,7 @@ export default function SetupFlow({
                         onClick={() => {
                           const picked = currentSuggestion;
                           pushText('user', picked.name);
-                          void proposeTargetCompany(picked.name, picked.domain);
+                          void proposeTargetCompany(picked.name, picked.domain, true);
                         }}
                         className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-slate-200/90 bg-white/95 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
                       >
