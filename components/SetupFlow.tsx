@@ -4810,7 +4810,7 @@ export default function SetupFlow({
     }
     const presented = await enterIcpSuggestionPhase(resolvedSuggestions, [
       'Your company profile looks good.',
-      'Now let’s pick a target company to model your first profile on. Most people aren’t sure who to start with, so here’s the one I’d suggest. Tap it to use it, ask for another, or type a company you have in mind.',
+      'Now let’s pick a target company to model your first profile on. Most people aren’t sure who to start with, so here’s the one I’d suggest. Tap it to use it, ask for another, or type a target customer you have in mind.',
     ]);
     if (presented) return;
 
