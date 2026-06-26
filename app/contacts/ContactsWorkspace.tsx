@@ -1625,6 +1625,29 @@ export function ContactsWorkspace() {
       window.removeEventListener('scroll', update, true);
     };
   }, []);
+
+  // Measured height of the floating agent chat bar that sits above the contact
+  // drawer. The drawer uses the real rendered bar height plus a small gap so the
+  // spacing stays tight if AgentChatBar padding/content changes.
+  const AGENT_BAR_GAP = 8;
+  const agentBarRef = useRef<HTMLDivElement | null>(null);
+  const [agentBarHeight, setAgentBarHeight] = useState(56);
+  useEffect(() => {
+    if (!selectedLeadId || !agentRect) return;
+    const measure = () => {
+      const h = agentBarRef.current?.offsetHeight;
+      if (h && Math.abs(h - agentBarHeight) > 0.5) setAgentBarHeight(h);
+    };
+    measure();
+    const raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(measure);
+    if (agentBarRef.current) ro.observe(agentBarRef.current);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [selectedLeadId, agentRect, agentBarHeight]);
+
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [contactPanelOpen, setContactPanelOpen] = useState({
     fit: true,
@@ -4410,6 +4433,7 @@ export function ContactsWorkspace() {
                         button docks the full agent into the top half (50/50 with the panel). */}
                     {agentRect && !agentDocked && (
                       <div
+                        ref={agentBarRef}
                         className={cn(
                           // Glass card wrapper — same surface treatment as the contact
                           // card below it (rounded, white-translucent, soft border,
@@ -4472,12 +4496,12 @@ export function ContactsWorkspace() {
                                 height: 'calc(50vh - 20px)',
                               }
                             : {
-                                // Pushed down 64px to leave room at the TOP for the floating
-                                // agent chat bar, which now sits above the contact card.
-                                top: agentRect.top + 64,
+                                // Seat the drawer just below the floating chat bar's measured
+                                // bottom (+ a small gap) so the spacing stays tight.
+                                top: agentRect.top + agentBarHeight + AGENT_BAR_GAP,
                                 left: agentRect.left,
                                 width: agentRect.width,
-                                height: Math.max(0, agentRect.height - 64),
+                                height: Math.max(0, agentRect.height - agentBarHeight - AGENT_BAR_GAP),
                               }
                           : undefined
                       }
@@ -6075,15 +6099,7 @@ export function ContactsWorkspace() {
                           /* ── Scoring view — hero + Fit breakdown (design TabFit) ── */
                           renderContactFitScoresCard()
                         )}
-                      </div>
 
-                      {/* Panel footer */}
-                      <div
-                        className={cn(
-                          'border-t border-[rgba(13,53,71,0.08)] space-y-4 py-4',
-                          selectedPreview === 'contact' ? 'px-4' : 'px-5',
-                        )}
-                      >
                         {selectedPreview !== 'contact' && (
                           <div className="space-y-4">
                             <p className="text-[11px] leading-snug text-[#4a6470]">
@@ -6181,9 +6197,12 @@ export function ContactsWorkspace() {
                             ) : null}
                           </div>
                         )}
+                      </div>
 
-                        {selectedPreview === 'contact' && (
-                          isEditingSelected ? (
+                      {/* Panel footer */}
+                      {selectedPreview === 'contact' && (
+                        <div className="border-t border-[rgba(13,53,71,0.08)] space-y-4 px-4 py-4">
+                          {isEditingSelected ? (
                             <div className="flex gap-2">
                               <button
                                 type="button"
@@ -6221,9 +6240,9 @@ export function ContactsWorkspace() {
                                 {isDeletingSelected ? 'Archiving…' : 'Archive contact'}
                               </button>
                             </div>
-                          )
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : null}
                     </aside>
