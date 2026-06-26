@@ -33,6 +33,7 @@ type TriageRow = {
   effective_triage_group: TriageGroup | null;
   triage_version: string | null;
   triage_scored_at: string | null;
+  triage_reason: string | null;
   triage_overridden_by: string | null;
   triage_overridden_at: string | null;
   pinned_at: string | null;
@@ -98,6 +99,12 @@ function triageClass(value: TriageGroup | null): string {
   if (value === 'medium') return 'border-[rgba(245,115,22,0.24)] bg-[rgba(255,122,89,0.08)] text-[#b85b3e]';
   if (value === 'low') return 'border-[rgba(90,104,115,0.18)] bg-[rgba(90,104,115,0.06)] text-[#65747d]';
   return 'border-slate-200 bg-slate-50 text-slate-500';
+}
+
+function triageReasonText(row: Pick<TriageRow, 'triage_group' | 'triage_reason'>): string | null {
+  if (row.triage_reason) return row.triage_reason;
+  if (row.triage_group) return 'No automatic reason was saved for this triage result.';
+  return null;
 }
 
 function rawValue(value: unknown): string | null {
@@ -274,6 +281,7 @@ export default function TriagePage() {
                   ) : (
                     rows.map((row, index) => {
                       const isSelected = selected?.id === row.id;
+                      const triageReason = triageReasonText(row);
                       return (
                         <button
                           key={row.id}
@@ -303,7 +311,10 @@ export default function TriagePage() {
                             </span>
                           </span>
                           <span className="flex justify-center">
-                            <span className={cn('inline-flex rounded-full border px-2 py-1 text-xs font-semibold', triageClass(row.effective_triage_group))}>
+                            <span
+                              className={cn('inline-flex rounded-full border px-2 py-1 text-xs font-semibold', triageClass(row.effective_triage_group))}
+                              title={triageReason ?? undefined}
+                            >
                               {triageLabel(row.effective_triage_group)}
                             </span>
                           </span>
@@ -385,6 +396,7 @@ export default function TriagePage() {
                 <RawDetail label="Queue position" value={selected.queue_position ? `#${selected.queue_position}` : null} />
                 <RawDetail label="Expected enrichment" value={formatDate(selected.expected_enrichment_date)} />
                 <RawDetail label="Model triage" value={triageLabel(selected.triage_group)} />
+                <RawDetail label="Triage reason" value={triageReasonText(selected)} />
               </div>
             </div>
 

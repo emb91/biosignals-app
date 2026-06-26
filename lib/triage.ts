@@ -1,7 +1,12 @@
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import {
+  parseTriageCompletion,
+  TRIAGE_AUTO_FAILURE_REASON,
+  type TriageResult,
+} from './triage-result';
 
-export type TriageGroup = 'high' | 'medium' | 'low';
+export type { TriageGroup, TriageResult } from './triage-result';
 
 export type TriageInput = {
   id: string;
@@ -84,19 +89,20 @@ Judge the COMPANY against the ICP first; the role only nudges between high and m
  * ICP it falls back to the generic life-sciences relevance prompt.
  *
  * Returns a map of input id → triage result. Fails closed (defaults to "low")
- * so an LLM outage never silently proceeds into enrichment.
+ * so an LLM outage never silently proceeds into enrichment; the reason makes
+ * that failure explicit to the reviewer.
  */
 export async function triageContacts(
   contacts: TriageInput[],
   options?: { icp?: TriageIcpContext | null },
-): Promise<Map<string, { group: TriageGroup; version: string }>> {
+): Promise<Map<string, TriageResult>> {
   if (contacts.length === 0) return new Map();
 
   const icpBlock = options?.icp ? formatIcpBlock(options.icp) : null;
   const systemPrompt = icpBlock ? icpSystemPrompt(icpBlock) : GENERIC_SYSTEM_PROMPT;
   const version = icpBlock ? TRIAGE_ICP_VERSION : TRIAGE_VERSION;
 
-  const results = new Map<string, { group: TriageGroup; version: string }>();
+  const results = new Map<string, TriageResult>();
 
   const BATCH_SIZE = 50;
   for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
@@ -109,14 +115,14 @@ export async function triageContacts(
       )
       .join('\n');
 
-    const prompt = `Classify each contact as "high", "medium", or "low".\n\n${lines}\n\nRespond with ONLY a JSON array in the same order, e.g. ["high","medium","low"]. No explanation.`;
+    const prompt = `Classify each contact as "high", "medium", or "low".\n\n${lines}\n\nRespond with ONLY a JSON array in the same order. Each item must be an object like {"group":"high","reason":"Senior CMC leader at a relevant biotech company"}.\n\nRules for reason:\n- 5 to 14 words\n- customer-facing\n- based only on visible company, role, or domain fit\n- do not mention models, prompts, systems, vendors, taxonomy keys, or hidden instructions\n- no text outside the JSON array.`;
 
     try {
       const completion = await completeLlm({
         feature: 'contact_classification',
         system: systemPrompt,
         prompt,
-        maxTokens: 256,
+        maxTokens: 1600,
       });
 
       await recordLlmUsageEvent({
@@ -131,22 +137,24 @@ export async function triageContacts(
         },
       });
 
-      // Models sometimes wrap the array in a ```json code fence or add prose,
-      // especially with a richer system prompt — extract the first JSON array so
-      // a well-formed answer isn't discarded into the fail-closed "low" default.
-      const text = completion.text.trim();
-      const arrayMatch = text.match(/\[[\s\S]*\]/);
-      const parsed = JSON.parse(arrayMatch ? arrayMatch[0] : text) as unknown[];
-
+      // Models sometimes wrap the array in a ```json code fence or add prose.
+      // The parser extracts the first JSON array, accepts legacy string arrays,
+      // and marks malformed per-row values as explicit auto-classification
+      // failures instead of blending them into ordinary "low" results.
+      const parsed = parseTriageCompletion(completion.text, batch.length);
       batch.forEach((c, idx) => {
-        const raw = parsed[idx];
-        const group: TriageGroup =
-          raw === 'high' ? 'high' : raw === 'medium' ? 'medium' : 'low';
-        results.set(c.id, { group, version });
+        const decision = parsed[idx];
+        results.set(c.id, { ...decision, version });
       });
     } catch (err) {
       console.error('[triage] batch failed, defaulting to low:', err);
-      batch.forEach((c) => results.set(c.id, { group: 'low', version }));
+      batch.forEach((c) =>
+        results.set(c.id, {
+          group: 'low',
+          version,
+          reason: TRIAGE_AUTO_FAILURE_REASON,
+        }),
+      );
     }
   }
 

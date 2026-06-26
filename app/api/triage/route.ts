@@ -11,6 +11,7 @@ import {
   type RawTriageRow,
   type TriageGroup,
 } from '@/lib/triage-pending-rows';
+import { readTriageReason } from '@/lib/triage-result';
 
 type TriageSummary = {
   total: number;
@@ -136,6 +137,7 @@ export async function GET() {
         effective_triage_group: row.effective_triage_group,
         triage_version: row.triage_version,
         triage_scored_at: row.triage_scored_at,
+        triage_reason: readTriageReason(raw),
         triage_overridden_by: row.triage_overridden_by ?? null,
         triage_overridden_at: row.triage_overridden_at ?? null,
         pinned_at: row.pinned_at ?? null,

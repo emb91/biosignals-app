@@ -9,6 +9,7 @@ import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution
 import { createAdminClient } from '@/lib/supabase-admin';
 import { resolveLinkedinUrl, type LinkedinResolutionInput } from '@/lib/linkedin-url-resolver';
 import { triageContacts, TRIAGE_VERSION, type TriageGroup, type TriageIcpContext } from '@/lib/triage';
+import { TRIAGE_AUTO_FAILURE_REASON, withTriageReason, type TriageResult } from '@/lib/triage-result';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { checkAndIncrementUsage } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
@@ -237,6 +238,11 @@ export async function processQueuedRowsInBackground(params: {
   const enrichedRecords: EnrichedImportRecord[] = [];
   const failedIds: string[] = [];
   const failureReasons = new Map<string, string>();
+  const defaultTriageResult = (): TriageResult => ({
+    group: 'low',
+    version: TRIAGE_VERSION,
+    reason: TRIAGE_AUTO_FAILURE_REASON,
+  });
   const markFailed = (id: string, reason: string) => {
     failedIds.push(id);
     failureReasons.set(id, reason);
@@ -329,11 +335,12 @@ export async function processQueuedRowsInBackground(params: {
 
   const triageNow = new Date().toISOString();
   for (const row of triageRows) {
-    const result = triageMap.get(row.id) ?? { group: 'medium' as TriageGroup, version: TRIAGE_VERSION };
+    const result = triageMap.get(row.id) ?? defaultTriageResult();
     await admin.from('raw_uploads').update({
       triage_group: result.group,
       triage_version: result.version,
       triage_scored_at: triageNow,
+      raw_data: withTriageReason(row.raw_data, result.reason),
       status: autoEnrich ? 'enriching' : 'awaiting_enrichment',
       failure_reason: null,
     }).eq('id', row.id);
@@ -367,7 +374,7 @@ export async function processQueuedRowsInBackground(params: {
     for (const row of triageRows) {
       if (await isBatchCancelled(admin, batchId)) break;
 
-      const triageResult = triageMap.get(row.id) ?? { group: 'medium' as TriageGroup, version: TRIAGE_VERSION };
+      const triageResult = triageMap.get(row.id) ?? defaultTriageResult();
 
       const rawData = row.raw_data;
       const fallbackRow = buildFallbackRow(row);

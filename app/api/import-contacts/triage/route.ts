@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
 import { triageContacts, TRIAGE_VERSION } from '@/lib/triage';
+import { withTriageReason } from '@/lib/triage-result';
 import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
 
 export async function POST(request: Request) {
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
   if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
 
   const { data: rows, error } = await admin.from('raw_uploads')
-    .select('id, job_title, company_name, email')
+    .select('id, job_title, company_name, email, raw_data')
     .eq('user_id', user.id)
     .eq('org_id', member.org_id)
     .in('id', ids)
@@ -60,6 +61,10 @@ export async function POST(request: Request) {
         triage_group: result.group,
         triage_version: result.version ?? TRIAGE_VERSION,
         triage_scored_at: now,
+        raw_data: withTriageReason(
+          (row.raw_data as Record<string, unknown> | null) ?? null,
+          result.reason,
+        ),
         status: 'awaiting_enrichment',
       }).eq('id', row.id).eq('org_id', member.org_id);
     }
