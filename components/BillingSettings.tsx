@@ -42,6 +42,13 @@ type Summary = {
   };
   triage: { used: number; limit: number };
   activeIcps?: { used: number; limit: number };
+  leadEnrichmentCredits?: {
+    used: number;
+    included: number;
+    importedContactCompanyCredits: number;
+    companyOnlyCredits: number;
+    netNewLeadCredits: number;
+  };
   importedEnrichments: { used: number; included: number; hardCap: number };
   activeLeads: { used: number; cap: number; waitlisted: number; cadenceDays: number };
   netNewLeads: { used: number; limit: number };

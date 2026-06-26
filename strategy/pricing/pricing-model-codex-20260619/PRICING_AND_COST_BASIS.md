@@ -49,7 +49,7 @@ Customer action prices:
 | Confirmed job-change maintenance | 0 |
 | Raw import, storage, deduplication, cached rescore | 0 |
 
-The decided Starter imported-enrichment allowance is **250 monthly contact-plus-company enrichments**. Treat this as the product allowance in docs and calculators, not as raw imports or provider-call count.
+The decided Starter lead-enrichment allowance is **1,200 shared lead-enrichment credits/month**, preserving the prior 250 monthly contact-plus-company enrichments (1,000 credits) plus 50 net-new delivered leads (200 credits) as one pool. Treat this as the product allowance in docs and calculators, not as raw imports or provider-call count.
 
 ## Cost model
 

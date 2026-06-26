@@ -18,8 +18,8 @@
 | Signals tracked | 42 | 42 | 42 | 42 |
 | Custom signals | No | No | No | Yes |
 | Imported records triaged/month | 500 included | 10,000 included guide | 50,000 included guide | Custom |
-| Imported enrichments included | 10/month | 250/month | 1,200/month | Custom |
-| Net-new enriched leads | 5/month | 50/month | 200/month | Custom |
+| Lead-enrichment credits | 60/month | 1,200/month | 5,600/month | Custom |
+| Shared enrichment actions | Imports, company-only, net-new | Imports, company-only, net-new | Imports, company-only, net-new | Custom |
 | Sequence generation | 1/month | 66/month | 214/month | Custom |
 | Phone reveals | 1/month | 3/month | 12/month | Custom |
 | Email finder | 1/month | 25/month | 60/month | Custom |
@@ -41,8 +41,8 @@
 | Signals tracked | - | 42 | 42 | 42 |
 | Custom signals | - | No | No | Yes |
 | Imported records triaged/month | - | 10,000 | 50,000 | Custom |
-| Imported enrichments included | - | 3,000 upfront | 14,400 upfront | Custom |
-| Net-new enriched leads | - | 600 upfront | 2,400 upfront | Custom |
+| Lead-enrichment credits | - | 14,400 upfront | 67,200 upfront | Custom |
+| Shared enrichment actions | - | Imports, company-only, net-new | Imports, company-only, net-new | Custom |
 | Sequence generation | - | 792 upfront | 2,568 upfront | Custom |
 | Phone reveals | - | 36 upfront | 144 upfront | Custom |
 | Email finder | - | 300 upfront | 720 upfront | Custom |
@@ -87,7 +87,7 @@ Credits decide whether the workspace can pay for a completed action. Caps protec
 - Active ICP capacity is the workspace's saved ICP limit. Editing an existing ICP is free; creating another active ICP requires an available slot or a higher plan.
 - Monitoring cadence is plan-based. Buying more credits does not turn Starter's monthly monitoring into Growth's weekly monitoring.
 - Included action allowances are billing-period allowances. Monthly plans receive the monthly allowance upfront; annual plans receive the annualized allowance upfront.
-- The decided Starter imported-enrichment allowance is 250 monthly contact-plus-company enrichments.
+- The decided Starter lead-enrichment allowance is 1,200 monthly shared credits, preserving the previous 250 contact-plus-company enrichments (1,000 credits) plus 50 net-new leads (200 credits) as one pool.
 - Starter's 66 generated sequences/month equal 462 total steps: 264 email, 66 LinkedIn adds, and 132 LinkedIn message steps before edits.
 - Growth's 214 generated sequences/month equal 1,498 total steps: 856 email, 214 LinkedIn adds, and 428 LinkedIn message steps before edits.
 - Monthly billing uses normal package pace guidance because credits reset monthly, but customers can buy more credits until they hit active-lead capacity.
@@ -101,10 +101,9 @@ Show both the credit balance and the relevant counters:
 - `1,420 included monthly credits - expire 18 July 2026`
 - `18,400 annual included credits - expire 18 June 2027`
 - `3,000 purchased credits - expire 4 February 2027`
-- `184 / 250 included imported enrichments`
+- `736 / 1,200 included lead-enrichment credits`
 - `2 / 3 active ICPs`
-- `32 / 50 included net-new enriched leads`
-- `Extra imported enrichments use purchased credits until active-lead capacity is reached`
+- `Extra lead-enrichment actions use purchased credits until active-lead capacity is reached`
 - `18 / 66 sequences generated this month`
 - `72 email steps, 18 LinkedIn adds, 36 LinkedIn message steps generated this month`
 - `2 / 3 phone reveals this month`
@@ -115,7 +114,7 @@ Show both the credit balance and the relevant counters:
 
 - One Arcova credit is an internal cost-credit reference, not a fixed customer cash price.
 - Monitoring is included for customers, but model COGS as line items: hiring scrape, job-change profile scrape, external-contact refresh/provider calls, and fixed monthly LLM overhead where classification or synthesis uses LLMs.
-- Keep docs and calculators synchronized to the current policy: 250 monthly Starter contact-plus-company enrichments, company-only import at 3 credits/company, and seven-touch sequences at 7 credits.
+- Keep docs and calculators synchronized to the current policy: 1,200 monthly Starter lead-enrichment credits, company-only import at 3 credits/company, imported contact-plus-company and net-new leads at 4 credits, and seven-touch sequences at 7 credits.
 
 ## Positioning notes
 

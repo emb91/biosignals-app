@@ -46,6 +46,13 @@ type UsageSummary = {
   };
   activeIcps?: { used: number; limit: number };
   triage: { used: number; limit: number };
+  leadEnrichmentCredits?: {
+    used: number;
+    included: number;
+    importedContactCompanyCredits: number;
+    companyOnlyCredits: number;
+    netNewLeadCredits: number;
+  };
   importedEnrichments: { used: number; included: number; hardCap: number };
   activeLeads: { used: number; cap: number; waitlisted: number; cadenceDays: number };
   netNewLeads: { used: number; limit: number };
@@ -232,21 +239,18 @@ export default function UsageSettings({ href, className = '', showHeading = true
           <UsageBar unlimited={unlimited} used={data.triage.used} total={data.triage.limit} label="Imported records triaged this month" />
           <UsageBar
             unlimited={unlimited}
-            used={data.importedEnrichments.used}
-            total={data.importedEnrichments.included}
-            label={`Included imported enrichments ${periodLabel}`}
+            used={data.leadEnrichmentCredits?.used ?? (
+              data.importedEnrichments.used * 4 + data.netNewLeads.used * 4
+            )}
+            total={data.leadEnrichmentCredits?.included ?? (
+              data.importedEnrichments.included * 4 + data.netNewLeads.limit * 4
+            )}
+            label={`Lead enrichment credits ${periodLabel}`}
             sublabel={
-              data.plan.billingInterval === 'annual'
-                ? 'Annual allowance is available upfront. Purchased credits cover extra actions.'
-                : 'Included package allowance. Purchased credits cover extra actions.'
+              data.leadEnrichmentCredits
+                ? `Shared by imported contact+company (${data.leadEnrichmentCredits.importedContactCompanyCredits}), company-only (${data.leadEnrichmentCredits.companyOnlyCredits}), and net-new leads (${data.leadEnrichmentCredits.netNewLeadCredits}). Purchased credits cover extra actions.`
+                : 'Shared by imported enrichment and net-new leads. Purchased credits cover extra actions.'
             }
-          />
-          <UsageBar
-            unlimited={unlimited}
-            used={data.netNewLeads.used}
-            total={data.netNewLeads.limit}
-            label={`Net-new enriched leads ${periodLabel}`}
-            sublabel="Purchased credits do not increase active ICP or lead capacity."
           />
           <UsageBar
             unlimited={unlimited}

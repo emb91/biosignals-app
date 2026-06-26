@@ -9,7 +9,8 @@ import {
   recordDataAcquisitionUsageEvent,
   type DataAcquisitionUsageEventType,
 } from '@/lib/data-acquisition-metering';
-import { refundCredits, settleCredits, settleUsage } from '@/lib/billing/credits';
+import { ACTION_CREDITS } from '@/lib/billing/config';
+import { refundCredits, settleCredits, settleLeadEnrichmentUsage } from '@/lib/billing/credits';
 import {
   discoverApolloCompanies,
   discoverApolloPeopleForCompanies,
@@ -1364,11 +1365,12 @@ async function settleDataAcquisitionCustomerBilling(
   );
   await settleCredits(transactionId, delivered * 4);
   if (job.org_id && usageOperationId) {
-    await settleUsage({
+    await settleLeadEnrichmentUsage({
       orgId: job.org_id,
-      action: 'net_new_enriched_lead',
       operationKey: usageOperationId,
-      quantity: delivered,
+      action: 'net_new_enriched_lead',
+      actionQuantity: delivered,
+      credits: delivered * ACTION_CREDITS.net_new_enriched_lead,
     });
   }
 
@@ -1489,11 +1491,12 @@ export async function runDataAcquisitionJob(jobId: string): Promise<void> {
       ? job.metadata.customer_usage_operation_id
       : null;
     if (job.org_id && usageOperationId) {
-      await settleUsage({
+      await settleLeadEnrichmentUsage({
         orgId: job.org_id,
-        action: 'net_new_enriched_lead',
         operationKey: usageOperationId,
-        quantity: 0,
+        action: 'net_new_enriched_lead',
+        actionQuantity: 0,
+        credits: 0,
       }).catch(() => {});
     }
     throw error;

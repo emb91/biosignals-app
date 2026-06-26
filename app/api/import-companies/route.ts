@@ -16,7 +16,12 @@ import {
   normalizeCompanyRows,
 } from '@/lib/company-import';
 import { syncCompanyFitForCompanies } from '@/lib/company-fit';
-import { refundCredits, reserveCredits } from '@/lib/billing/credits';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import {
+  refundCredits,
+  reserveCreditsWithIncludedCreditAllowance,
+  settleLeadEnrichmentUsage,
+} from '@/lib/billing/credits';
 
 // The request creates/links company records synchronously so the user can land
 // in /companies immediately. The provider-heavy deep enrichment runs later via
@@ -166,6 +171,9 @@ export async function POST(request: Request) {
     }> = [];
     let failedRows = 0;
     let firstFailureMessage: string | null = null;
+    const entitlements = await getOrgEntitlements(orgId);
+    const allowanceLimitCredits = entitlements.caps.leadEnrichmentCreditsIncludedMonthly *
+      (entitlements.billingInterval === 'annual' ? 12 : 1);
     for (const queued of queuedRows) {
       try {
         const {
@@ -186,11 +194,17 @@ export async function POST(request: Request) {
         let transactionId: string | null = null;
 
         if (startedAt) {
-          const reservation = await reserveCredits({
+          const operationKey = `company-deep-enrich:${companyId}:${startedAt}`;
+          const reservation = await reserveCreditsWithIncludedCreditAllowance({
             orgId,
             userId: user.id,
             action: 'company_enrichment',
-            idempotencyKey: `company-deep-enrich:${companyId}:${startedAt}`,
+            operationKey,
+            window: 'utc_month',
+            windowStart: entitlements.currentPeriodStart,
+            windowEnd: entitlements.currentPeriodEnd,
+            allowanceLimitCredits,
+            idempotencyKey: operationKey,
             entityType: 'company',
             entityId: companyId,
           });
@@ -223,6 +237,19 @@ export async function POST(request: Request) {
     if (firstFailureMessage) {
       await Promise.all(
         acceptedCompanies.map((accepted) => refundCredits(accepted.transactionId).catch(() => {})),
+      );
+      await Promise.all(
+        acceptedCompanies.map((accepted) => (
+          accepted.startedAt
+            ? settleLeadEnrichmentUsage({
+              orgId,
+              operationKey: `company-deep-enrich:${accepted.companyId}:${accepted.startedAt}`,
+              action: 'company_enrichment',
+              actionQuantity: 0,
+              credits: 0,
+            }).catch(() => {})
+            : Promise.resolve()
+        )),
       );
       for (const accepted of acceptedCompanies) {
         await admin.from('org_companies').delete().eq('org_id', orgId).eq('company_id', accepted.companyId);
