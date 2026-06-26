@@ -40,7 +40,6 @@ type PersonaRow = {
   id: string;
   name: string | null;
   functions?: string[] | null;
-  signals?: string[] | null;
 };
 
 type SellerProfile = {
@@ -93,9 +92,44 @@ function storedPlatformCategory(
   return value || null;
 }
 
-function summarizeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : 'Unknown error';
-  return message.trim().slice(0, 1000) || 'Unknown error';
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function stringField(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === 'number') return String(value);
+  return null;
+}
+
+export function summarizeError(error: unknown): string {
+  const parts: string[] = [];
+
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message) parts.push(message);
+  } else if (typeof error === 'string') {
+    const message = error.trim();
+    if (message) parts.push(message);
+  } else if (isPlainRecord(error)) {
+    const message =
+      stringField(error.message) ??
+      stringField(error.error_description) ??
+      stringField(error.error);
+    if (message) parts.push(message);
+
+    for (const key of ['code', 'details', 'hint'] as const) {
+      const value = stringField(error[key]);
+      if (value && !parts.includes(value)) {
+        parts.push(`${key}: ${value}`);
+      }
+    }
+  }
+
+  return parts.join(' | ').trim().slice(0, 1000) || 'Unknown error';
 }
 
 function smallestSelectedSizeBucket(sizes: string[] | undefined): string | null {
@@ -539,7 +573,7 @@ async function loadLinkedPersonas(
 ): Promise<PersonaRow[]> {
   const { data, error } = await supabase
     .from('personas')
-    .select('id, name, functions, signals')
+    .select('id, name, functions')
     .eq('user_id', userId)
     .eq('icp_id', icpId);
 
