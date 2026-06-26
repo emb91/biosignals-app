@@ -393,9 +393,11 @@ export function getAccountRowAction(account: {
    */
   latest_sequence_status?: SequenceDispatchStatus;
 }): LeadAction {
-  // No contacts on file → always source, regardless of CRM / outreach state.
+  // No contacts on file at a strong-fit company → source, regardless of CRM /
+  // outreach state. Low-fit accounts still fall through to Deprioritise.
   if (typeof account.contact_count === 'number' && account.contact_count === 0) {
-    return 'source_contact';
+    const company = score01ForAction(account.company_fit_score ?? null);
+    if (company != null && company >= HIGH_SCORE) return 'source_contact';
   }
 
   // CRM-resolved (won/lost) only forces Deprioritise DURING the suppression
