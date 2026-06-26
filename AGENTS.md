@@ -1,5 +1,19 @@
 # Repository instructions
 
+## Agent PR workflow
+
+- For a single-agent task or a single uninterrupted workstream, open exactly
+  one PR at the end of the work.
+- For an explicitly coordinated multi-agent batch, each sub-agent owns one
+  issue/theme and opens exactly one PR for that issue/theme at the end of its
+  work. In that case, "one PR" applies per owning sub-agent/theme, not to the
+  entire batch.
+- The integrator may use a temporary coordination branch to audit or combine
+  work, but final PRs should stay aligned to the agreed agent/theme ownership
+  unless the user agrees to a different approach.
+- Each agent PR should record the theme, verification performed, residual
+  risks, branch state, and PR URL before the work is considered complete.
+
 ## Supabase migrations
 
 - Create new migration files with `supabase migration new <descriptive_name>`.
