@@ -60,8 +60,10 @@ const TRIAGE_OPTIONS: Array<{ value: TriageGroup; label: string }> = [
 ];
 
 const TRIAGE_TABLE_GRID = 'grid gap-x-5';
+const TRIAGE_DETAILS_GRID_COLS =
+  'minmax(0,1.15fr) minmax(0,1fr) minmax(0,0.75fr) minmax(8rem,0.8fr)';
 const TRIAGE_GRID_COLS =
-  'minmax(0,1.15fr) minmax(0,1fr) minmax(0,0.75fr) minmax(8rem,0.8fr) minmax(6.5rem,0.65fr)';
+  `${TRIAGE_DETAILS_GRID_COLS} minmax(6.5rem,0.65fr)`;
 
 function formatDate(value: string | null): string {
   if (!value) return '-';
@@ -297,19 +299,8 @@ export default function TriagePage() {
                       return (
                         <div
                           key={row.id}
-                          role="button"
-                          tabIndex={0}
-                          aria-label={`Open triage details for ${row.name}`}
-                          onClick={() => setSelectedId(row.id)}
-                          onKeyDown={(event) => {
-                            if (event.target !== event.currentTarget) return;
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              setSelectedId(row.id);
-                            }
-                          }}
                           className={cn(
-                            `${TRIAGE_TABLE_GRID} relative w-full cursor-pointer items-center py-3 pl-9 pr-4 text-left transition-all duration-150 before:pointer-events-none before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arcova-teal/35`,
+                            `${TRIAGE_TABLE_GRID} relative w-full items-center pl-9 pr-4 text-left transition-all duration-150 before:pointer-events-none before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors`,
                             isSelected
                               ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                               : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35',
@@ -319,30 +310,38 @@ export default function TriagePage() {
                           <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 select-none text-[10px] font-medium tabular-nums text-gray-400">
                             {index + 1}
                           </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium text-slate-800">{row.name}</span>
-                            <span className="block truncate text-xs leading-snug text-[#7d909a]">
-                              {row.title || row.email || 'Raw contact'}
+                          <button
+                            type="button"
+                            aria-label={`Open triage details for ${row.name}`}
+                            onClick={() => setSelectedId(row.id)}
+                            className={`${TRIAGE_TABLE_GRID} col-span-4 min-w-0 cursor-pointer items-center py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arcova-teal/35`}
+                            style={{ gridTemplateColumns: TRIAGE_DETAILS_GRID_COLS }}
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-slate-800">{row.name}</span>
+                              <span className="block truncate text-xs leading-snug text-[#7d909a]">
+                                {row.title || row.email || 'Raw contact'}
+                              </span>
                             </span>
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm text-slate-700">{row.company || 'Unknown company'}</span>
-                            <span className="block truncate text-xs leading-snug text-[#7d909a]">
-                              {row.company_domain || row.location || '-'}
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm text-slate-700">{row.company || 'Unknown company'}</span>
+                              <span className="block truncate text-xs leading-snug text-[#7d909a]">
+                                {row.company_domain || row.location || '-'}
+                              </span>
                             </span>
-                          </span>
-                          <span className="flex justify-center">
-                            <span
-                              className={cn('inline-flex rounded-full border px-2 py-1 text-xs font-semibold', triageClass(row.effective_triage_group))}
-                              title={triageTooltip ?? undefined}
-                            >
-                              {triageLabel(row.effective_triage_group)}
+                            <span className="flex justify-center">
+                              <span
+                                className={cn('inline-flex rounded-full border px-2 py-1 text-xs font-semibold', triageClass(row.effective_triage_group))}
+                                title={triageTooltip ?? undefined}
+                              >
+                                {triageLabel(row.effective_triage_group)}
+                              </span>
                             </span>
-                          </span>
-                          <span className="text-center text-sm text-slate-600">
-                            {row.expected_enrichment_date ? formatDate(row.expected_enrichment_date) : '-'}
-                          </span>
-                          <span className="flex justify-end">
+                            <span className="text-center text-sm text-slate-600">
+                              {row.expected_enrichment_date ? formatDate(row.expected_enrichment_date) : '-'}
+                            </span>
+                          </button>
+                          <span className="flex justify-end py-3">
                             {canEnrich ? (
                               <button
                                 type="button"
