@@ -14,11 +14,11 @@
  *
  * Cadence: every 5 minutes. Batch size capped (default 3) for the 300s ceiling.
  *
- * Billing: credits (action `company_enrichment`) are reserved + settled PER
- * COMPANY here. Company import may pre-reserve with the same idempotency key;
- * reserveCredits then returns that existing reservation instead of charging
- * twice. A company that fails to enrich is refunded, so the user is only charged
- * for companies that actually enrich.
+ * Billing: shared lead-enrichment credits (action `company_enrichment`) are
+ * reserved + settled PER COMPANY here. Company import may pre-reserve with the
+ * same idempotency key; reserveCredits then returns that existing reservation
+ * instead of charging twice. A company that fails to enrich is refunded, so the
+ * user is only charged for companies that actually enrich.
  *
  * Idempotency: runCompanyEnrichmentById transitions requested → running →
  * succeeded | failed, so a re-run skips rows already 'running'/'succeeded'.
@@ -35,7 +35,15 @@ import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { runHeadcountSignalForCompany } from '@/lib/signals/run-headcount-monitor';
 import { recomputeAccountReadiness } from '@/lib/signals/readiness-service';
 import { companyEnrichmentCreditDisposition } from '@/lib/company-enrichment-credits';
-import { reserveCredits, refundCredits, settleCredits, type CreditReservation } from '@/lib/billing/credits';
+import {
+  reserveCreditsWithIncludedCreditAllowance,
+  refundCredits,
+  settleCredits,
+  settleLeadEnrichmentUsage,
+  type CreditReservation,
+} from '@/lib/billing/credits';
+import { ACTION_CREDITS } from '@/lib/billing/config';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
@@ -53,7 +61,7 @@ function messageFromUnknown(err: unknown): string {
 async function reconcileFinalizedCompanyReservations(admin: ReturnType<typeof createAdminClient>) {
   const { data: transactions, error } = await admin
     .from('org_credit_transactions')
-    .select('id, entity_id, created_at')
+    .select('id, org_id, entity_id, idempotency_key, created_at')
     .eq('action_type', 'company_enrichment')
     .eq('entity_type', 'company')
     .eq('status', 'pending')
@@ -65,7 +73,13 @@ async function reconcileFinalizedCompanyReservations(admin: ReturnType<typeof cr
     return { settled: 0, refunded: 0, stale_refunded: 0 };
   }
 
-  const pendingReservations = (transactions ?? []) as Array<{ id: string; entity_id: string | null; created_at: string | null }>;
+  const pendingReservations = (transactions ?? []) as Array<{
+    id: string;
+    org_id: string;
+    entity_id: string | null;
+    idempotency_key: string | null;
+    created_at: string | null;
+  }>;
   const companyIds = [...new Set(pendingReservations.map((tx) => tx.entity_id).filter((id): id is string => Boolean(id)))];
   if (companyIds.length === 0) return { settled: 0, refunded: 0, stale_refunded: 0 };
 
@@ -97,18 +111,47 @@ async function reconcileFinalizedCompanyReservations(admin: ReturnType<typeof cr
       }).catch((settleError) => {
         console.error('[cron/company-enrichment-queue] reservation reconciliation settle failed:', settleError);
       });
+      if (tx.idempotency_key) {
+        await settleLeadEnrichmentUsage({
+          orgId: tx.org_id,
+          operationKey: tx.idempotency_key,
+          action: 'company_enrichment',
+          actionQuantity: 1,
+          credits: ACTION_CREDITS.company_enrichment,
+        }).catch((usageError) => {
+          console.error('[cron/company-enrichment-queue] reservation reconciliation usage settle failed:', usageError);
+        });
+      }
     } else if (status === 'failed' || status === 'cancelled') {
       await refundCredits(tx.id).then(() => {
         refunded++;
       }).catch((refundError) => {
         console.error('[cron/company-enrichment-queue] reservation reconciliation refund failed:', refundError);
       });
+      if (tx.idempotency_key) {
+        await settleLeadEnrichmentUsage({
+          orgId: tx.org_id,
+          operationKey: tx.idempotency_key,
+          action: 'company_enrichment',
+          actionQuantity: 0,
+          credits: 0,
+        }).catch(() => {});
+      }
     } else if ((status == null || status === 'idle') && tx.created_at && new Date(tx.created_at).getTime() < staleIdleCutoff) {
       await refundCredits(tx.id).then(() => {
         staleRefunded++;
       }).catch((refundError) => {
         console.error('[cron/company-enrichment-queue] stale reservation reconciliation refund failed:', refundError);
       });
+      if (tx.idempotency_key) {
+        await settleLeadEnrichmentUsage({
+          orgId: tx.org_id,
+          operationKey: tx.idempotency_key,
+          action: 'company_enrichment',
+          actionQuantity: 0,
+          credits: 0,
+        }).catch(() => {});
+      }
     }
   }
 
@@ -159,7 +202,7 @@ async function runCron(request: Request) {
 
   for (const row of pendingRows) {
     const companyId = row.id;
-    let reservations: CreditReservation[] = [];
+    let reservations: Array<{ reservation: CreditReservation; orgId: string; operationKey: string }> = [];
     try {
       const reservationKey = `company-deep-enrich:${companyId}:${row.enrichment_refresh_started_at ?? 'na'}`;
       // Resolve the owning org (for billing) and linked users (for per-user fit).
@@ -242,26 +285,43 @@ async function runCron(request: Request) {
         continue;
       }
       for (const context of billingContexts) {
-        const reservation = await reserveCredits({
+        const entitlements = await getOrgEntitlements(context.org_id);
+        const allowanceLimitCredits = entitlements.caps.leadEnrichmentCreditsIncludedMonthly *
+          (entitlements.billingInterval === 'annual' ? 12 : 1);
+        const reservation = await reserveCreditsWithIncludedCreditAllowance({
           orgId: context.org_id,
           userId: context.user_id,
           action: 'company_enrichment',
+          operationKey: reservationKey,
+          window: 'utc_month',
+          windowStart: entitlements.currentPeriodStart,
+          windowEnd: entitlements.currentPeriodEnd,
+          allowanceLimitCredits,
           idempotencyKey: reservationKey,
           entityType: 'company',
           entityId: companyId,
         });
         if (!reservation.ok) {
-          reservations.push(reservation);
+          reservations.push({ reservation, orgId: context.org_id, operationKey: reservationKey });
           break;
         }
-        reservations.push(reservation);
+        reservations.push({ reservation, orgId: context.org_id, operationKey: reservationKey });
       }
-      const failedReservation = reservations.find((reservation) => !reservation.ok);
+      const failedReservation = reservations.find(({ reservation }) => !reservation.ok)?.reservation as
+        | Extract<CreditReservation, { ok: false }>
+        | undefined;
       if (failedReservation) {
         const successfulReservations = reservations.filter(
-          (reservation): reservation is Extract<CreditReservation, { ok: true }> => reservation.ok,
-        );
-        await Promise.all(successfulReservations.map((reservation) => refundCredits(reservation.transactionId).catch(() => {})));
+          ({ reservation }) => reservation.ok,
+        ) as Array<{ reservation: Extract<CreditReservation, { ok: true }>; orgId: string; operationKey: string }>;
+        await Promise.all(successfulReservations.map(({ reservation }) => refundCredits(reservation.transactionId).catch(() => {})));
+        await Promise.all(successfulReservations.map(({ orgId, operationKey }) => settleLeadEnrichmentUsage({
+          orgId,
+          operationKey,
+          action: 'company_enrichment',
+          actionQuantity: 0,
+          credits: 0,
+        }).catch(() => {})));
         // Not enough credits — leave the firmographic/preliminary data in place,
         // mark the row failed with the reason so it stops looping.
         await admin
@@ -280,13 +340,27 @@ async function runCron(request: Request) {
       await markCompanyEnrichmentRunning(admin, companyId);
       const result = await runCompanyEnrichmentById(admin, companyId);
       const successfulReservations = reservations.filter(
-        (reservation): reservation is Extract<CreditReservation, { ok: true }> => reservation.ok,
-      );
+        ({ reservation }) => reservation.ok,
+      ) as Array<{ reservation: Extract<CreditReservation, { ok: true }>; orgId: string; operationKey: string }>;
 
       if (companyEnrichmentCreditDisposition(result) === 'refund') {
-        await Promise.all(successfulReservations.map((reservation) => refundCredits(reservation.transactionId).catch(() => {})));
+        await Promise.all(successfulReservations.map(({ reservation }) => refundCredits(reservation.transactionId).catch(() => {})));
+        await Promise.all(successfulReservations.map(({ orgId, operationKey }) => settleLeadEnrichmentUsage({
+          orgId,
+          operationKey,
+          action: 'company_enrichment',
+          actionQuantity: 0,
+          credits: 0,
+        }).catch(() => {})));
       } else {
-        await Promise.all(successfulReservations.map((reservation) => settleCredits(reservation.transactionId).catch(() => {})));
+        await Promise.all(successfulReservations.map(({ reservation }) => settleCredits(reservation.transactionId).catch(() => {})));
+        await Promise.all(successfulReservations.map(({ orgId, operationKey }) => settleLeadEnrichmentUsage({
+          orgId,
+          operationKey,
+          action: 'company_enrichment',
+          actionQuantity: 1,
+          credits: ACTION_CREDITS.company_enrichment,
+        }).catch(() => {})));
       }
 
       // Upgrade each linked user's fit now that taxonomy is populated.
@@ -331,9 +405,16 @@ async function runCron(request: Request) {
       const msg = messageFromUnknown(err);
       console.error(`[cron/company-enrichment-queue] company ${companyId} failed:`, msg);
       const successfulReservations = reservations.filter(
-        (reservation): reservation is Extract<CreditReservation, { ok: true }> => reservation.ok,
-      );
-      await Promise.all(successfulReservations.map((reservation) => refundCredits(reservation.transactionId).catch(() => {})));
+        ({ reservation }) => reservation.ok,
+      ) as Array<{ reservation: Extract<CreditReservation, { ok: true }>; orgId: string; operationKey: string }>;
+      await Promise.all(successfulReservations.map(({ reservation }) => refundCredits(reservation.transactionId).catch(() => {})));
+      await Promise.all(successfulReservations.map(({ orgId, operationKey }) => settleLeadEnrichmentUsage({
+        orgId,
+        operationKey,
+        action: 'company_enrichment',
+        actionQuantity: 0,
+        credits: 0,
+      }).catch(() => {})));
       failed++;
       failures.push({ company_id: companyId, error: msg });
       try {

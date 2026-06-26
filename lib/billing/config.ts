@@ -15,8 +15,11 @@ export type UsageCaps = {
   internalMonitoredAccounts: number;
   monitoringCadenceDays: number;
   importedRecordsTriagedMonthly: number;
+  leadEnrichmentCreditsIncludedMonthly: number;
+  /** @deprecated Use leadEnrichmentCreditsIncludedMonthly for customer-facing included lead-enrichment allowance. */
   importedEnrichmentsIncludedMonthly: number;
   importedEnrichmentsHardCapMonthly: number;
+  /** @deprecated Use leadEnrichmentCreditsIncludedMonthly for customer-facing included lead-enrichment allowance. */
   netNewEnrichedLeadsMonthly: number;
   outreachSequencesIncludedMonthly: number;
   phoneRevealsIncludedMonthly: number;
@@ -47,6 +50,7 @@ const FREE_CAPS: UsageCaps = {
   internalMonitoredAccounts: 100,
   monitoringCadenceDays: 30,
   importedRecordsTriagedMonthly: 500,
+  leadEnrichmentCreditsIncludedMonthly: 60,
   importedEnrichmentsIncludedMonthly: 10,
   importedEnrichmentsHardCapMonthly: 10,
   netNewEnrichedLeadsMonthly: 5,
@@ -61,6 +65,7 @@ const STARTER_CAPS: UsageCaps = {
   internalMonitoredAccounts: 1_250,
   monitoringCadenceDays: 30,
   importedRecordsTriagedMonthly: 10_000,
+  leadEnrichmentCreditsIncludedMonthly: 1_200,
   importedEnrichmentsIncludedMonthly: 250,
   importedEnrichmentsHardCapMonthly: 5_000,
   netNewEnrichedLeadsMonthly: 50,
@@ -75,6 +80,7 @@ const GROWTH_CAPS: UsageCaps = {
   internalMonitoredAccounts: 2_500,
   monitoringCadenceDays: 7,
   importedRecordsTriagedMonthly: 50_000,
+  leadEnrichmentCreditsIncludedMonthly: 5_600,
   importedEnrichmentsIncludedMonthly: 1_200,
   importedEnrichmentsHardCapMonthly: 10_000,
   netNewEnrichedLeadsMonthly: 200,

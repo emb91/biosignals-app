@@ -14,10 +14,9 @@ import {
 import { runDataAcquisitionJob } from '@/lib/data-acquisition/job-runner';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  recordMeteredUsage,
   refundCredits,
-  reserveCredits,
-  settleUsage,
+  reserveCreditsWithIncludedCreditAllowance,
+  settleLeadEnrichmentUsage,
 } from '@/lib/billing/credits';
 
 const REQUEST_TYPES: PipelineDataRequestType[] = [
@@ -204,21 +203,19 @@ export async function POST(request: Request) {
       const operationId = typeof body.operationId === 'string' && body.operationId.trim()
         ? body.operationId.trim()
         : crypto.randomUUID();
-      const usage = await recordMeteredUsage({
+      customerUsageOperationId = operationId;
+      const allowanceLimitCredits = entitlements.caps.leadEnrichmentCreditsIncludedMonthly *
+        (entitlements.billingInterval === 'annual' ? 12 : 1);
+      const reservation = await reserveCreditsWithIncludedCreditAllowance({
         orgId: reqOrgId,
         userId: user.id,
         action: 'net_new_enriched_lead',
         quantity: requestedLeadCount,
         operationKey: operationId,
         window: 'utc_month',
-      });
-      if (!usage.ok) return NextResponse.json(usage, { status: 429 });
-      customerUsageOperationId = operationId;
-      const reservation = await reserveCredits({
-        orgId: reqOrgId,
-        userId: user.id,
-        action: 'net_new_enriched_lead',
-        quantity: requestedLeadCount,
+        windowStart: entitlements.currentPeriodStart,
+        windowEnd: entitlements.currentPeriodEnd,
+        allowanceLimitCredits,
         idempotencyKey: `data-acquisition:${operationId}`,
         entityType: 'icp',
         entityId: icpId,
@@ -244,11 +241,12 @@ export async function POST(request: Request) {
     if (batchErr || !batch) {
       await refundCredits(creditTransactionId).catch(() => {});
       if (reqOrgId && customerUsageOperationId) {
-        await settleUsage({
+        await settleLeadEnrichmentUsage({
           orgId: reqOrgId,
-          action: 'net_new_enriched_lead',
           operationKey: customerUsageOperationId,
-          quantity: 0,
+          action: 'net_new_enriched_lead',
+          actionQuantity: 0,
+          credits: 0,
         }).catch(() => {});
       }
       console.error('[pipeline/data-request]', batchErr);
@@ -301,11 +299,12 @@ export async function POST(request: Request) {
       if ((jobErr as { code?: string } | null)?.code === '23505' && reqOrgId) {
         await refundCredits(creditTransactionId).catch(() => {});
         if (customerUsageOperationId) {
-          await settleUsage({
+          await settleLeadEnrichmentUsage({
             orgId: reqOrgId,
-            action: 'net_new_enriched_lead',
             operationKey: customerUsageOperationId,
-            quantity: 0,
+            action: 'net_new_enriched_lead',
+            actionQuantity: 0,
+            credits: 0,
           }).catch(() => {});
         }
         await supabase.from('upload_batches').delete().eq('id', batch.id);
@@ -328,11 +327,12 @@ export async function POST(request: Request) {
       }
       await refundCredits(creditTransactionId).catch(() => {});
       if (reqOrgId && customerUsageOperationId) {
-        await settleUsage({
+        await settleLeadEnrichmentUsage({
           orgId: reqOrgId,
-          action: 'net_new_enriched_lead',
           operationKey: customerUsageOperationId,
-          quantity: 0,
+          action: 'net_new_enriched_lead',
+          actionQuantity: 0,
+          credits: 0,
         }).catch(() => {});
       }
       console.error('[pipeline/data-request] job', jobErr);

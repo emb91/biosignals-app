@@ -357,8 +357,7 @@ const LANDING_HTML = `
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>100</b> active leads monitored</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>Monthly</b> signal monitoring</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>500</b> imported records triaged / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>10</b> imported enrichments / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>5</b> net-new leads / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>60</b> lead enrichment credits / mo</span></li>
         </ul>
         <div class="tbtn"><a class="btn btn-soft" href="/signup">Start for free</a></div>
       </div>
@@ -375,8 +374,7 @@ const LANDING_HTML = `
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>5,000</b> active leads monitored</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>Monthly</b> signal monitoring</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>10,000</b> imported records triaged / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>250</b> included imported enrichments / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>50</b> net-new leads / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>1,200</b> lead enrichment credits / mo</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span>Extra credits: <b>$100 / 1,000</b></span></li>
         </ul>
         <div class="tbtn"><a class="btn btn-primary" href="/signup">Start for free</a></div>
@@ -393,8 +391,7 @@ const LANDING_HTML = `
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>10,000</b> active leads monitored</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>Weekly</b> signal monitoring</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>50,000</b> imported records triaged / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>1,200</b> included imported enrichments / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>200</b> net-new leads / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>5,600</b> lead enrichment credits / mo</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span>Extra credits: <b>$70 / 1,000</b></span></li>
         </ul>
         <div class="tbtn"><a class="btn btn-soft" href="/signup">Start for free</a></div>
@@ -423,9 +420,9 @@ const LANDING_HTML = `
             <tr><td>Active leads monitored</td><td>100</td><td>5,000</td><td>10,000</td></tr>
             <tr><td>Monitoring cadence</td><td>Monthly</td><td>Monthly</td><td>Weekly</td></tr>
             <tr><td>Imported records triaged</td><td>500 / month</td><td>10,000 / month</td><td>50,000 / month</td></tr>
-            <tr><td>Included imported enrichments</td><td>10 / month</td><td>250 / month</td><td>1,200 / month</td></tr>
-            <tr><td>Included net-new enriched leads</td><td>5 / month</td><td>50 / month</td><td>200 / month</td></tr>
-            <tr><td>Extra imported enrichments</td><td>Upgrade for more actions</td><td>Use purchased credits</td><td>Use purchased credits</td></tr>
+            <tr><td>Lead enrichment credits</td><td>60 / month</td><td>1,200 / month</td><td>5,600 / month</td></tr>
+            <tr><td>Shared enrichment actions</td><td>Imports, company-only, net-new</td><td>Imports, company-only, net-new</td><td>Imports, company-only, net-new</td></tr>
+            <tr><td>Extra lead enrichment</td><td>Upgrade for more actions</td><td>Use purchased credits</td><td>Use purchased credits</td></tr>
             <tr><td>Sequences generated</td><td>1 / month</td><td>66 / month</td><td>214 / month</td></tr>
             <tr><td>Phone reveals</td><td>1 / month</td><td>3 / month</td><td>12 / month</td></tr>
             <tr><td>Email-finder requests</td><td>1 / month</td><td>25 / month</td><td>60 / month</td></tr>
