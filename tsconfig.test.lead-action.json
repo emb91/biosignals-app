@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-lead-action-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/effective-priority.ts",
+    "lib/lead-action.ts",
+    "lib/lead-action.test.ts"
+  ]
+}
