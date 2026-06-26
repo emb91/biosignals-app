@@ -4683,6 +4683,18 @@ export default function SetupFlow({
   }, []);
 
   /**
+   * Put a chosen company (tapped suggestion OR typed/inferred) into a single confirm step.
+   * Nothing is enriched until the user taps the confirm pill — both paths share this gate.
+   */
+  const proposeTargetCompany = useCallback(async (name: string, domainOrUrl: string) => {
+    const display = prettyDomain(domainOrUrl);
+    const label = name.trim() || display;
+    setPendingTarget({ name: label, domain: domainOrUrl });
+    await sayBeats([`Build the profile around ${label} (${display})? You can also type a different company.`]);
+    setInput(true);
+  }, [prettyDomain, sayBeats]);
+
+  /**
    * Present ONE suggested target company at a time, best-fit first, with its reasoning.
    * The user confirms by tapping it, asks for another, or types a company of their own.
    */
@@ -5813,13 +5825,11 @@ export default function SetupFlow({
           // Confirm-before-enrich: never start enriching a company the user hasn't OK'd.
           // The agent may have inferred a company from a vague segment ("a CRO"), so we
           // echo back the recognisable name + domain and wait for a yes.
-          const domain = prettyDomain(beginAnalysis.website_url);
-          const name = beginAnalysis.company_name?.trim() || domain;
-          setPendingTarget({ name, domain: beginAnalysis.website_url });
           // Don't echo the model's own pre-amble here — it tends to say "analysing X now",
-          // which contradicts the confirmation we're about to ask for.
-          await sayBeats([`I found ${name} (${domain}). Want me to build the target profile around them? You can also type a different company.`]);
-          setInput(true);
+          // which contradicts the confirmation we're about to ask for. Route through the
+          // same confirm gate a tapped suggestion uses.
+          const name = beginAnalysis.company_name?.trim() || prettyDomain(beginAnalysis.website_url);
+          await proposeTargetCompany(name, beginAnalysis.website_url);
           return;
         }
         await runAnalysis(beginAnalysis.website_url);
@@ -5839,7 +5849,7 @@ export default function SetupFlow({
 
       setInput(true);
     },
-    [inputEnabled, phase, entryPoint, askClaude, runAnalysis, sayBeats, prettyDomain],
+    [inputEnabled, phase, entryPoint, askClaude, runAnalysis, sayBeats, prettyDomain, proposeTargetCompany],
   ); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = useCallback(
@@ -6744,23 +6754,35 @@ export default function SetupFlow({
                 !thinking &&
                 inputEnabled &&
                 pendingTarget && (
-                  /* User typed (or we inferred) a company — confirm before enriching. */
+                  /* A company is chosen (tapped suggestion or typed/inferred) — confirm before enriching. */
                   <div className="shrink-0 border-t border-arcova-navy/[0.06] px-1 pb-1 pt-3">
-                    <button
-                      type="button"
-                      disabled={thinking}
-                      onClick={() => {
-                        const target = pendingTarget;
-                        markDomainEnrolled(target.domain);
-                        pushText('user', `Yes, build the profile around ${target.name}`);
-                        setPendingTarget(null);
-                        void handleCustomerUrlAnalyse(target.domain);
-                      }}
-                      className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-arcova-teal/40 bg-arcova-teal/5 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/60 hover:bg-arcova-teal/10 disabled:pointer-events-none disabled:opacity-40"
-                    >
-                      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
-                      <span className="min-w-0 flex-1 whitespace-normal break-words">Yes, build the profile around {pendingTarget.name}</span>
-                    </button>
+                    <div className="flex w-full flex-col gap-2">
+                      <button
+                        type="button"
+                        disabled={thinking}
+                        onClick={() => {
+                          const target = pendingTarget;
+                          markDomainEnrolled(target.domain);
+                          pushText('user', `Yes, build the profile around ${target.name}`);
+                          setPendingTarget(null);
+                          void handleCustomerUrlAnalyse(target.domain);
+                        }}
+                        className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-arcova-teal/40 bg-arcova-teal/5 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/60 hover:bg-arcova-teal/10 disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
+                        <span className="min-w-0 flex-1 whitespace-normal break-words">Yes, build the profile around {pendingTarget.name}</span>
+                      </button>
+                      {currentSuggestion && (
+                        <button
+                          type="button"
+                          disabled={thinking}
+                          onClick={() => void showNextSuggestion()}
+                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white/80 px-3.5 py-2 font-manrope text-sm font-medium leading-snug text-arcova-navy/65 transition-colors hover:border-arcova-navy/20 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          No, suggest a different one
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               {(phase === 'icp_suggestion' || phase === 'customer_url_conversation') &&
@@ -6776,14 +6798,14 @@ export default function SetupFlow({
                         title={currentSuggestion.segmentLabel}
                         disabled={thinking}
                         onClick={() => {
-                          markDomainEnrolled(currentSuggestion.domain);
-                          pushText('user', `Yes, build the profile around ${currentSuggestion.name}`);
-                          void handleCustomerUrlAnalyse(currentSuggestion.domain);
+                          const picked = currentSuggestion;
+                          pushText('user', picked.name);
+                          void proposeTargetCompany(picked.name, picked.domain);
                         }}
-                        className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-arcova-teal/40 bg-arcova-teal/5 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/60 hover:bg-arcova-teal/10 disabled:pointer-events-none disabled:opacity-40"
+                        className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-slate-200/90 bg-white/95 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
                       >
                         <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
-                        <span className="min-w-0 flex-1 whitespace-normal break-words">Yes, build the profile around {currentSuggestion.name}</span>
+                        <span className="min-w-0 flex-1 whitespace-normal break-words">{currentSuggestion.name}</span>
                       </button>
                       <button
                         type="button"
