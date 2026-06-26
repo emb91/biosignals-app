@@ -5,6 +5,23 @@ import { resolveOrgContactAccess } from '@/lib/org-contact-access';
 
 type RouteParams = { id: string };
 
+// One row in the contact's "CRM updates" feed — real data only:
+//  - 'stage'  : a deal stage transition (crm_deal_stage_history)
+//  - 'event'  : a mirrored HubSpot CRM activity event for this contact
+//               (signal_source_events — the same source as /today)
+type CrmUpdate = {
+  id: string;
+  kind: 'stage' | 'event';
+  at: string;
+  deal_name: string | null;
+  stage: string | null;
+  event_type: string | null;
+  title: string | null;
+  summary: string | null;
+};
+
+const CRM_EVENT_SOURCES = ['hubspot_crm_contacts', 'hubspot_crm_deals'] as const;
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<RouteParams> }
@@ -60,6 +77,64 @@ export async function GET(
   );
   const dealIds = dedupedLinks.map((row) => String(row.hubspot_deal_id)).filter(Boolean);
 
+  // CRM updates feed — deal stage transitions (the historical deals path) plus
+  // this contact's mirrored HubSpot CRM activity (the /today crm-activity source).
+  const buildUpdates = async (dealNameById: Map<string, string | null>): Promise<CrmUpdate[]> => {
+    const [stageRes, eventRes] = await Promise.all([
+      dealIds.length
+        ? admin
+            .from('crm_deal_stage_history')
+            .select('id, hubspot_deal_id, stage, entered_at')
+            .in('user_id', access.memberIds)
+            .in('hubspot_deal_id', dealIds)
+            .order('entered_at', { ascending: false })
+            .limit(20)
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      admin
+        .from('signal_source_events')
+        .select('id, source_event_type, title, summary, event_at, observed_at')
+        .in('user_id', access.memberIds)
+        .in('source', CRM_EVENT_SOURCES as unknown as string[])
+        .eq('entity_contact_id', contact.id)
+        .order('observed_at', { ascending: false })
+        .limit(20),
+    ]);
+
+    const stageUpdates: CrmUpdate[] = ((stageRes.data ?? []) as Array<Record<string, unknown>>)
+      .filter((r) => typeof r.entered_at === 'string')
+      .map((r) => ({
+        id: `stage:${String(r.id)}`,
+        kind: 'stage',
+        at: String(r.entered_at),
+        deal_name: dealNameById.get(String(r.hubspot_deal_id)) ?? null,
+        stage: typeof r.stage === 'string' ? r.stage : null,
+        event_type: null,
+        title: null,
+        summary: null,
+      }));
+
+    const eventUpdates: CrmUpdate[] = ((eventRes.data ?? []) as Array<Record<string, unknown>>)
+      .map((r): CrmUpdate | null => {
+        const at = (typeof r.event_at === 'string' && r.event_at) || (typeof r.observed_at === 'string' ? r.observed_at : null);
+        if (!at) return null;
+        return {
+          id: `event:${String(r.id)}`,
+          kind: 'event',
+          at,
+          deal_name: null,
+          stage: null,
+          event_type: typeof r.source_event_type === 'string' ? r.source_event_type : null,
+          title: typeof r.title === 'string' ? r.title : null,
+          summary: typeof r.summary === 'string' ? r.summary : null,
+        };
+      })
+      .filter((u): u is CrmUpdate => u != null);
+
+    return [...stageUpdates, ...eventUpdates]
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .slice(0, 12);
+  };
+
   if (dealIds.length === 0) {
     return NextResponse.json({
       data: {
@@ -68,6 +143,7 @@ export async function GET(
         arcova_company_name: contact.resolved_current_company_name,
         arcova_company_domain: contact.resolved_current_company_domain,
         deals: [],
+        updates: await buildUpdates(new Map()),
       },
     });
   }
@@ -91,6 +167,10 @@ export async function GET(
 
   const dealsById = new Map((deals ?? []).map((row) => [String(row.hubspot_deal_id), row]));
   const companyLinkByDealId = new Map((companyLinks ?? []).map((row) => [String(row.hubspot_deal_id), row]));
+  const dealNameById = new Map(
+    (deals ?? []).map((row) => [String(row.hubspot_deal_id), (row.deal_name as string | null) ?? null]),
+  );
+  const updates = await buildUpdates(dealNameById);
 
   const crmDeals = dealIds
     .map((dealId) => {
@@ -160,6 +240,7 @@ export async function GET(
       arcova_company_name: contact.resolved_current_company_name,
       arcova_company_domain: contact.resolved_current_company_domain,
       deals: crmDeals,
+      updates,
     },
   });
 }

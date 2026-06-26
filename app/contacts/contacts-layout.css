@@ -129,6 +129,27 @@ button.contacts-fit-criterion {
   color: #7d909a;
 }
 
+/* CRM "Connected" live dot — gentle breathing ring (design .crm-live) */
+@keyframes contacts-crm-live {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(45, 138, 138, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(45, 138, 138, 0);
+  }
+}
+
+.contacts-crm-live {
+  animation: contacts-crm-live 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .contacts-crm-live {
+    animation: none;
+  }
+}
+
 .contacts-drawer-close {
   width: 1.3125rem;
   height: 1.3125rem;

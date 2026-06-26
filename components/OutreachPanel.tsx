@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Copy, Check, ChevronLeft, Send, Linkedin, Mail, UserPlus } from 'lucide-react';
+import { Loader2, ChevronLeft, Send } from 'lucide-react';
 import { ACTION_CREDITS } from '@/lib/billing/config';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 import { useCreditConfirm } from '@/context/CreditConfirmContext';
@@ -160,9 +160,6 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // Stage feedback (renders the same banner as before; legacy export paths
   // were removed in favour of per-field manual copy).
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
-  // Per-field copy feedback: tracks which "subject"/"body" of which message was
-  // most recently copied so the icon can flip to a check briefly.
-  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Staging state — primary path now: drop the sequence into /outreach for
   // multi-step channel selection + lemlist dispatch.
@@ -329,25 +326,6 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     }
   }, [messages, contactId, userAngle, router]);
 
-  // Per-field clipboard copy. We removed the bulk CSV / "save & copy" exports
-  // (they implicitly persisted the sequence with a fake dispatch_status, which
-  // muddied the action gate). Reps copy each subject/body individually now,
-  // and the only persistence path is Stage for outreach.
-  const copyField = useCallback(async (fieldId: string, value: string) => {
-    if (!value) return;
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedField(fieldId);
-      window.setTimeout(() => {
-        setCopiedField((current) => (current === fieldId ? null : current));
-      }, 1500);
-    } catch {
-      // Clipboard may be blocked (insecure context, denied perms). Surface a
-      // soft error via the existing banner rather than failing silently.
-      setExportSuccess('Copy failed — your browser blocked clipboard access.');
-    }
-  }, []);
-
   // ── ALREADY-CONTACTED NOTICE ────────────────────────────────────────────
   // If we have a prior sequence and the user hasn't asked to override, show
   // a state-aware notice instead of the hook picker. Click "Stage another
@@ -374,21 +352,21 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     return (
       <div className="space-y-3">
         <div className="space-y-0.5">
-          <p className="text-xs text-gray-700">Generate a multichannel outreach sequence for this contact.</p>
-          <p className="text-xs text-gray-500">
+          <p className="text-[13px] text-gray-700">Generate a multichannel outreach sequence for this contact.</p>
+          <p className="text-[12px] text-gray-500">
             Arcova writes to their role and your offer, then stages the draft in Outreach for review.
           </p>
         </div>
 
         {hooksLoading && (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
+          <div className="flex items-center gap-2 text-[13px] text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin" />
             Checking readiness…
           </div>
         )}
 
         {hooksError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
             {hooksError}
           </div>
         )}
@@ -510,76 +488,38 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             </div>
           )}
 
-          {/* Read-only preview cards with a per-field copy affordance. Each
-              subject + body row exposes a small copy button so reps can pull
-              text into whatever tool they're sending from, without going
-              through a bulk CSV / clipboard export (those silently persisted a
-              sequence with a fake dispatch_status and confused the action
-              gate). The only persistence path here is Stage for outreach. */}
-          <ul className="space-y-2">
+          {/* Calm staged-sequence preview — a plain timeline with one type
+              scale, no boxes / pills / channel icons (design .or-seq). Editing
+              and sending happen on /outreach via "Stage for outreach". */}
+          <ul className="flex flex-col">
             {messages.map((m, i) => {
-              const subjectId = `m${i}-subject`;
-              const bodyId = `m${i}-body`;
               const isInvite = m.channel === 'linkedin' && m.day_offset === 7;
-              const ChannelIcon = isInvite ? UserPlus : m.channel === 'linkedin' ? Linkedin : Mail;
               const channelLabel = isInvite
-                ? 'LinkedIn connection request'
+                ? 'LinkedIn invite'
                 : m.channel === 'linkedin'
-                  ? 'LinkedIn message'
+                  ? 'LinkedIn'
                   : 'Email';
+              const isLast = i === messages.length - 1;
               return (
-                <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
-                  <div className="mb-1.5 flex items-center justify-between gap-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                      Day {m.day_offset}
-                    </p>
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      m.channel === 'linkedin'
-                        ? 'bg-[#0a66c2]/8 text-[#0a66c2]'
-                        : 'bg-arcova-teal/8 text-arcova-teal'
-                    }`}>
-                      <ChannelIcon className="h-3 w-3" />
-                      {channelLabel}
-                    </span>
+                <li key={i} className="flex gap-3">
+                  {/* Timeline rail (design .tl-rail) */}
+                  <div className="flex w-3 shrink-0 flex-col items-center pt-1">
+                    <span className="h-[9px] w-[9px] rounded-full bg-arcova-teal shadow-[0_0_0_3px_rgba(0,164,180,0.16)]" />
+                    {!isLast && <span className="mt-1 w-px flex-1 bg-[rgba(13,53,71,0.12)]" />}
                   </div>
-                  {isInvite ? (
-                    <p className="text-[12.5px] leading-snug text-gray-700">
-                      Send a connection request. No note is added.
-                    </p>
-                  ) : (
-                    <>
-                      {m.channel === 'email' && (
-                        <div className="flex items-start gap-2">
-                          <p className="flex-1 text-[13px] font-medium text-gray-900 leading-snug">
-                            {m.subject}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => void copyField(subjectId, m.subject)}
-                            title="Copy subject"
-                            aria-label="Copy subject"
-                            className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
-                          >
-                            {copiedField === subjectId ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
-                      )}
-                      <div className={`${m.channel === 'email' ? 'mt-1.5' : ''} flex items-start gap-2`}>
-                        <p className="flex-1 whitespace-pre-wrap text-[12.5px] text-gray-700 leading-snug">
-                          {m.body}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => void copyField(bodyId, m.body)}
-                          title="Copy body"
-                          aria-label="Copy body"
-                          className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
-                        >
-                          {copiedField === bodyId ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
+                  <div className={`min-w-0 ${isLast ? 'pb-0' : 'pb-4'}`}>
+                    <div className="text-[11px] font-semibold text-[#7d909a]">
+                      Day {m.day_offset} · {channelLabel}
+                    </div>
+                    {m.channel === 'email' && !isInvite && m.subject ? (
+                      <div className="mt-1 text-[13.5px] font-semibold leading-snug text-[#0d3547]">
+                        {m.subject}
                       </div>
-                    </>
-                  )}
+                    ) : null}
+                    <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-[1.55] text-[#4a6470]">
+                      {isInvite ? 'Send a connection request. No note is added.' : m.body}
+                    </p>
+                  </div>
                 </li>
               );
             })}

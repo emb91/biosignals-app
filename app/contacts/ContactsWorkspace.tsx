@@ -278,12 +278,24 @@ interface HubSpotCrmDeal {
   pushed_arcova_company_domain: string | null;
 }
 
+interface HubSpotCrmUpdate {
+  id: string;
+  kind: 'stage' | 'event';
+  at: string;
+  deal_name: string | null;
+  stage: string | null;
+  event_type: string | null;
+  title: string | null;
+  summary: string | null;
+}
+
 interface HubSpotCrmContext {
   contact_id: string;
   arcova_company_id: string | null;
   arcova_company_name: string | null;
   arcova_company_domain: string | null;
   deals: HubSpotCrmDeal[];
+  updates?: HubSpotCrmUpdate[];
 }
 
 interface HubSpotCrmFetchState {
@@ -3269,9 +3281,9 @@ export function ContactsWorkspace() {
     const fitScore = selectedContactFit?.contact_fit_score ?? contactFitHeaderPct;
     const n = percentDisplayNumber(fitScore);
     return (
-      <div className="contacts-fit-card">
-        {/* Hero ring — reads consistently with the Priority & Signals gauges (design Fit hero) */}
-        <div className="flex flex-col items-center pb-3 pt-1">
+      <div className="space-y-3">
+        {/* Hero ring in the shared prio-hero card so Fit, Priority & Signals read identically (design TabFit) */}
+        <div className="flex flex-col items-center justify-center rounded-[14px] border border-[rgba(13,53,71,0.06)] bg-[rgba(246,250,250,0.7)] px-4 py-6 text-center">
           <AnimatedCircularProgressBar
             value={n ?? 0}
             gaugePrimaryColor={fitScoreArcColor(n)}
@@ -3279,7 +3291,7 @@ export function ContactsWorkspace() {
             animateOnMount
             deferAnimationMs={160}
             label={
-              <span className="block text-xl font-semibold leading-snug tabular-nums text-[#0d3547]">
+              <span className="block text-[19px] font-semibold leading-snug tabular-nums text-[#0d3547]">
                 {selectedContactFitState?.loading ? '…' : n != null ? n : '—'}
               </span>
             }
@@ -3288,10 +3300,28 @@ export function ContactsWorkspace() {
           <p className="mt-3 font-manrope text-[15px] font-bold tracking-[-0.01em] text-[#0d3547]">
             Contact fit
           </p>
+          {/* Fit summary sits in the blurb slot under the caption (design .prio-blurb) */}
+          {(() => {
+            const fitSummaryText =
+              selectedPanelSummaries?.fitSummary?.trim() ||
+              selectedLead?.contact_fit_summary?.trim() ||
+              '';
+            if (selectedPanelSummariesState?.loading) {
+              return <p className="mt-2 text-[12.5px] leading-[1.55] text-[#1f475a]">Summarising fit…</p>;
+            }
+            if (!fitSummaryText) return null;
+            return <p className="mt-2 text-[12.5px] leading-[1.55] text-[#1f475a]">{fitSummaryText}</p>;
+          })()}
         </div>
-        <div className="contacts-fit-criteria">
+
+        {/* Fit breakdown — titled card matching the design type system (design .ch-title / .crit) */}
+        <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+          <div className="px-3.5 py-3">
+            <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Fit breakdown</span>
+          </div>
+          <div className="divide-y divide-[rgba(13,53,71,0.06)] border-t border-[rgba(13,53,71,0.06)] px-3.5 pb-1">
           {selectedContactFitState?.loading ? (
-            <p className="text-xs text-[#7d909a]">Loading…</p>
+            <p className="py-1 text-[12px] text-[#7d909a]">Loading…</p>
           ) : selectedContactFit?.winning_breakdown && selectedLead ? (
             CONTACT_FIT_COMPONENT_ORDER.map((key) => {
               const component = selectedContactFit.winning_breakdown!.components[key];
@@ -3316,25 +3346,27 @@ export function ContactsWorkspace() {
                   <button
                     type="button"
                     onClick={() => hasDetail && toggleBar(barKey)}
-                    className={cn('contacts-fit-criterion w-full text-left', hasDetail && 'hover:opacity-80')}
+                    className={cn('flex w-full items-center gap-[11px] py-3 text-left', hasDetail && 'hover:opacity-80')}
                     style={{ cursor: hasDetail ? 'pointer' : 'default' }}
                   >
                     <span
                       className={cn(
-                        'contacts-fit-criterion-icon',
-                        ok === 'pass' && 'contacts-fit-criterion-pass',
-                        ok === 'warn' && 'contacts-fit-criterion-warn',
-                        ok === 'miss' && 'contacts-fit-criterion-miss',
+                        'grid h-[22px] w-[22px] shrink-0 place-items-center rounded-[7px] text-[12px] font-bold',
+                        ok === 'pass'
+                          ? 'bg-[rgba(45,138,138,0.12)] text-[#2d8a8a]'
+                          : ok === 'warn'
+                            ? 'bg-[#fbf3dc] text-[#c08328]'
+                            : 'bg-[rgba(196,107,122,0.14)] text-[#c46b7a]',
                       )}
                     >
                       {ok === 'pass' ? '✓' : ok === 'warn' ? '~' : '✗'}
                     </span>
-                    <span className="contacts-fit-criterion-text">{component.label}</span>
+                    <span className="min-w-0 flex-1 text-[13px] font-semibold text-[#0d3547]">{component.label}</span>
                     {/* Design .crit-right — % stacked over a short match qualifier, right-aligned. */}
                     <span className="flex flex-col items-end gap-0.5 pl-2 text-right">
                       <span
                         className={cn(
-                          'text-[13px] font-bold leading-none tabular-nums',
+                          'text-[14px] font-bold leading-none tabular-nums',
                           ok === 'pass' ? 'text-[#0a7b88]' : ok === 'warn' ? 'text-[#c08328]' : 'text-[#c46b7a]',
                         )}
                       >
@@ -3352,7 +3384,7 @@ export function ContactsWorkspace() {
                     </span>
                   </button>
                   {isOpen && hasDetail && (
-                    <div className="mt-1 ml-[22px] space-y-1">
+                    <div className="mb-2 ml-[33px] space-y-1">
                       {showPill && (
                         <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
                           {component.matchedValue}
@@ -3367,8 +3399,9 @@ export function ContactsWorkspace() {
               );
             })
           ) : (
-            <p className="text-xs text-[#7d909a]">No contact fit yet.</p>
+            <p className="py-1 text-[12px] text-[#7d909a]">No contact fit yet.</p>
           )}
+          </div>
         </div>
       </div>
     );
@@ -4923,7 +4956,7 @@ export function ContactsWorkspace() {
                                     onClick={() => setContactPanelOpen((s) => ({ ...s, about: !s.about }))}
                                     className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                   >
-                                    <span className="font-manrope text-[11px] font-semibold text-[#0d3547]">
+                                    <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                       About
                                     </span>
                                     <ChevronDown
@@ -4959,7 +4992,7 @@ export function ContactsWorkspace() {
                                   onClick={() => setContactPanelOpen((s) => ({ ...s, details: !s.details }))}
                                   className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                 >
-                                  <span className="font-manrope text-[11px] font-semibold text-[#0d3547]">
+                                  <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                     Role &amp; contact
                                   </span>
                                   <ChevronDown
@@ -4972,7 +5005,7 @@ export function ContactsWorkspace() {
                                   <div className="border-t border-[rgba(13,53,71,0.06)] px-[14px] pb-[13px] pt-[13px]">
                                     <div className="min-w-0 space-y-5">
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Job title
                                         </p>
                                         <p className="mt-2 break-words text-[13.5px] leading-snug text-[#0d3547]">
@@ -4998,7 +5031,7 @@ export function ContactsWorkspace() {
                                         if (cells.length === 0) cells.push({ label: 'Location', value: '—' });
                                         return cells.map((c) => (
                                           <div key={c.label} className="min-w-0">
-                                            <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                               {c.label}
                                             </p>
                                             <p className="mt-2 break-words text-[13.5px] leading-snug text-[#0d3547]">
@@ -5008,7 +5041,7 @@ export function ContactsWorkspace() {
                                         ));
                                       })()}
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Emails
                                         </p>
                                         <div className="mt-2 space-y-2">
@@ -5088,7 +5121,7 @@ export function ContactsWorkspace() {
                                       </div>
                                       {/* Phone row — show numbers on file, else offer the singular reveal (20 credits) */}
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Phone
                                         </p>
                                         {(() => {
@@ -5125,7 +5158,7 @@ export function ContactsWorkspace() {
                                         })()}
                                       </div>
                                       <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           LinkedIn
                                         </p>
                                         {selectedLead.linkedin_url ? (
@@ -5169,7 +5202,7 @@ export function ContactsWorkspace() {
                                       }
                                       className="flex w-full items-center justify-between px-[14px] py-[11px] text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                     >
-                                      <span className="font-manrope text-[11px] font-semibold text-[#0d3547]">
+                                      <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
                                         Work history
                                       </span>
                                       <ChevronDown
@@ -5239,10 +5272,10 @@ export function ContactsWorkspace() {
                                 )}
 
                               <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
-                                <p className="mb-3 font-manrope text-[11px] font-semibold text-[#0d3547]">Data source</p>
+                                <p className="mb-3 font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">Data source</p>
                                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                       Type
                                     </p>
                                     <p className="mt-2 text-[13.5px] leading-snug text-[#0d3547]">
@@ -5250,7 +5283,7 @@ export function ContactsWorkspace() {
                                     </p>
                                   </div>
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                       Imported
                                     </p>
                                     <p className="mt-2 text-[13.5px] leading-snug text-[#0d3547]">
@@ -5364,8 +5397,18 @@ export function ContactsWorkspace() {
                                 HubSpot CRM
                               </span>
                               <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-[#7d909a]">
-                                <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-[#2d8a8a]" />
-                                Connected
+                                <span className="contacts-crm-live h-[7px] w-[7px] shrink-0 rounded-full bg-[#2d8a8a]" />
+                                {(() => {
+                                  // Surface the latest deal sync time alongside "Connected" (design .crm-synced)
+                                  const syncedIso = selectedHubSpotCrm?.deals
+                                    ?.map((d) => d.synced_at)
+                                    .filter((value): value is string => Boolean(value))
+                                    .sort()
+                                    .pop();
+                                  return syncedIso
+                                    ? `Connected · synced ${formatLastUpdated(syncedIso)}`
+                                    : 'Connected';
+                                })()}
                               </span>
                             </div>
 
@@ -5421,7 +5464,7 @@ export function ContactsWorkspace() {
 
                                       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Company
                                           </p>
                                           <p className="mt-1 text-[13.5px] leading-snug text-[#0d3547]">
@@ -5429,7 +5472,7 @@ export function ContactsWorkspace() {
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Domain
                                           </p>
                                           <p className="mt-1 break-all text-[13.5px] leading-snug text-[#0d3547]">
@@ -5437,7 +5480,7 @@ export function ContactsWorkspace() {
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Amount
                                           </p>
                                           <p className="mt-1 text-[13.5px] leading-snug text-[#0d3547]">
@@ -5445,7 +5488,7 @@ export function ContactsWorkspace() {
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                             Last synced
                                           </p>
                                           <p className="mt-1 text-[13.5px] leading-snug text-[#0d3547]">
@@ -5510,6 +5553,59 @@ export function ContactsWorkspace() {
                                 </p>
                               </div>
                             )}
+
+                            {/* CRM updates — real feed: deal stage moves (historical deals path)
+                                + this contact's mirrored CRM activity (design TabCRM "CRM updates"). */}
+                            {selectedHubSpotCrm?.updates && selectedHubSpotCrm.updates.length > 0 ? (
+                              <div className="space-y-2.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
+                                    CRM updates
+                                  </span>
+                                  <span className="rounded-full bg-[rgba(13,53,71,0.06)] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#7d909a]">
+                                    {selectedHubSpotCrm.updates.length}
+                                  </span>
+                                </div>
+                                <div className="divide-y divide-[rgba(13,53,71,0.06)] rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                  {selectedHubSpotCrm.updates.map((update) => {
+                                    const isStage = update.kind === 'stage';
+                                    const stageLabel = formatHubSpotStageLabel(update.stage) || update.stage;
+                                    return (
+                                      <div key={update.id} className="flex gap-3 py-3">
+                                        <span
+                                          className={cn(
+                                            'grid h-7 w-7 shrink-0 place-items-center rounded-lg [&_svg]:h-3.5 [&_svg]:w-3.5',
+                                            isStage
+                                              ? 'bg-[rgba(45,138,138,0.12)] text-[#2d8a8a]'
+                                              : 'bg-[rgba(255,122,89,0.10)] text-[#e0613f]',
+                                          )}
+                                        >
+                                          {isStage ? <Pencil aria-hidden /> : <RotateCw aria-hidden />}
+                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                          <p className="text-[13px] leading-snug text-[#0d3547]">
+                                            {isStage ? (
+                                              <>
+                                                Deal stage moved to{' '}
+                                                <span className="font-semibold">{stageLabel}</span>
+                                                {update.deal_name ? (
+                                                  <span className="text-[#4a6470]"> on {update.deal_name}</span>
+                                                ) : null}
+                                              </>
+                                            ) : (
+                                              update.title || update.summary || 'CRM update'
+                                            )}
+                                          </p>
+                                          <p className="mt-0.5 text-[11px] tabular-nums text-[#7d909a]">
+                                            {formatLastUpdated(update.at)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : selectedPreview === 'action' ? (
                           /* ── Action view ── */
@@ -5532,7 +5628,7 @@ export function ContactsWorkspace() {
                                     <p className="text-[13px] font-semibold text-[#0d3547]">Arcova attribution</p>
                                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Sourced
                                         </p>
                                         <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
@@ -5543,7 +5639,7 @@ export function ContactsWorkspace() {
                                         </p>
                                       </div>
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Enriched
                                         </p>
                                         <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
@@ -5556,7 +5652,7 @@ export function ContactsWorkspace() {
                                         </p>
                                       </div>
                                       <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7d909a]">
                                           Outcome
                                         </p>
                                         <p className="mt-2 text-[13.5px] font-medium text-[#0d3547]">
@@ -5976,27 +6072,8 @@ export function ContactsWorkspace() {
                             }
                           />
                         ) : (
-                          /* ── Scoring view ── */
-                          <div className="space-y-3">
-                            {(() => {
-                              const fitSummaryText =
-                                selectedPanelSummaries?.fitSummary?.trim() ||
-                                selectedLead.contact_fit_summary?.trim() ||
-                                '';
-                              if (!selectedPanelSummariesState?.loading && !fitSummaryText) return null;
-                              return (
-                              <div className="rounded-xl border border-[rgba(13,53,71,0.1)] bg-[rgba(13,53,71,0.03)] px-3.5 py-3">
-                                <p className="text-[12.5px] leading-[1.55] text-[#1f475a]">
-                                  {selectedPanelSummariesState?.loading
-                                    ? 'Summarising fit...'
-                                    : fitSummaryText}
-                                </p>
-                              </div>
-                              );
-                            })()}
-
-                            {renderContactFitScoresCard()}
-                          </div>
+                          /* ── Scoring view — hero + Fit breakdown (design TabFit) ── */
+                          renderContactFitScoresCard()
                         )}
                       </div>
 
