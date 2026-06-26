@@ -4675,7 +4675,7 @@ export default function SetupFlow({
   const suggestionReasonBeat = useCallback((s: IcpSuggestion | undefined): string => {
     if (!s) return '';
     const reason = (s.reason ?? '').trim();
-    return reason ? `${s.name} — ${reason}` : s.name;
+    return reason ? `${s.name}: ${reason}` : s.name;
   }, []);
 
   /**
@@ -4732,6 +4732,7 @@ export default function SetupFlow({
       if (fresh.length > 0) {
         const merged = uniqueSuggestionsByDomain([...icpSuggestions, ...fresh]);
         setIcpSuggestions(merged);
+        saveStoredSuggestions(merged);
         setSuggestionIdx(next);
         const beat = suggestionReasonBeat(merged[next]);
         if (beat) await sayBeats([beat]);
@@ -4805,7 +4806,7 @@ export default function SetupFlow({
     }
     const presented = await enterIcpSuggestionPhase(resolvedSuggestions, [
       'Your company profile looks good.',
-      'Now let’s pick a target company to model your first profile on. Most people aren’t sure who to start with, so here’s the one I’d suggest — tap it to use it, ask for another, or type a company you have in mind.',
+      'Now let’s pick a target company to model your first profile on. Most people aren’t sure who to start with, so here’s the one I’d suggest. Tap it to use it, ask for another, or type a company you have in mind.',
     ]);
     if (presented) return;
 
@@ -5765,6 +5766,9 @@ export default function SetupFlow({
       setInputVal('');
       setInput(false);
       setPendingTransition(null);
+      // A new typed message supersedes any prior inferred target awaiting confirmation,
+      // so the stale "Yes, build the profile around X" pill can't linger or mis-fire.
+      setPendingTarget(null);
       pushText('user', show);
 
       const response = await askClaude({
