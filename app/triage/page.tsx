@@ -107,6 +107,16 @@ function triageReasonText(row: Pick<TriageRow, 'triage_group' | 'triage_reason'>
   return null;
 }
 
+function triageBadgeTooltip(
+  row: Pick<TriageRow, 'triage_group' | 'triage_reason' | 'triage_override_group' | 'triage_overridden_at'>,
+): string | null {
+  if (row.triage_override_group) {
+    const savedAt = formatDate(row.triage_overridden_at);
+    return savedAt === '-' ? 'Manual override saved.' : `Manual override saved ${savedAt}.`;
+  }
+  return triageReasonText(row);
+}
+
 function rawValue(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return value.trim();
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
@@ -281,7 +291,7 @@ export default function TriagePage() {
                   ) : (
                     rows.map((row, index) => {
                       const isSelected = selected?.id === row.id;
-                      const triageReason = triageReasonText(row);
+                      const triageTooltip = triageBadgeTooltip(row);
                       return (
                         <button
                           key={row.id}
@@ -313,7 +323,7 @@ export default function TriagePage() {
                           <span className="flex justify-center">
                             <span
                               className={cn('inline-flex rounded-full border px-2 py-1 text-xs font-semibold', triageClass(row.effective_triage_group))}
-                              title={triageReason ?? undefined}
+                              title={triageTooltip ?? undefined}
                             >
                               {triageLabel(row.effective_triage_group)}
                             </span>
