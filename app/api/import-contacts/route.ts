@@ -1,7 +1,12 @@
 import { after, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
-import { looksLikeEmail } from '@/lib/contact-emails';
+import {
+  classifyImportRowsForDedup,
+  PENDING_IMPORT_DEDUP_STATUSES,
+  type DuplicateCandidate,
+  type InsertedImportRow,
+} from '@/lib/import-contact-dedup';
 import {
   type NormalisedRow,
   refreshBatchProgress,
@@ -22,8 +27,6 @@ type ImportField =
   | 'location'
   | 'company_linkedin_url'
   | 'ignore';
-
-const normalize = (value: string | null | undefined) => (value || '').trim().toLowerCase();
 
 const splitFullName = (fullName: string): { first: string; last: string } => {
   const tokens = fullName.trim().split(/\s+/).filter(Boolean);
@@ -90,40 +93,64 @@ const normalizeIncomingRows = (
     };
   });
 
-const duplicateMatch = (
-  row: NormalisedRow,
-  existing: Record<string, unknown>
-): 'linkedin' | 'email' | 'name+company' | null => {
-  const rowLinkedin = normalize(row.linkedin_url);
-  const rowEmail = normalize(row.email);
-  const rowFirst = normalize(row.first_name);
-  const rowLast = normalize(row.last_name);
-  const rowCompany = normalize(row.company_name);
+type SupabaseLike = { from: (table: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-  const exLinkedin = normalize(existing.linkedin_url as string | undefined);
-  const exEmail = normalize(existing.email as string | undefined);
-  const exFirst = normalize(existing.first_name as string | undefined);
-  const exLast = normalize(existing.last_name as string | undefined);
-  const exCompany = normalize(existing.company_name as string | undefined);
+async function loadExistingContactDedupCandidates(
+  admin: SupabaseLike,
+  orgId: string,
+  userId: string,
+): Promise<DuplicateCandidate[]> {
+  const { data: members, error: membersError } = await admin
+    .from('org_members')
+    .select('user_id')
+    .eq('org_id', orgId);
+  const orgMemberIds = membersError
+    ? []
+    : [...new Set((members ?? []).map((row: { user_id?: string | null }) => row.user_id).filter(Boolean))] as string[];
+  const contactOwnerIds = orgMemberIds.length > 0 ? orgMemberIds : [userId];
 
-  if (rowLinkedin && exLinkedin && rowLinkedin === exLinkedin) return 'linkedin';
-  if (rowEmail && exEmail && rowEmail === exEmail) return 'email';
-  if (
-    rowFirst &&
-    rowLast &&
-    rowCompany &&
-    exFirst &&
-    exLast &&
-    exCompany &&
-    rowFirst === exFirst &&
-    rowLast === exLast &&
-    rowCompany === exCompany
-  ) {
-    return 'name+company';
+  const { data, error } = await admin
+    .from('contacts')
+    .select('linkedin_url, email, first_name, last_name, full_name, company_name')
+    .in('user_id', contactOwnerIds);
+
+  if (!error) return (data ?? []) as DuplicateCandidate[];
+  if (contactOwnerIds.length === 1 && contactOwnerIds[0] === userId) {
+    console.warn('[import-contacts] existing contact dedup lookup failed:', error.message);
+    return [];
   }
 
-  return null;
-};
+  const { data: fallbackData, error: fallbackError } = await admin
+    .from('contacts')
+    .select('linkedin_url, email, first_name, last_name, full_name, company_name')
+    .eq('user_id', userId);
+
+  if (fallbackError) {
+    console.warn('[import-contacts] fallback existing contact dedup lookup failed:', fallbackError.message);
+    return [];
+  }
+  return (fallbackData ?? []) as DuplicateCandidate[];
+}
+
+async function loadPendingRawUploadDedupCandidates(
+  admin: SupabaseLike,
+  orgId: string,
+  batchId: string,
+): Promise<DuplicateCandidate[]> {
+  const { data, error } = await admin
+    .from('raw_uploads')
+    .select('id, batch_id, full_name, email, linkedin_url, company_name, raw_data')
+    .eq('org_id', orgId)
+    .in('status', PENDING_IMPORT_DEDUP_STATUSES);
+
+  if (error) {
+    console.warn('[import-contacts] pending raw_upload dedup lookup failed:', error.message);
+    return [];
+  }
+
+  return ((data ?? []) as Array<DuplicateCandidate & { batch_id?: string | null }>)
+    .filter((row) => row.batch_id !== batchId);
+}
 
 export async function POST(request: Request) {
   try {
@@ -196,59 +223,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to store uploaded rows' }, { status: 500 });
     }
 
-    const { data: existingContacts } = await supabase
-      .from('contacts')
-      .select('linkedin_url, email, first_name, last_name, company_name')
-      .eq('user_id', user.id);
-
-    const duplicateIds: string[] = [];
-    const duplicateReasons = new Map<string, string>();
-    const clearedEmailIds: string[] = [];
-    const pendingRows = insertedRows.filter((row) => {
-      const rawData = row.raw_data as Record<string, unknown>;
-      const rowNorm: NormalisedRow = {
-        full_name: (rawData.full_name as string) || '',
-        first_name: (rawData.first_name as string) || '',
-        last_name: (rawData.last_name as string) || '',
-        company_name: (row.company_name as string) || '',
-        company_domain: (rawData.company_domain as string) || '',
-        job_title: (rawData.job_title as string) || '',
-        email: (row.email as string) || '',
-        linkedin_url: (row.linkedin_url as string) || '',
-        location: (rawData.location as string) || '',
-        company_linkedin_url: (rawData.company_linkedin_url as string) || '',
-      };
-
-      if (rowNorm.email && !looksLikeEmail(rowNorm.email)) {
-        // Treat an invalid email the same as no email: drop it from the
-        // enrichment payload but let the row proceed (LinkedIn / name+company
-        // can still resolve the contact).
-        rowNorm.email = '';
-        (row as { email: string | null }).email = null;
-        clearedEmailIds.push(row.id as string);
-      }
-
-      let dupeReason: string | null = null;
-      for (const contact of existingContacts || []) {
-        const match = duplicateMatch(rowNorm, contact as Record<string, unknown>);
-        if (match) {
-          dupeReason =
-            match === 'linkedin'
-              ? 'Duplicate LinkedIn URL'
-              : match === 'email'
-                ? 'Duplicate email'
-                : 'Duplicate name + company';
-          break;
-        }
-      }
-
-      if (dupeReason) {
-        duplicateIds.push(row.id as string);
-        duplicateReasons.set(row.id as string, dupeReason);
-        return false;
-      }
-      return true;
-    });
+    const admin = createAdminClient();
+    const [existingContacts, pendingRawUploads] = await Promise.all([
+      loadExistingContactDedupCandidates(admin, orgId, user.id),
+      loadPendingRawUploadDedupCandidates(admin, orgId, batchId),
+    ]);
+    const { pendingRows, duplicateIds, duplicateReasons, clearedEmailIds } =
+      classifyImportRowsForDedup({
+        insertedRows: insertedRows as InsertedImportRow[],
+        existingContacts,
+        pendingRawUploads,
+      });
 
     const quotaHeldIds: string[] = [];
     const rowsToEnrich = pendingRows;
@@ -300,7 +285,7 @@ export async function POST(request: Request) {
       .eq('id', batchId);
 
     if (rowsToEnrich.length === 0) {
-      await refreshBatchProgress(createAdminClient(), batchId);
+      await refreshBatchProgress(admin, batchId);
     } else {
       const queuedRows = rowsToEnrich.map((row) => ({
         id: row.id as string,
