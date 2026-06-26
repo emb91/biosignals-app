@@ -4690,7 +4690,7 @@ export default function SetupFlow({
     const display = prettyDomain(domainOrUrl);
     const label = name.trim() || display;
     setPendingTarget({ name: label, domain: domainOrUrl });
-    await sayBeats([`Build the profile around ${label} (${display})? You can also type a different company.`]);
+    await sayBeats([`Build the profile around ${label} (${display})? You can also type a different target customer.`]);
     setInput(true);
   }, [prettyDomain, sayBeats]);
 
@@ -4758,7 +4758,7 @@ export default function SetupFlow({
     }
     // Nothing fresh to offer — drop the suggestion pill and let them type their own.
     setSuggestionIdx(icpSuggestions.length);
-    await sayBeats(['That’s the shortlist I’d start with. Type a target company you have in mind and I’ll set it up.']);
+    await sayBeats(['That’s the shortlist I’d start with. Type a target customer you have in mind and I’ll set it up.']);
     setInput(true);
   }, [suggestionIdx, icpSuggestions, editingFindingsData, generateIcpSuggestions, suggestionReasonBeat, sayBeats]);
 
@@ -6151,7 +6151,7 @@ export default function SetupFlow({
         if (remaining.length > 0) {
           const presented = await enterIcpSuggestionPhase(remaining, [
             'Welcome back. Let’s add another target profile.',
-            'Here’s one that doesn’t overlap what you’ve already got. Tap it to use it, ask for another, or type a target company of your own.',
+            'Here’s one that doesn’t overlap what you’ve already got. Tap it to use it, ask for another, or type a target customer of your own.',
           ]);
           if (presented) return;
         }
@@ -6161,7 +6161,7 @@ export default function SetupFlow({
         setInput(true);
         await sayBeats([
           'Welcome back. Let’s add another target profile.',
-          'Type in a company you want to model next, and we’ll build a separate target account profile around it.',
+          'Type in a target customer you want to model next, and we’ll build a separate target account profile around it.',
         ]);
         return;
       }
