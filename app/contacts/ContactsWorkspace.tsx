@@ -278,12 +278,24 @@ interface HubSpotCrmDeal {
   pushed_arcova_company_domain: string | null;
 }
 
+interface HubSpotCrmUpdate {
+  id: string;
+  kind: 'stage' | 'event';
+  at: string;
+  deal_name: string | null;
+  stage: string | null;
+  event_type: string | null;
+  title: string | null;
+  summary: string | null;
+}
+
 interface HubSpotCrmContext {
   contact_id: string;
   arcova_company_id: string | null;
   arcova_company_name: string | null;
   arcova_company_domain: string | null;
   deals: HubSpotCrmDeal[];
+  updates?: HubSpotCrmUpdate[];
 }
 
 interface HubSpotCrmFetchState {
@@ -5541,6 +5553,59 @@ export function ContactsWorkspace() {
                                 </p>
                               </div>
                             )}
+
+                            {/* CRM updates — real feed: deal stage moves (historical deals path)
+                                + this contact's mirrored CRM activity (design TabCRM "CRM updates"). */}
+                            {selectedHubSpotCrm?.updates && selectedHubSpotCrm.updates.length > 0 ? (
+                              <div className="space-y-2.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-manrope text-[13px] font-bold tracking-[-0.01em] text-[#0d3547]">
+                                    CRM updates
+                                  </span>
+                                  <span className="rounded-full bg-[rgba(13,53,71,0.06)] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#7d909a]">
+                                    {selectedHubSpotCrm.updates.length}
+                                  </span>
+                                </div>
+                                <div className="divide-y divide-[rgba(13,53,71,0.06)] rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.1)]">
+                                  {selectedHubSpotCrm.updates.map((update) => {
+                                    const isStage = update.kind === 'stage';
+                                    const stageLabel = formatHubSpotStageLabel(update.stage) || update.stage;
+                                    return (
+                                      <div key={update.id} className="flex gap-3 py-3">
+                                        <span
+                                          className={cn(
+                                            'grid h-7 w-7 shrink-0 place-items-center rounded-lg [&_svg]:h-3.5 [&_svg]:w-3.5',
+                                            isStage
+                                              ? 'bg-[rgba(45,138,138,0.12)] text-[#2d8a8a]'
+                                              : 'bg-[rgba(255,122,89,0.10)] text-[#e0613f]',
+                                          )}
+                                        >
+                                          {isStage ? <Pencil aria-hidden /> : <RotateCw aria-hidden />}
+                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                          <p className="text-[13px] leading-snug text-[#0d3547]">
+                                            {isStage ? (
+                                              <>
+                                                Deal stage moved to{' '}
+                                                <span className="font-semibold">{stageLabel}</span>
+                                                {update.deal_name ? (
+                                                  <span className="text-[#4a6470]"> on {update.deal_name}</span>
+                                                ) : null}
+                                              </>
+                                            ) : (
+                                              update.title || update.summary || 'CRM update'
+                                            )}
+                                          </p>
+                                          <p className="mt-0.5 text-[11px] tabular-nums text-[#7d909a]">
+                                            {formatLastUpdated(update.at)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : selectedPreview === 'action' ? (
                           /* ── Action view ── */
