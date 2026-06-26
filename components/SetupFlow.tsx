@@ -197,16 +197,6 @@ function uniqueSuggestionsByDomain(suggestions: IcpSuggestion[]): IcpSuggestion[
   });
 }
 
-function describeSuggestionCount(count: number): string {
-  if (count <= 0) return 'a few';
-  if (count === 1) return 'one';
-  if (count === 2) return 'two';
-  if (count === 3) return 'three';
-  if (count === 4) return 'four';
-  if (count === 5) return 'five';
-  return `${count}`;
-}
-
 const START_AGAIN_CONFIRM =
   'This removes your saved company profile, target company profiles, and buying team for this account. Continue?';
 
@@ -301,7 +291,7 @@ type ApiMsg =
 
 type OnboardingAction =
   | { type: 'capture_name'; first_name: string }
-  | { type: 'begin_analysis'; website_url: string; analysis_type?: 'own_company' | 'target_customer' }
+  | { type: 'begin_analysis'; website_url: string; analysis_type?: 'own_company' | 'target_customer'; company_name?: string }
   | { type: 'confirm_transition'; target: 'proceed_to_customer_url' | 'confirm_own_company' | 'restart'; button_label: string };
 
 type ApiOnboardingJson = {
@@ -3778,6 +3768,10 @@ export default function SetupFlow({
   const [savedIcpName, setSavedIcpName] = useState('');
   const [savedPersonaName, setSavedPersonaName] = useState('');
   const [icpSuggestions, setIcpSuggestions] = useState<IcpSuggestion[]>([]);
+  /** Which single suggestion is currently being offered (one at a time). */
+  const [suggestionIdx, setSuggestionIdx] = useState(0);
+  /** A typed/inferred target company awaiting the user's confirmation before we enrich it. */
+  const [pendingTarget, setPendingTarget] = useState<{ name: string; domain: string } | null>(null);
 
   // ── Accumulated form data (refs avoid stale closure in async callbacks) ──
   const companyRef = useRef({
@@ -4629,8 +4623,18 @@ export default function SetupFlow({
 
   // ── ICP suggestions: fire-and-forget after own-company analysis ───────────
 
-  const generateIcpSuggestions = useCallback(async (enrichmentData: Record<string, unknown>): Promise<IcpSuggestion[]> => {
+  const generateIcpSuggestions = useCallback(async (
+    enrichmentData: Record<string, unknown>,
+    existingIcps?: TargetCompanyProfile[],
+  ): Promise<IcpSuggestion[]> => {
     try {
+      const existing_icps = (existingIcps ?? [])
+        .map((icp) => ({
+          name: icp.name || icp.example_company_enrichment?.company_name || '',
+          domain: normalizeDomain(icp.example_company_url || icp.example_company_enrichment?.website || ''),
+          segment: icp.company_type || '',
+        }))
+        .filter((e) => e.name || e.domain);
       const res = await fetch('/api/suggest-icp-companies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4645,6 +4649,7 @@ export default function SetupFlow({
           therapeutic_areas: enrichmentData.therapeutic_areas,
           modalities: enrichmentData.modalities,
           company_type: enrichmentData.company_type,
+          existing_icps,
         }),
       });
       if (!res.ok) return [];
@@ -4659,6 +4664,76 @@ export default function SetupFlow({
       return [];
     }
   }, []);
+
+  /** Human-friendly domain for confirm copy (strip protocol + www). */
+  const prettyDomain = useCallback((url: string): string =>
+    url.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/.*$/, ''), []);
+
+  /** One short bubble that names a suggestion and says why it's a strong target. */
+  const suggestionReasonBeat = useCallback((s: IcpSuggestion | undefined): string => {
+    if (!s) return '';
+    const reason = (s.reason ?? '').trim();
+    return reason ? `${s.name} — ${reason}` : s.name;
+  }, []);
+
+  /**
+   * Present ONE suggested target company at a time, best-fit first, with its reasoning.
+   * The user confirms by tapping it, asks for another, or types a company of their own.
+   */
+  const enterIcpSuggestionPhase = useCallback(async (
+    list: IcpSuggestion[],
+    introBeats: string[],
+  ): Promise<boolean> => {
+    const clean = uniqueSuggestionsByDomain(
+      list.filter((s) => typeof s?.name === 'string' && s.name.trim() && typeof s?.domain === 'string' && s.domain.trim()),
+    );
+    if (clean.length === 0) return false;
+    setIcpSuggestions(clean);
+    setSuggestionIdx(0);
+    setPendingTarget(null);
+    const beats = [...introBeats];
+    const reasonBeat = suggestionReasonBeat(clean[0]);
+    if (reasonBeat) beats.push(reasonBeat);
+    await sayBeats(beats);
+    setPhase('icp_suggestion');
+    setInput(true);
+    return true;
+  }, [sayBeats, suggestionReasonBeat]);
+
+  /** "Suggest another" — advance to the next pick, regenerating more if we've run out. */
+  const showNextSuggestion = useCallback(async () => {
+    pushText('user', 'Suggest a different one');
+    setPendingTarget(null);
+    const next = suggestionIdx + 1;
+    if (next < icpSuggestions.length) {
+      setSuggestionIdx(next);
+      const beat = suggestionReasonBeat(icpSuggestions[next]);
+      if (beat) await sayBeats([beat]);
+      setInput(true);
+      return;
+    }
+    // Exhausted the shortlist — try to generate a fresh batch we haven't shown yet.
+    const profile = editingFindingsData;
+    if (profile && typeof profile === 'object' && Object.keys(profile).length > 0) {
+      setThinking(true);
+      const shown = new Set(icpSuggestions.map((s) => normalizeDomain(s.domain)));
+      const fresh = (await generateIcpSuggestions(profile as Record<string, unknown>)).filter(
+        (s) => !shown.has(normalizeDomain(s.domain)),
+      );
+      setThinking(false);
+      if (fresh.length > 0) {
+        const merged = uniqueSuggestionsByDomain([...icpSuggestions, ...fresh]);
+        setIcpSuggestions(merged);
+        setSuggestionIdx(next);
+        const beat = suggestionReasonBeat(merged[next]);
+        if (beat) await sayBeats([beat]);
+        setInput(true);
+        return;
+      }
+    }
+    await sayBeats(['That’s the shortlist I’d start with. Type a target company you have in mind and I’ll set it up.']);
+    setInput(true);
+  }, [suggestionIdx, icpSuggestions, editingFindingsData, generateIcpSuggestions, suggestionReasonBeat, sayBeats]);
 
   // ── Handle analysis results confirmed ────────────────────────────────────
 
@@ -4718,18 +4793,11 @@ export default function SetupFlow({
     ) {
       resolvedSuggestions = await generateIcpSuggestions(sellerProfile as Record<string, unknown>);
     }
-    if (resolvedSuggestions.length > 0) {
-      setIcpSuggestions(resolvedSuggestions);
-      const suggestionCountLabel = describeSuggestionCount(resolvedSuggestions.length);
-      await sayBeats([
-        'Your company profile looks good.',
-        'Now let’s define ideal target accounts so we can build the right buying group profiles.',
-        `If you’re not sure, we’ve suggested ${suggestionCountLabel} target profile${resolvedSuggestions.length === 1 ? '' : 's'} below based on your company, and you can pick one or keep typing.`,
-      ]);
-      setPhase('icp_suggestion');
-      setInput(true);
-      return;
-    }
+    const presented = await enterIcpSuggestionPhase(resolvedSuggestions, [
+      'Your company profile looks good.',
+      'Now let’s pick a target company to model your first profile on. Most people aren’t sure who to start with, so here’s the one I’d suggest — tap it to use it, ask for another, or type a company you have in mind.',
+    ]);
+    if (presented) return;
 
     historyRef.current = [...historyRef.current, { role: 'user', content: 'Looks good' }];
     setPhase('customer_url_conversation');
@@ -4740,7 +4808,7 @@ export default function SetupFlow({
     });
     if (targetIntroParts.length) await sayBeats(targetIntroParts);
     setInput(true);
-  }, [askClaude, editingFindingsData, entryPoint, icpSuggestions, generateIcpSuggestions, resolvedCompletePath, router, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, editingFindingsData, entryPoint, icpSuggestions, generateIcpSuggestions, enterIcpSuggestionPhase, resolvedCompletePath, router, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getLatestResultsData = useCallback((): Record<string, unknown> | null => {
     for (let i = thread.length - 1; i >= 0; i -= 1) {
@@ -4823,7 +4891,9 @@ export default function SetupFlow({
           resolvedSuggestions = await generateIcpSuggestions(profile as Record<string, unknown>);
         }
         if (resolvedSuggestions.length > 0) {
-          setIcpSuggestions(resolvedSuggestions);
+          setIcpSuggestions(uniqueSuggestionsByDomain(resolvedSuggestions));
+          setSuggestionIdx(0);
+          setPendingTarget(null);
           setPhase('icp_suggestion');
           setInput(true);
         } else {
@@ -5717,10 +5787,20 @@ export default function SetupFlow({
           phase === 'icp_suggestion' ||
           beginAnalysis.analysis_type === 'target_customer';
         if (isCustomer) {
-          await handleCustomerUrlAnalyse(beginAnalysis.website_url);
-        } else {
-          await runAnalysis(beginAnalysis.website_url);
+          // Confirm-before-enrich: never start enriching a company the user hasn't OK'd.
+          // The agent may have inferred a company from a vague segment ("a CRO"), so we
+          // echo back the recognisable name + domain and wait for a yes.
+          const domain = prettyDomain(beginAnalysis.website_url);
+          const name = beginAnalysis.company_name?.trim() || domain;
+          setPendingTarget({ name, domain: beginAnalysis.website_url });
+          if (response.displayParts.length) {
+            await sayBeats(response.displayParts);
+          }
+          await sayBeats([`I found ${name} (${domain}). Want me to build the target profile around them? You can also type a different company.`]);
+          setInput(true);
+          return;
         }
+        await runAnalysis(beginAnalysis.website_url);
         return;
       }
 
@@ -5737,7 +5817,7 @@ export default function SetupFlow({
 
       setInput(true);
     },
-    [inputEnabled, phase, entryPoint, askClaude, runAnalysis, handleCustomerUrlAnalyse],
+    [inputEnabled, phase, entryPoint, askClaude, runAnalysis, sayBeats, prettyDomain],
   ); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = useCallback(
@@ -6000,31 +6080,17 @@ export default function SetupFlow({
         }
 
         if (existingIcps.length === 0) {
-          // No ICPs yet — generate fresh suggestions and present them in chat
+          // No ICPs yet — assume the user doesn't know their best target. Pick our single
+          // strongest fit, explain why, and let them confirm / ask for another / type their own.
           if (existingAnalysis) {
-            await say('Give me just a moment while I line up a few example target accounts from your profile.');
+            await say('Give me a moment to line up a strong target account from your profile.');
             const suggestions = await generateIcpSuggestions(existingAnalysis as Record<string, unknown>);
-            if (suggestions.length > 0) {
-              const segmentList = suggestions.map((s) => `${s.name} (${s.segmentLabel})`).join(', ');
-              const { displayParts: dp2 } = await askClaude({
-                mode: 'narration',
-                extra: {
-                  role: 'user',
-                  content:
-                    `[System: The user is resuming setup; company profile is ready. No em dashes. ` +
-                    `Use four separate chat bubbles. Between bubbles, output a line containing only <<< msg >>> (after bubbles 1-3, not after bubble 4). ` +
-                    `Bubble 1: brief glad the company pass went well. ` +
-                    `Bubble 2: one line that we are defining ideal target accounts, real companies they sell to. ` +
-                    `Bubble 3: examples for different buyer types: ${segmentList}. ` +
-                    `Bubble 4: tap one of the suggested companies or paste the URL of a target customer of their own; if unsure, the suggestions came from their company profile and any pick is fine. ` +
-                    `Each bubble: 1-3 short sentences.]`,
-                },
-              });
-              if (dp2.length) await sayBeats(dp2);
-              setPhase('icp_suggestion');
-              setInput(true);
-              return;
-            }
+            setThinking(false);
+            const presented = await enterIcpSuggestionPhase(suggestions, [
+              'Your company profile is set. Now let’s pick a target company to model your first profile on.',
+              'Most people aren’t sure who to start with, so here’s the one I’d suggest. Tap it to use it, ask for another, or type a target customer you have in mind.',
+            ]);
+            if (presented) return;
           }
           // Fallback to URL input if suggestion generation failed
           setPhase('customer_url_conversation');
@@ -6038,38 +6104,30 @@ export default function SetupFlow({
           return;
         }
 
-        // Has existing ICPs — prefer a fresh/additional suggestion set rather than
-        // hiding old options just because they were clicked before in local storage.
+        // Has existing ICPs — suggest one strong target that does NOT overlap what they already saved.
         const storedSuggestions = filterSuggestionsForAdditionalIcp(loadStoredSuggestions(), existingIcps);
         let remaining = storedSuggestions;
-        if (remaining.length < 3 && existingAnalysis) {
+        if (remaining.length < 2 && existingAnalysis) {
           const fresh = filterSuggestionsForAdditionalIcp(
-            await generateIcpSuggestions(existingAnalysis as Record<string, unknown>),
+            await generateIcpSuggestions(existingAnalysis as Record<string, unknown>, existingIcps),
             existingIcps,
           );
           remaining = uniqueSuggestionsByDomain([...remaining, ...fresh]);
         }
+        setThinking(false);
         if (remaining.length > 0) {
-          setIcpSuggestions(remaining);
-          setThinking(false);
-          await sayBeats([
-            'Welcome back. Let’s set up another ICP.',
-            'Aim for a target company or account that feels different from your existing profiles — a different sector, size, or buying team works well.',
-            remaining.length > 1
-              ? 'Pick one of the suggestions below, or type in a target company of your own.'
-              : 'I’ve put a suggested company below, or you can type in a target company of your own.',
+          const presented = await enterIcpSuggestionPhase(remaining, [
+            'Welcome back. Let’s add another target profile.',
+            'Here’s one that doesn’t overlap what you’ve already got. Tap it to use it, ask for another, or type a target company of your own.',
           ]);
-          setPhase('icp_suggestion');
-          setInput(true);
-          return;
+          if (presented) return;
         }
 
         // All previous suggestions enrolled or none stored — they have one in mind
         setPhase('customer_url_conversation');
-        setThinking(false);
         setInput(true);
         await sayBeats([
-          'Welcome back. Let’s set up another ICP.',
+          'Welcome back. Let’s add another target profile.',
           'Type in a company you want to model next, and we’ll build a separate target account profile around it.',
         ]);
         return;
@@ -6341,7 +6399,8 @@ export default function SetupFlow({
     industry: getStr(resultsPanelData?.industry),
   };
 
-  const setupGlassTargetPills = icpSuggestions.slice(0, 12);
+  // Offer one suggested target at a time (best-fit first); the user confirms, asks for another, or types their own.
+  const currentSuggestion = icpSuggestions[suggestionIdx] ?? null;
 
   // Shared props for SetupProfilePanel (avoids repetition across phase renders)
   const sharedPanelProps = {
@@ -6659,28 +6718,58 @@ export default function SetupFlow({
                 )}
               </div>
               {(phase === 'icp_suggestion' || phase === 'customer_url_conversation') &&
-                setupGlassTargetPills.length > 0 &&
                 !thinking &&
-                inputEnabled && (
+                inputEnabled &&
+                pendingTarget && (
+                  /* User typed (or we inferred) a company — confirm before enriching. */
+                  <div className="shrink-0 border-t border-arcova-navy/[0.06] px-1 pb-1 pt-3">
+                    <button
+                      type="button"
+                      disabled={thinking}
+                      onClick={() => {
+                        const target = pendingTarget;
+                        markDomainEnrolled(target.domain);
+                        pushText('user', `Yes, build the profile around ${target.name}`);
+                        setPendingTarget(null);
+                        void handleCustomerUrlAnalyse(target.domain);
+                      }}
+                      className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-arcova-teal/40 bg-arcova-teal/5 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/60 hover:bg-arcova-teal/10 disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
+                      <span className="min-w-0 flex-1 whitespace-normal break-words">Yes, build the profile around {pendingTarget.name}</span>
+                    </button>
+                  </div>
+                )}
+              {(phase === 'icp_suggestion' || phase === 'customer_url_conversation') &&
+                !thinking &&
+                inputEnabled &&
+                !pendingTarget &&
+                currentSuggestion && (
                   <div className="shrink-0 border-t border-arcova-navy/[0.06] px-1 pb-1 pt-3">
                     <div className="flex w-full flex-col gap-2">
-                      {setupGlassTargetPills.map((suggestion) => (
-                          <button
-                            key={suggestion.domain}
-                            type="button"
-                            title={suggestion.segmentLabel}
-                            disabled={thinking}
-                            onClick={() => {
-                              markDomainEnrolled(suggestion.domain);
-                              pushText('user', suggestion.name);
-                              void handleCustomerUrlAnalyse(suggestion.domain);
-                            }}
-                            className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-slate-200/90 bg-white/95 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
-                          >
-                            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
-                            <span className="min-w-0 flex-1 whitespace-normal break-words">{suggestion.name}</span>
-                          </button>
-                      ))}
+                      <button
+                        key={currentSuggestion.domain}
+                        type="button"
+                        title={currentSuggestion.segmentLabel}
+                        disabled={thinking}
+                        onClick={() => {
+                          markDomainEnrolled(currentSuggestion.domain);
+                          pushText('user', `Yes, build the profile around ${currentSuggestion.name}`);
+                          void handleCustomerUrlAnalyse(currentSuggestion.domain);
+                        }}
+                        className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-arcova-teal/40 bg-arcova-teal/5 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/60 hover:bg-arcova-teal/10 disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
+                        <span className="min-w-0 flex-1 whitespace-normal break-words">Yes, build the profile around {currentSuggestion.name}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={thinking}
+                        onClick={() => void showNextSuggestion()}
+                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white/80 px-3.5 py-2 font-manrope text-sm font-medium leading-snug text-arcova-navy/65 transition-colors hover:border-arcova-navy/20 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        Suggest a different one
+                      </button>
                     </div>
                   </div>
                 )}
