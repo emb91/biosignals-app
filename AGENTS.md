@@ -17,3 +17,26 @@
   SQL again.
 - Do not delete or rewrite an applied migration to change production state.
   Add a new forward migration instead.
+
+## Worktree completion protocol
+
+- Every agent working in a separate worktree owns closing out that worktree.
+  Do not consider the task complete while important work exists only as
+  uncommitted files in a worktree.
+- Before stopping, leave the work in one of these states:
+  - committed and pushed to a named branch, with the PR link recorded;
+  - committed locally on a named branch, with a clear note that it still needs
+    push/PR;
+  - stashed with a descriptive message, with the worktree path and stash name
+    recorded;
+  - explicitly marked as abandoned/discardable.
+- Before ending a task, report:
+  - worktree path;
+  - branch name;
+  - `git status --short --branch`;
+  - latest commit SHA;
+  - whether the branch is pushed;
+  - PR URL, if any;
+  - any uncommitted or stashed work.
+- If an agent creates a worktree, that agent is responsible for documenting
+  how to resume, merge, park, or remove it.
