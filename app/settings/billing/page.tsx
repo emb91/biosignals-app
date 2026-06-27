@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowUpRight, Check, CreditCard, Loader2, Minus, Plus } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { safeRelativeRedirect } from '@/lib/auth-redirect';
@@ -103,27 +103,38 @@ function planParam(value: string | null): 'starter' | 'growth' | null {
   return value === 'starter' || value === 'growth' ? value : null;
 }
 
+function billingIntentFromLocation(): { annual: boolean; plan: 'starter' | 'growth' | null } {
+  if (typeof window === 'undefined') return { annual: false, plan: null };
+  const params = new URLSearchParams(window.location.search);
+  return {
+    annual: billingParam(params.get('billing')) === 'annual',
+    plan: planParam(params.get('plan')),
+  };
+}
+
 export default function BillingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loadingBilling, setLoadingBilling] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [annual, setAnnual] = useState(() => billingParam(searchParams.get('billing')) === 'annual');
+  const [annual, setAnnual] = useState(() => billingIntentFromLocation().annual);
   const [packQuantity, setPackQuantity] = useState(1);
-  const planIntent = planParam(searchParams.get('plan'));
-  const query = searchParams.toString();
-  const currentPath = query ? `/settings/billing?${query}` : '/settings/billing';
+  const [planIntent, setPlanIntent] = useState<'starter' | 'growth' | null>(() => billingIntentFromLocation().plan);
 
   useEffect(() => {
-    if (!loading && !user) router.push(`/login?next=${encodeURIComponent(safeRelativeRedirect(currentPath, '/settings/billing'))}`);
-  }, [currentPath, loading, router, user]);
+    if (!loading && !user) {
+      const path = typeof window === 'undefined' ? '/settings/billing' : `${window.location.pathname}${window.location.search}`;
+      router.push(`/login?next=${encodeURIComponent(safeRelativeRedirect(path, '/settings/billing'))}`);
+    }
+  }, [loading, router, user]);
 
   useEffect(() => {
-    setAnnual(billingParam(searchParams.get('billing')) === 'annual');
-  }, [searchParams]);
+    const intent = billingIntentFromLocation();
+    setAnnual(intent.annual);
+    setPlanIntent(intent.plan);
+  }, []);
 
   const load = useCallback(async () => {
     try {

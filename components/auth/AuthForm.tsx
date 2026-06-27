@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import posthog from '@/lib/posthog-client';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -33,8 +33,11 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
 
   const { login, signup, loginWithGoogle } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const nextPath = safeRelativeRedirect(searchParams.get('next'), ROUTES.today);
+
+  const authNextPath = () => {
+    if (typeof window === 'undefined') return ROUTES.today;
+    return safeRelativeRedirect(new URLSearchParams(window.location.search).get('next'), ROUTES.today);
+  };
 
   // Failed email links (expired/used invite or confirmation) land here as
   // /login?error=auth_failed via /auth/callback — explain instead of showing
@@ -58,6 +61,7 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
     }
 
     setLoading(true);
+    const nextPath = authNextPath();
 
     try {
       if (isSignUp) {
@@ -120,6 +124,7 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
   const handleGoogleLogin = async () => {
     setError('');
     setLoading(true);
+    const nextPath = authNextPath();
 
     try {
       await loginWithGoogle(nextPath);

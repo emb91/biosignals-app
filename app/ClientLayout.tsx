@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useEffect } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { AppAmbientBackground } from "@/components/AppAmbientBackground"
 import { Navigation } from "@/components/navigation"
 import { ScrollToTop } from "@/components/scroll-to-top"
@@ -51,14 +51,11 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
   const { user, loading: authLoading } = useAuth()
   const { loading: setupLoading, setupComplete, step1Complete, step2Complete } = useSetupState()
   const pathname = usePathname() ?? ''
-  const searchParams = useSearchParams()
   const router = useRouter()
 
   const isAppRoute = APP_ROUTES.some((route) => matchesRoutePrefix(pathname, route))
   const isSetupRoute = SETUP_ROUTES.some((route) => matchesRoutePrefix(pathname, route))
   const isNonSetupAppRoute = isAppRoute && !isSetupRoute
-  const query = searchParams.toString()
-  const currentPath = query ? `${pathname}?${query}` : pathname
 
   // Compute the next step path from primitive values (avoids object-ref churn)
   const nextSetupPath: string | null = setupComplete
@@ -71,6 +68,8 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
     // unauthorized after a stale session.
     if (authLoading) return
     if (!user && isAppRoute) {
+      const query = typeof window === 'undefined' ? '' : window.location.search
+      const currentPath = `${pathname}${query}`
       router.replace(`/login?next=${encodeURIComponent(currentPath)}`)
       return
     }
@@ -84,7 +83,7 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
     if (!nextSetupPath || matchesRoutePrefix(pathname, nextSetupPath)) return
 
     router.replace(nextSetupPath)
-  }, [authLoading, setupLoading, setupComplete, nextSetupPath, user, isAppRoute, isNonSetupAppRoute, currentPath, pathname, router])
+  }, [authLoading, setupLoading, setupComplete, nextSetupPath, user, isAppRoute, isNonSetupAppRoute, pathname, router])
 
   // Still waiting for auth — render nothing to avoid a flash of the
   // wrong page before the redirect fires.
