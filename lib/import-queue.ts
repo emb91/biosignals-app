@@ -300,7 +300,7 @@ export async function processQueuedRowsInBackground(params: {
   }
   let triageRows = queuedRows;
   let overflowRows: QueuedRow[] = [];
-  let triageMap: Map<string, TriageResult>;
+  let triageMap = new Map<string, TriageResult>();
   const entitlements = await getOrgEntitlements(member.org_id);
   if (pretriagedRows) {
     const missingRows = queuedRows.filter((row) => !pretriagedRows.has(row.id));
