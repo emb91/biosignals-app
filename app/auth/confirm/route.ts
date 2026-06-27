@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase-server'
 import { NextResponse } from 'next/server'
 import type { EmailOtpType } from '@supabase/supabase-js'
 import { consumeAuthLinkCode } from '@/lib/auth-links'
+import { safeRelativeRedirect } from '@/lib/auth-redirect'
 
 /**
  * GET /auth/confirm — lands all Supabase EMAIL links (invite, signup
@@ -34,14 +35,14 @@ export async function GET(request: Request) {
   const code = searchParams.get('code')
   let tokenHash = searchParams.get('token_hash')
   let type = searchParams.get('type') as EmailOtpType | null
-  let next = searchParams.get('next') ?? '/today'
+  let next = safeRelativeRedirect(searchParams.get('next'))
 
   if (code) {
     const resolved = await consumeAuthLinkCode(code)
     if (!resolved) return NextResponse.redirect(`${origin}/login?error=auth_failed`)
     tokenHash = resolved.tokenHash
     type = resolved.otpType as EmailOtpType
-    next = resolved.next || '/today'
+    next = safeRelativeRedirect(resolved.next)
   }
 
   if (tokenHash && type) {

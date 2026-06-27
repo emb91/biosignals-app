@@ -9,8 +9,8 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   login: (email: string, password: string, captchaToken?: string) => Promise<void>;
-  signup: (email: string, password: string, fullName?: string, captchaToken?: string) => Promise<boolean>;
-  loginWithGoogle: () => Promise<void>;
+  signup: (email: string, password: string, fullName?: string, captchaToken?: string, next?: string) => Promise<boolean>;
+  loginWithGoogle: (next?: string) => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
@@ -64,6 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     password: string,
     fullName?: string,
     captchaToken?: string,
+    next?: string,
   ): Promise<boolean> => {
     // Routed server-side (/api/auth/signup) so the confirmation email goes
     // through Resend with a /auth/confirm link, like invites and reset — no
@@ -72,7 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, fullName, captchaToken }),
+      body: JSON.stringify({ email, password, fullName, captchaToken, next }),
     });
     const data = (await res.json().catch(() => ({}))) as { needsConfirm?: boolean; error?: string };
     if (!res.ok) {
@@ -81,11 +82,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return Boolean(data.needsConfirm);
   };
 
-  const loginWithGoogle = async () => {
+  const loginWithGoogle = async (next?: string) => {
+    const callback = new URL('/auth/callback', window.location.origin);
+    if (next) callback.searchParams.set('next', next);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: callback.toString(),
       },
     });
     if (error) throw error;
