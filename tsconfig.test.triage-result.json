@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-triage-result-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/triage-result.ts",
+    "lib/triage-result.test.ts"
+  ]
+}
