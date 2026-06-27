@@ -52,6 +52,7 @@
     "test:company-enrichment-credits": "rm -rf /tmp/arcova-company-enrichment-credits-tests && tsc -p tsconfig.test.company-enrichment-credits.json && node --test /tmp/arcova-company-enrichment-credits-tests/company-enrichment-credits.test.js",
     "test:icp-reenrichment": "rm -rf /tmp/arcova-icp-reenrichment-tests && tsc -p tsconfig.test.icp-reenrichment.json && node --test /tmp/arcova-icp-reenrichment-tests/icp-reenrichment.test.js",
     "test:company-enrich-cancel": "rm -rf /tmp/arcova-company-enrich-cancel-tests && tsc -p tsconfig.test.company-enrich-cancel.json && node --test /tmp/arcova-company-enrich-cancel-tests/company-enrichment-cancel.test.js",
+    "test:import-contact-dedup": "rm -rf /tmp/arcova-import-contact-dedup-tests && tsc -p tsconfig.test.import-contact-dedup.json && node --test /tmp/arcova-import-contact-dedup-tests/import-contact-dedup.test.js",
     "test:triage-pending": "rm -rf /tmp/arcova-triage-pending-tests && tsc -p tsconfig.test.triage-pending.json && node --test /tmp/arcova-triage-pending-tests/triage-pending-rows.test.js",
     "test:triage-result": "rm -rf /tmp/arcova-triage-result-tests && tsc -p tsconfig.test.triage-result.json && node --test /tmp/arcova-triage-result-tests/triage-result.test.js",
     "test:monitor-cadence": "rm -rf /tmp/arcova-monitor-cadence-tests && tsc -p tsconfig.test.monitor-cadence.json && node --test /tmp/arcova-monitor-cadence-tests/monitor-cadence-rules.test.js",

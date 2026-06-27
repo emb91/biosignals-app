@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-import-contact-dedup-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/contact-emails.ts",
+    "lib/import-contact-dedup.ts",
+    "lib/import-contact-dedup.test.ts"
+  ]
+}
