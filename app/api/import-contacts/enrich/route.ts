@@ -11,6 +11,8 @@ import {
 } from '@/lib/billing/credits';
 import { processQueuedRowsInBackground } from '@/lib/import-queue';
 import { WORKSPACE_REQUIRED_ERROR } from '@/lib/org-context';
+import { TRIAGE_VERSION } from '@/lib/triage';
+import type { TriageGroup, TriageResult } from '@/lib/triage-result';
 
 export async function POST(request: Request) {
   const auth = await createClient();
@@ -31,7 +33,7 @@ export async function POST(request: Request) {
     .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
   if (!member?.org_id) return NextResponse.json(WORKSPACE_REQUIRED_ERROR, { status: 409 });
   const { data: candidateRows, error } = await admin.from('raw_uploads')
-    .select('id, user_id, batch_id, full_name, email, linkedin_url, company_name, raw_data, status, triage_group, triage_override_group')
+    .select('id, user_id, batch_id, full_name, email, linkedin_url, company_name, raw_data, status, triage_group, triage_override_group, triage_version')
     .eq('org_id', member.org_id)
     .in('id', rawUploadIds)
     .eq('status', 'awaiting_enrichment');
@@ -78,6 +80,19 @@ export async function POST(request: Request) {
     try {
       for (const [key, batchRows] of batchGroups) {
         const [ownerUserId, batchId] = key.split(':');
+        const pretriagedRows = new Map(batchRows.map((row) => {
+          const rawData = row.raw_data as Record<string, unknown>;
+          const group = (row.triage_override_group || row.triage_group) as TriageGroup;
+          const reason = typeof rawData.triage_reason === 'string' ? rawData.triage_reason : null;
+          return [
+            row.id as string,
+            {
+              group,
+              version: (row.triage_version as string | null) || TRIAGE_VERSION,
+              reason,
+            },
+          ] as [string, TriageResult];
+        }));
         await processQueuedRowsInBackground({
           queuedRows: batchRows.map((row) => ({
             id: row.id as string,
@@ -90,6 +105,7 @@ export async function POST(request: Request) {
           batchId,
           userId: ownerUserId,
           autoEnrich: true,
+          pretriagedRows,
         });
       }
       const { count: successful } = await admin.from('raw_uploads')
