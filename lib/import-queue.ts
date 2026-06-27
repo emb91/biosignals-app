@@ -230,8 +230,18 @@ export async function processQueuedRowsInBackground(params: {
   onProgress?: ImportProgressCallback;
   /** Explicitly approved acquisition/enrichment jobs may continue past triage. */
   autoEnrich?: boolean;
+  /** Rows that already have a persisted triage decision should not be re-triaged. */
+  pretriagedRows?: Map<string, TriageResult>;
 }): Promise<void> {
-  const { queuedRows, batchId, userId, onBeforeIngest, onProgress, autoEnrich = false } = params;
+  const {
+    queuedRows,
+    batchId,
+    userId,
+    onBeforeIngest,
+    onProgress,
+    autoEnrich = false,
+    pretriagedRows,
+  } = params;
   const allQueuedIds = queuedRows.map((row) => row.id);
 
   const admin = createAdminClient();
@@ -290,24 +300,33 @@ export async function processQueuedRowsInBackground(params: {
   }
   let triageRows = queuedRows;
   let overflowRows: QueuedRow[] = [];
+  let triageMap: Map<string, TriageResult>;
   const entitlements = await getOrgEntitlements(member.org_id);
-  const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
-  const { data: usageRows } = await admin.from('org_usage_events').select('quantity')
-    .eq('org_id', member.org_id).eq('action_type', 'import_triage').gte('occurred_at', monthStart);
-  const used = (usageRows ?? []).reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
-  const remaining = Math.max(0, entitlements.caps.importedRecordsTriagedMonthly - used);
-  triageRows = queuedRows.slice(0, remaining);
-  overflowRows = queuedRows.slice(remaining);
-  if (triageRows.length) {
-    await checkAndIncrementUsage({
-      orgId: member.org_id,
-      userId,
-      action: 'import_triage',
-      quantity: triageRows.length,
-      operationKey: `import-triage:${batchId}`,
-      limit: entitlements.caps.importedRecordsTriagedMonthly,
-      window: 'utc_month',
-    });
+  if (pretriagedRows) {
+    const missingRows = queuedRows.filter((row) => !pretriagedRows.has(row.id));
+    if (missingRows.length) {
+      throw new Error(`Missing pre-triage decisions for ${missingRows.length} queued row(s)`);
+    }
+    triageMap = pretriagedRows;
+  } else {
+    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+    const { data: usageRows } = await admin.from('org_usage_events').select('quantity')
+      .eq('org_id', member.org_id).eq('action_type', 'import_triage').gte('occurred_at', monthStart);
+    const used = (usageRows ?? []).reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
+    const remaining = Math.max(0, entitlements.caps.importedRecordsTriagedMonthly - used);
+    triageRows = queuedRows.slice(0, remaining);
+    overflowRows = queuedRows.slice(remaining);
+    if (triageRows.length) {
+      await checkAndIncrementUsage({
+        orgId: member.org_id,
+        userId,
+        action: 'import_triage',
+        quantity: triageRows.length,
+        operationKey: `import-triage:${batchId}`,
+        limit: entitlements.caps.importedRecordsTriagedMonthly,
+        window: 'utc_month',
+      });
+    }
   }
 
   if (overflowRows.length) {
@@ -322,16 +341,18 @@ export async function processQueuedRowsInBackground(params: {
   // classifier scores each row against who we actually target, not a generic
   // biotech yardstick. 'low'-classified rows are stored with minimal identity
   // data only (no enrichment).
-  const icpContext = await loadIcpTriageContext(admin, { orgId: member.org_id, userId });
-  const triageMap = await triageContacts(
-    triageRows.map((r) => ({
-      id: r.id,
-      job_title: (r.raw_data.job_title as string) || null,
-      company_name: r.company_name,
-      email: r.email,
-    })),
-    { icp: icpContext },
-  );
+  if (!pretriagedRows) {
+    const icpContext = await loadIcpTriageContext(admin, { orgId: member.org_id, userId });
+    triageMap = await triageContacts(
+      triageRows.map((r) => ({
+        id: r.id,
+        job_title: (r.raw_data.job_title as string) || null,
+        company_name: r.company_name,
+        email: r.email,
+      })),
+      { icp: icpContext },
+    );
+  }
 
   const triageNow = new Date().toISOString();
   for (const row of triageRows) {
