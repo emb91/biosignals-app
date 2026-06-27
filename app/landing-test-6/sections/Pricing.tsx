@@ -19,6 +19,13 @@ function feat(text: string): ReactNode[] {
   })
 }
 
+function paidSignupHref(planName: string, annual: boolean) {
+  const plan = planName.toLowerCase()
+  const billing = annual ? "annual" : "monthly"
+  const next = `/settings/billing?plan=${encodeURIComponent(plan)}&billing=${billing}`
+  return `/signup?next=${encodeURIComponent(next)}`
+}
+
 export function Pricing() {
   const [annual, setAnnual] = useState(false)
   const [open, setOpen] = useState(false)
@@ -77,7 +84,7 @@ export function Pricing() {
                     )}
                   </div>
                   <div className="cbtn">
-                    <a className={`btn ${p.featured ? "btn-primary" : "btn-soft"}`} href="/signup">
+                    <a className={`btn ${p.featured ? "btn-primary" : "btn-soft"}`} href={p.paid ? paidSignupHref(p.name, annual) : "/signup"}>
                       {p.cta}
                     </a>
                   </div>

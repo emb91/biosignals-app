@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-auth-redirect-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/auth-redirect.ts",
+    "lib/auth-redirect.test.ts"
+  ]
+}

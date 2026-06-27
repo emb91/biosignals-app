@@ -68,7 +68,9 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
     // unauthorized after a stale session.
     if (authLoading) return
     if (!user && isAppRoute) {
-      router.replace('/login')
+      const query = typeof window === 'undefined' ? '' : window.location.search
+      const currentPath = `${pathname}${query}`
+      router.replace(`/login?next=${encodeURIComponent(currentPath)}`)
       return
     }
     // Wait for setup state only after we know a user exists.

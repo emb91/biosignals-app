@@ -19,6 +19,7 @@ import { createClient } from '@/lib/supabase-server';
 import { isResendConfigured, sendAuthEmail, buildSignupConfirmEmail } from '@/lib/auth-email';
 import { createAuthLinkCode } from '@/lib/auth-links';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { safeRelativeRedirect } from '@/lib/auth-redirect';
 
 export const runtime = 'nodejs';
 
@@ -51,10 +52,11 @@ async function verifyTurnstile(token: string | undefined, ip: string | null): Pr
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as
-    | { email?: string; password?: string; captchaToken?: string; fullName?: string }
+    | { email?: string; password?: string; captchaToken?: string; fullName?: string; next?: string }
     | null;
   const email = body?.email?.trim().toLowerCase();
   const password = body?.password ?? '';
+  const next = safeRelativeRedirect(body?.next);
   if (!email || !EMAIL_RE.test(email)) {
     return NextResponse.json({ error: 'A valid email is required.' }, { status: 400 });
   }
@@ -100,7 +102,7 @@ export async function POST(request: Request) {
     const code = await createAuthLinkCode({
       tokenHash: gen.properties.hashed_token,
       otpType: 'signup',
-      next: '/today',
+      next,
       email,
     });
     const confirmUrl = `${appUrl}/auth/confirm?code=${code}`;
@@ -124,6 +126,7 @@ export async function POST(request: Request) {
     options: {
       ...(body?.captchaToken ? { captchaToken: body.captchaToken } : {}),
       ...(body?.fullName?.trim() ? { data: { full_name: body.fullName.trim() } } : {}),
+      emailRedirectTo: `${appUrl}/auth/confirm?next=${encodeURIComponent(next)}`,
     },
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });

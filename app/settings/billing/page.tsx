@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowUpRight, Check, CreditCard, Loader2, Minus, Plus } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { safeRelativeRedirect } from '@/lib/auth-redirect';
 import AppSidebar from '@/components/AppSidebar';
 
 type Plan = {
@@ -94,6 +95,23 @@ function featureParts(text: string) {
   );
 }
 
+function billingParam(value: string | null) {
+  return value === 'annual' ? 'annual' : 'monthly';
+}
+
+function planParam(value: string | null): 'starter' | 'growth' | null {
+  return value === 'starter' || value === 'growth' ? value : null;
+}
+
+function billingIntentFromLocation(): { annual: boolean; plan: 'starter' | 'growth' | null } {
+  if (typeof window === 'undefined') return { annual: false, plan: null };
+  const params = new URLSearchParams(window.location.search);
+  return {
+    annual: billingParam(params.get('billing')) === 'annual',
+    plan: planParam(params.get('plan')),
+  };
+}
+
 export default function BillingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -101,12 +119,22 @@ export default function BillingPage() {
   const [loadingBilling, setLoadingBilling] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [annual, setAnnual] = useState(false);
+  const [annual, setAnnual] = useState(() => billingIntentFromLocation().annual);
   const [packQuantity, setPackQuantity] = useState(1);
+  const [planIntent, setPlanIntent] = useState<'starter' | 'growth' | null>(() => billingIntentFromLocation().plan);
 
   useEffect(() => {
-    if (!loading && !user) router.push('/login');
+    if (!loading && !user) {
+      const path = typeof window === 'undefined' ? '/settings/billing' : `${window.location.pathname}${window.location.search}`;
+      router.push(`/login?next=${encodeURIComponent(safeRelativeRedirect(path, '/settings/billing'))}`);
+    }
   }, [loading, router, user]);
+
+  useEffect(() => {
+    const intent = billingIntentFromLocation();
+    setAnnual(intent.annual);
+    setPlanIntent(intent.plan);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -282,13 +310,18 @@ export default function BillingPage() {
             {plans.map((plan, index) => {
               const current = currentPlanKey === plan.key && (plan.key === 'free' || summary.plan.billingInterval === interval);
               const unavailable = plan.paid && !(annual ? plan.annualAvailable : plan.available);
+              const selectedIntent = planIntent === plan.key && !current;
               return (
                 <div
                   key={plan.key}
-                  className={`flex flex-col p-7 ${index > 0 ? 'border-t border-[rgba(13,53,71,0.08)] md:border-l md:border-t-0' : ''} ${plan.featured ? 'bg-gradient-to-b from-[rgba(0,164,180,0.06)] to-transparent' : ''}`}
+                  className={`flex flex-col p-7 ${index > 0 ? 'border-t border-[rgba(13,53,71,0.08)] md:border-l md:border-t-0' : ''} ${plan.featured ? 'bg-gradient-to-b from-[rgba(0,164,180,0.06)] to-transparent' : ''} ${selectedIntent ? 'ring-2 ring-inset ring-[#00a4b4]' : ''}`}
                 >
                   <div className="mb-3 flex min-h-6 items-center">
-                    {plan.pop && (
+                    {selectedIntent ? (
+                      <span className="rounded-full bg-[rgba(0,164,180,0.12)] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-[#007f8c]">
+                        Selected from pricing
+                      </span>
+                    ) : plan.pop && (
                       <span className="rounded-full bg-[rgba(0,164,180,0.12)] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-[#007f8c]">
                         {plan.pop}
                       </span>

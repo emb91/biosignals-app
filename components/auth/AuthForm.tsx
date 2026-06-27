@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff } from 'lucide-react';
 import { ROUTES } from '@/lib/routes';
 import { Turnstile, TurnstileHandle, TURNSTILE_SITE_KEY } from '@/components/turnstile';
+import { safeRelativeRedirect } from '@/lib/auth-redirect';
 
 type AuthMode = 'signin' | 'signup';
 
@@ -32,6 +33,11 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
 
   const { login, signup, loginWithGoogle } = useAuth();
   const router = useRouter();
+
+  const authNextPath = () => {
+    if (typeof window === 'undefined') return ROUTES.today;
+    return safeRelativeRedirect(new URLSearchParams(window.location.search).get('next'), ROUTES.today);
+  };
 
   // Failed email links (expired/used invite or confirmation) land here as
   // /login?error=auth_failed via /auth/callback — explain instead of showing
@@ -55,6 +61,7 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
     }
 
     setLoading(true);
+    const nextPath = authNextPath();
 
     try {
       if (isSignUp) {
@@ -75,7 +82,7 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
           setLoading(false);
           return;
         }
-        const needsEmailConfirm = await signup(email, password, undefined, captchaToken);
+        const needsEmailConfirm = await signup(email, password, undefined, captchaToken, nextPath);
         if (needsEmailConfirm) {
           setConfirmEmailSentTo(email);
           return;
@@ -86,7 +93,7 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
         // Identity is set centrally by PostHogIdentify (keyed on user.id) once auth
         // resolves — identifying by email here would fragment the person across IDs.
       }
-      router.push(ROUTES.today);
+      router.push(nextPath);
     } catch (error: any) {
       const message = error.message || '';
       if (message.includes('Invalid login credentials')) {
@@ -117,10 +124,11 @@ export default function AuthForm({ initialMode = 'signin' }: { initialMode?: Aut
   const handleGoogleLogin = async () => {
     setError('');
     setLoading(true);
+    const nextPath = authNextPath();
 
     try {
-      await loginWithGoogle();
-      router.push(ROUTES.today);
+      await loginWithGoogle(nextPath);
+      router.push(nextPath);
     } catch (error: any) {
       setError(error.message || 'An error occurred with Google sign-in.');
     } finally {
