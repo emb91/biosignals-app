@@ -1,3 +1,5 @@
+import { CALENDLY_BOOKING_URL } from "../data"
+
 export function FinalCta() {
   return (
     <section className="cta-section" aria-label="Get started">
@@ -20,7 +22,7 @@ export function FinalCta() {
                 </button>
               </form>
               <p className="cta-note">Free to start · No credit card · Set up in under 5 minutes</p>
-              <a className="cta-demo" href="/contact-us">
+              <a className="cta-demo" href={CALENDLY_BOOKING_URL} target="_blank" rel="noopener noreferrer">
                 or Book a demo
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M9 6l6 6-6 6" />

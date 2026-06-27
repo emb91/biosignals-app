@@ -1,7 +1,7 @@
 "use client"
 
 import { Fragment, useState, type ReactNode } from "react"
-import { PLANS, COMPARE } from "../data"
+import { CALENDLY_BOOKING_URL, PLANS, COMPARE } from "../data"
 
 function CK() {
   return (
@@ -178,7 +178,7 @@ export function Pricing() {
               </span>
             </div>
             <div className="ebtn">
-              <a className="btn btn-primary" href="/contact-us">
+              <a className="btn btn-primary" href={CALENDLY_BOOKING_URL} target="_blank" rel="noopener noreferrer">
                 Contact sales
               </a>
             </div>
