@@ -83,7 +83,11 @@ export const duplicateMatch = (
 
   if (rowLinkedin && exLinkedin && rowLinkedin === exLinkedin) return 'linkedin';
   if (rowEmail && exEmail && rowEmail === exEmail) return 'email';
+  const conflictingStrongIdentifiers =
+    (rowLinkedin && exLinkedin && rowLinkedin !== exLinkedin) ||
+    (rowEmail && exEmail && rowEmail !== exEmail);
   if (
+    !conflictingStrongIdentifiers &&
     rowFirst &&
     rowLast &&
     rowCompany &&

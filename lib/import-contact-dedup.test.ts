@@ -117,6 +117,89 @@ test('dedups against org-scope existing contact candidates by name and company',
   assert.equal(result.duplicateReasons.get('incoming'), 'Duplicate name + company');
 });
 
+test('keeps same-name same-company rows when strong identifiers conflict', () => {
+  const existingContactConflict = row({
+    id: 'existing-contact-conflict',
+    email: 'alex.kim.new@example.com',
+    raw_data: {
+      full_name: 'Alex Kim',
+      first_name: 'Alex',
+      last_name: 'Kim',
+      company_name: 'Pfizer',
+      email: 'alex.kim.new@example.com',
+    },
+  });
+  const pendingConflict = row({
+    id: 'pending-conflict',
+    linkedin_url: 'https://linkedin.com/in/alex-kim-new',
+    raw_data: {
+      full_name: 'Alex Kim',
+      first_name: 'Alex',
+      last_name: 'Kim',
+      company_name: 'Pfizer',
+      linkedin_url: 'https://linkedin.com/in/alex-kim-new',
+    },
+  });
+
+  const existingResult = classifyImportRowsForDedup({
+    insertedRows: [existingContactConflict],
+    existingContacts: [
+      {
+        email: 'alex.kim.existing@example.com',
+        full_name: 'Alex Kim',
+        company_name: 'Pfizer',
+      },
+    ],
+    pendingRawUploads: [],
+  });
+  const pendingResult = classifyImportRowsForDedup({
+    insertedRows: [pendingConflict],
+    existingContacts: [],
+    pendingRawUploads: [
+      {
+        linkedin_url: 'https://linkedin.com/in/alex-kim-pending',
+        full_name: 'Alex Kim',
+        company_name: 'Pfizer',
+      },
+    ],
+  });
+  const sameBatchResult = classifyImportRowsForDedup({
+    insertedRows: [
+      row({
+        id: 'first-in-batch',
+        email: 'alex.kim.first@example.com',
+        raw_data: {
+          full_name: 'Alex Kim',
+          first_name: 'Alex',
+          last_name: 'Kim',
+          company_name: 'Pfizer',
+          email: 'alex.kim.first@example.com',
+        },
+      }),
+      row({
+        id: 'second-in-batch',
+        email: 'alex.kim.second@example.com',
+        raw_data: {
+          full_name: 'Alex Kim',
+          first_name: 'Alex',
+          last_name: 'Kim',
+          company_name: 'Pfizer',
+          email: 'alex.kim.second@example.com',
+        },
+      }),
+    ],
+    existingContacts: [],
+    pendingRawUploads: [],
+  });
+
+  assert.deepEqual(existingResult.pendingRows.map((pending) => pending.id), ['existing-contact-conflict']);
+  assert.deepEqual(existingResult.duplicateIds, []);
+  assert.deepEqual(pendingResult.pendingRows.map((pending) => pending.id), ['pending-conflict']);
+  assert.deepEqual(pendingResult.duplicateIds, []);
+  assert.deepEqual(sameBatchResult.pendingRows.map((pending) => pending.id), ['first-in-batch', 'second-in-batch']);
+  assert.deepEqual(sameBatchResult.duplicateIds, []);
+});
+
 test('strips invalid email without using it as a duplicate key', () => {
   const incoming = row({
     id: 'incoming',
