@@ -1,3 +1,5 @@
+import { CALENDLY_BOOKING_URL } from "../data"
+
 export function Hero() {
   return (
     <header className="hero" id="top">
@@ -21,7 +23,7 @@ export function Hero() {
               </svg>
             </button>
           </form>
-          <a className="hero-demo" href="/contact-us">
+          <a className="hero-demo" href={CALENDLY_BOOKING_URL} target="_blank" rel="noopener noreferrer">
             or Book a demo
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 6l6 6-6 6" />

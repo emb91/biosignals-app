@@ -11,6 +11,8 @@ export const HERO = {
   sub: "Arcova watches your market, ranks the accounts worth working, and drafts the outreach. You just hit send.",
 }
 
+export const CALENDLY_BOOKING_URL = "https://calendly.com/emma-arcova/30min"
+
 // Built-for strip
 export const BUILT_FOR = ["CROs", "CDMOs", "Biotech", "Medtech", "Pharma", "Diagnostics", "Tools & Instruments"]
 
