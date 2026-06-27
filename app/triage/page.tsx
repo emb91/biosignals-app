@@ -7,7 +7,7 @@ import { AgentPanel } from '@/components/AgentPanel';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/lib/routes';
 import { useCreditConfirm } from '@/context/CreditConfirmContext';
-import { CalendarClock, ChevronRight, ListChecks, Pin, X } from 'lucide-react';
+import { CalendarClock, ListChecks, Pin, X } from 'lucide-react';
 
 const HubSpotLogo = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
@@ -60,8 +60,10 @@ const TRIAGE_OPTIONS: Array<{ value: TriageGroup; label: string }> = [
 ];
 
 const TRIAGE_TABLE_GRID = 'grid gap-x-5';
+const TRIAGE_DETAILS_GRID_COLS =
+  'minmax(0,1.15fr) minmax(0,1fr) minmax(0,0.75fr) minmax(8rem,0.8fr)';
 const TRIAGE_GRID_COLS =
-  'minmax(0,1.15fr) minmax(0,1fr) minmax(0,0.75fr) minmax(8rem,0.8fr) minmax(5.5rem,0.55fr)';
+  `${TRIAGE_DETAILS_GRID_COLS} minmax(6.5rem,0.65fr)`;
 
 function formatDate(value: string | null): string {
   if (!value) return '-';
@@ -292,13 +294,13 @@ export default function TriagePage() {
                     rows.map((row, index) => {
                       const isSelected = selected?.id === row.id;
                       const triageTooltip = triageBadgeTooltip(row);
+                      const isBusy = busyId === row.id;
+                      const canEnrich = row.effective_triage_group !== 'low';
                       return (
-                        <button
+                        <div
                           key={row.id}
-                          type="button"
-                          onClick={() => setSelectedId(row.id)}
                           className={cn(
-                            `${TRIAGE_TABLE_GRID} relative w-full cursor-pointer items-center py-3 pl-9 pr-4 text-left transition-all duration-150 before:pointer-events-none before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors`,
+                            `${TRIAGE_TABLE_GRID} relative w-full items-center pl-9 pr-4 text-left transition-all duration-150 before:pointer-events-none before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors`,
                             isSelected
                               ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                               : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35',
@@ -308,33 +310,59 @@ export default function TriagePage() {
                           <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 select-none text-[10px] font-medium tabular-nums text-gray-400">
                             {index + 1}
                           </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium text-slate-800">{row.name}</span>
-                            <span className="block truncate text-xs leading-snug text-[#7d909a]">
-                              {row.title || row.email || 'Raw contact'}
+                          <button
+                            type="button"
+                            aria-label={`Open triage details for ${row.name}`}
+                            onClick={() => setSelectedId(row.id)}
+                            className={`${TRIAGE_TABLE_GRID} col-span-4 min-w-0 cursor-pointer items-center py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-arcova-teal/35`}
+                            style={{ gridTemplateColumns: TRIAGE_DETAILS_GRID_COLS }}
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-slate-800">{row.name}</span>
+                              <span className="block truncate text-xs leading-snug text-[#7d909a]">
+                                {row.title || row.email || 'Raw contact'}
+                              </span>
                             </span>
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm text-slate-700">{row.company || 'Unknown company'}</span>
-                            <span className="block truncate text-xs leading-snug text-[#7d909a]">
-                              {row.company_domain || row.location || '-'}
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm text-slate-700">{row.company || 'Unknown company'}</span>
+                              <span className="block truncate text-xs leading-snug text-[#7d909a]">
+                                {row.company_domain || row.location || '-'}
+                              </span>
                             </span>
-                          </span>
-                          <span className="flex justify-center">
-                            <span
-                              className={cn('inline-flex rounded-full border px-2 py-1 text-xs font-semibold', triageClass(row.effective_triage_group))}
-                              title={triageTooltip ?? undefined}
-                            >
-                              {triageLabel(row.effective_triage_group)}
+                            <span className="flex justify-center">
+                              <span
+                                className={cn('inline-flex rounded-full border px-2 py-1 text-xs font-semibold', triageClass(row.effective_triage_group))}
+                                title={triageTooltip ?? undefined}
+                              >
+                                {triageLabel(row.effective_triage_group)}
+                              </span>
                             </span>
+                            <span className="text-center text-sm text-slate-600">
+                              {row.expected_enrichment_date ? formatDate(row.expected_enrichment_date) : '-'}
+                            </span>
+                          </button>
+                          <span className="flex justify-end py-3">
+                            {canEnrich ? (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void enrichNow(row);
+                                }}
+                                className="inline-flex h-8 min-w-[6.25rem] items-center justify-center gap-1.5 rounded-lg bg-arcova-teal px-2.5 text-xs font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
+                                aria-label={`Enrich ${row.name} now`}
+                              >
+                                <CalendarClock className="h-3.5 w-3.5" aria-hidden />
+                                {isBusy ? 'Working' : 'Enrich now'}
+                              </button>
+                            ) : (
+                              <span className="inline-flex h-8 min-w-[6.25rem] items-center justify-center rounded-lg border border-[rgba(90,104,115,0.14)] bg-[rgba(90,104,115,0.05)] px-2.5 text-xs font-semibold text-[#65747d]">
+                                Deferred
+                              </span>
+                            )}
                           </span>
-                          <span className="text-center text-sm text-slate-600">
-                            {row.expected_enrichment_date ? formatDate(row.expected_enrichment_date) : '-'}
-                          </span>
-                          <span className="flex justify-end">
-                            <ChevronRight className="h-4 w-4 text-arcova-navy/30" />
-                          </span>
-                        </button>
+                        </div>
                       );
                     })
                   )}
